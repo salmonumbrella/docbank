@@ -735,6 +735,32 @@ CREATE TABLE IF NOT EXISTS rendition_heads (
         )
 );
 
+-- Root producers outside the immutable rendition catalog retain one exact
+-- build or lexical generation. Lease expiry uses canonical fixed-width UTC
+-- timestamps; monotonic fencing prevents a stale worker from releasing a
+-- renewed root. Attachments and heads remain normalized in their own tables.
+CREATE TABLE IF NOT EXISTS current_rendition_roots (
+    root_id       TEXT PRIMARY KEY,
+    root_kind     TEXT NOT NULL CHECK (root_kind IN (
+        'attachment', 'head', 'retention', 'audit', 'job',
+        'reader_lease', 'worker_lease', 'backup_pin'
+    )),
+    target_kind   TEXT NOT NULL CHECK (target_kind IN (
+        'rendition_build', 'lexical_generation'
+    )),
+    target_id     TEXT NOT NULL,
+    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+    recorded_at   TEXT NOT NULL,
+    expires_at    TEXT,
+    CHECK ((root_kind IN ('reader_lease', 'worker_lease')) = (expires_at IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS current_rendition_roots_target
+    ON current_rendition_roots(target_kind, target_id, root_kind);
+CREATE INDEX IF NOT EXISTS current_rendition_roots_expiry
+    ON current_rendition_roots(expires_at)
+    WHERE expires_at IS NOT NULL;
+
 CREATE TRIGGER IF NOT EXISTS processing_profiles_immutable_update
 BEFORE UPDATE ON processing_profiles BEGIN
     SELECT RAISE(ABORT, 'processing profile records are immutable');

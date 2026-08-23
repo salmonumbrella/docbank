@@ -67,6 +67,14 @@ type GCReport struct {
 	DryRun             bool
 }
 
+// DerivativePurgeReport separates the atomic live-catalog purge receipt from
+// the location-aware physical GC that follows it. Immutable backup repository
+// copies remain outside both mutation boundaries.
+type DerivativePurgeReport struct {
+	Purge    store.PurgeReport
+	Physical GCReport
+}
+
 type VerifyOptions struct{ Budget Budget }
 
 type VerifyProblem struct {
@@ -291,6 +299,59 @@ func GarbageCollect(
 		report.NextCursor = encodeCursor(operationGC, resumeHash)
 	}
 	return report, nil
+}
+
+// PurgeDerivatives removes complete live derivative manifests, then drains
+// ordinary location-aware blob GC so loose objects are unlinked and packed
+// objects become dead repack accounting. Callers serialize this operation with
+// ordinary writers through the vault maintenance gate.
+func PurgeDerivatives(
+	ctx context.Context,
+	metadata *store.Store,
+	blobs *blob.Store,
+	request store.PurgeRequest,
+) (DerivativePurgeReport, error) {
+	report := DerivativePurgeReport{}
+	purged, err := metadata.PurgeDerivatives(ctx, request)
+	report.Purge = purged
+	if err != nil {
+		return report, err
+	}
+	var cursor string
+	for {
+		page, err := GarbageCollect(ctx, metadata, blobs, GCOptions{Budget: Budget{
+			MaxObjects: DefaultMaxObjects,
+			Cursor:     cursor,
+		}})
+		addGCReport(&report.Physical, page)
+		if err != nil {
+			return report, fmt.Errorf("collecting purged derivative blobs: %w", err)
+		}
+		if !page.More {
+			break
+		}
+		if page.NextCursor == "" {
+			return report, errors.New("collecting purged derivative blobs made no resumable progress")
+		}
+		cursor = page.NextCursor
+	}
+	return report, nil
+}
+
+func addGCReport(total *GCReport, page GCReport) {
+	total.CandidateBlobs += page.CandidateBlobs
+	total.UntrackedFiles += page.UntrackedFiles
+	total.ReclaimableBytes += page.ReclaimableBytes
+	total.PendingPackedBlobs += page.PendingPackedBlobs
+	total.PendingPackedBytes += page.PendingPackedBytes
+	total.ReclaimedFiles += page.ReclaimedFiles
+	total.RemovedBlobs += page.RemovedBlobs
+	total.Removed += page.Removed
+	total.More = page.More
+	total.NextCursor = page.NextCursor
+	if !page.More {
+		total.NextCursor = ""
+	}
 }
 
 func retireUnreachableLooseLocations(
