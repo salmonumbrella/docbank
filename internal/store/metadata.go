@@ -57,6 +57,13 @@ func (s *MetadataSnapshot) Export(ctx context.Context, w io.Writer) error {
 	return exportMetadataSnapshot(ctx, s, w)
 }
 
+// ExportBackup writes the deterministic logical authority carried by a backup
+// snapshot. Unlike Export, it omits blob rows that are not reachable from a
+// retained logical record and therefore have no archive attachment.
+func (s *MetadataSnapshot) ExportBackup(ctx context.Context, w io.Writer) error {
+	return exportBackupMetadataSnapshot(ctx, s, w)
+}
+
 // BeginMetadataSnapshot establishes a pinned read transaction for logical
 // backup capture. The initial read is required: BeginTx alone is lazy in
 // SQLite and would not pin a snapshot before Kit releases the mutation gate.
@@ -208,6 +215,23 @@ type metadataAuditMembership struct {
 	BaselineDigest string `json:"baseline_digest"`
 }
 
+// BackupBlobAuthorityCTE is the complete blob closure for a backup's logical
+// metadata: version content, retained rendition artifacts, every staged
+// rendition build source, and watcher cursor source bytes. It intentionally
+// excludes unreferenced provider output that was recorded before an abandoned
+// build could become authority.
+const BackupBlobAuthorityCTE = `
+WITH backup_authorized_blobs(hash) AS (
+	SELECT blob_hash FROM content_versions
+	UNION
+	SELECT blob_hash FROM rendition_artifacts
+	UNION
+	SELECT source_sha256 FROM rendition_builds
+	UNION
+	SELECT blob_hash FROM watch_sources
+)
+`
+
 // ExportMetadata writes a deterministic JSONL description of Docbank's
 // logical state. Rebuildable FTS data and physical pack authority are omitted.
 func (s *Store) ExportMetadata(ctx context.Context, w io.Writer) error {
@@ -250,15 +274,19 @@ type metadataQuerier interface {
 // Backup capture uses this entry point so metadata and blob membership come
 // from the same frozen transaction.
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
-	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false)
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false, false)
+}
+
+func exportBackupMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, false, true)
 }
 
 func exportV090MetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
-	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, true)
+	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, true, false)
 }
 
 func exportMetadataSnapshotWithVaultIdentity(
-	ctx context.Context, tx metadataQuerier, w io.Writer, legacyV090 bool,
+	ctx context.Context, tx metadataQuerier, w io.Writer, legacyV090, backupScoped bool,
 ) error {
 	if tx == nil {
 		return errors.New("exporting metadata: nil transaction")
@@ -281,7 +309,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}); err != nil {
 		return err
 	}
-	if err := exportBlobs(ctx, tx, write); err != nil {
+	if err := exportBlobs(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
 	if err := exportNodes(ctx, tx, write); err != nil {
@@ -296,7 +324,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportProvenance(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportWatchSources(ctx, tx, write); err != nil {
+	if err := exportWatchSources(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
 	if err := exportTags(ctx, tx, write); err != nil {
@@ -305,10 +333,13 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportNodeTags(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportExtractedText(ctx, tx, write); err != nil {
+	if err := exportExtractedText(ctx, tx, write, backupScoped); err != nil {
 		return err
 	}
-	return exportAuditMetadata(ctx, tx, write)
+	if err := exportAuditMetadata(ctx, tx, write); err != nil {
+		return err
+	}
+	return exportProcessingMetadata(ctx, tx, write)
 }
 
 type metadataWrite func(any) error
@@ -326,8 +357,15 @@ func newMetadataJSONWriter(w io.Writer) metadataWrite {
 	}
 }
 
-func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT hash, size, created_at FROM blobs ORDER BY hash`)
+func exportBlobs(ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool) error {
+	query := `SELECT hash, size, created_at FROM blobs ORDER BY hash`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+SELECT b.hash, b.size, b.created_at
+FROM blobs b JOIN backup_authorized_blobs a ON a.hash = b.hash
+ORDER BY b.hash`
+	}
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("exporting blobs: %w", err)
 	}
@@ -452,10 +490,20 @@ func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWri
 	return rowsError(metadataProvenanceType, rows)
 }
 
-func exportWatchSources(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
+func exportWatchSources(
+	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+) error {
+	query := `
 		SELECT watch_name, source_ref, node_id, blob_hash, size
-		FROM watch_sources ORDER BY watch_name, source_ref`)
+		FROM watch_sources ORDER BY watch_name, source_ref`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+		SELECT w.watch_name, w.source_ref, w.node_id, w.blob_hash, w.size
+		FROM watch_sources w
+		JOIN backup_authorized_blobs a ON a.hash = w.blob_hash
+		ORDER BY w.watch_name, w.source_ref`
+	}
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("exporting watched sources: %w", err)
 	}
@@ -517,10 +565,21 @@ func exportNodeTags(ctx context.Context, tx metadataQuerier, write metadataWrite
 	return rowsError("node tag", rows)
 }
 
-func exportExtractedText(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
+func exportExtractedText(
+	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
+) error {
+	query := `
 		SELECT blob_hash, extractor, extractor_version, status, error, attempts, text, extracted_at
-		FROM extracted_text ORDER BY blob_hash, extractor`)
+		FROM extracted_text ORDER BY blob_hash, extractor`
+	if backupScoped {
+		query = BackupBlobAuthorityCTE + `
+		SELECT e.blob_hash, e.extractor, e.extractor_version, e.status,
+		       e.error, e.attempts, e.text, e.extracted_at
+		FROM extracted_text e
+		JOIN backup_authorized_blobs a ON a.hash = e.blob_hash
+		ORDER BY e.blob_hash, e.extractor`
+	}
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("exporting extracted text: %w", err)
 	}
@@ -567,6 +626,19 @@ func stringPtr(v sql.NullString) *string {
 // ImportMetadata replaces the pristine root in a newly created store with a
 // logical JSONL snapshot. It refuses a store containing user or pack state.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
+	return s.importMetadata(ctx, r, true)
+}
+
+// ImportMetadataForRestore imports logical metadata into a private staged
+// restore database. The caller must verify processing blobs after attachment
+// materialization and before publishing that staged database.
+func (s *Store) ImportMetadataForRestore(ctx context.Context, r io.Reader) error {
+	return s.importMetadata(ctx, r, false)
+}
+
+func (s *Store) importMetadata(
+	ctx context.Context, r io.Reader, verifyProcessingBlobs bool,
+) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -579,7 +651,7 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
 			return fmt.Errorf("deferring metadata foreign keys: %w", err)
 		}
-		header, err := importMetadataLines(ctx, tx, r)
+		header, err := s.importMetadataLines(ctx, tx, r)
 		if err != nil {
 			return err
 		}
@@ -590,6 +662,11 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 		}
 		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err
+		}
+		if verifyProcessingBlobs {
+			if err := s.verifyImportedProcessingBlobAuthority(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := rebuildImportedTextExtractionStateTx(ctx, tx); err != nil {
 			return err
@@ -628,7 +705,14 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM audit_authority)
 		    + (SELECT COUNT(*) FROM audit_scopes)
 		    + (SELECT COUNT(*) FROM audit_baselines)
-		    + (SELECT COUNT(*) FROM audit_memberships),
+		    + (SELECT COUNT(*) FROM audit_memberships)
+		    + (SELECT COUNT(*) FROM processing_profiles)
+		    + (SELECT COUNT(*) FROM rendition_builds)
+		    + (SELECT COUNT(*) FROM rendition_artifacts)
+		    + (SELECT COUNT(*) FROM rendition_units)
+		    + (SELECT COUNT(*) FROM rendition_lexical_segments)
+		    + (SELECT COUNT(*) FROM rendition_attachments)
+		    + (SELECT COUNT(*) FROM rendition_heads),
 		  (SELECT COUNT(*) FROM blob_locations)
 		    + (SELECT COUNT(*) FROM blob_packs)
 		    + (SELECT COUNT(*) FROM blob_pack_entries)
@@ -642,7 +726,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadataHeader, error) {
+func (s *Store) importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadataHeader, error) {
 	dec := jsontext.NewDecoder(bufio.NewReader(r))
 	rawHeader, err := dec.ReadValue()
 	if err != nil {
@@ -677,19 +761,22 @@ func importMetadataLines(ctx context.Context, tx *sql.Tx, r io.Reader) (metadata
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
-		if err := importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
+		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}
 }
 
-func importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
+func (s *Store) importMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
 	}
 	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
 		return err
+	}
+	if isProcessingMetadataType(kind) {
+		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
 	case "blob":
@@ -880,19 +967,26 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":                      {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
-	"node":                      {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":           {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
-	metadataIngestType:          {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
-	metadataProvenanceType:      {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
-	metadataWatchSourceType:     {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", metadataSizeField},
-	"tag":                       {metadataTypeField, "tag_id", "name", "revision"},
-	"node_tag":                  {metadataTypeField, metadataNodeIDField, "tag_id"},
-	"extracted_text":            {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
-	metadataAuditAuthorityType:  {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
-	metadataAuditScopeType:      {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
-	metadataAuditMembershipType: {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
-	metadataAuditRecordType:     {metadataTypeField, "digest", "record"},
+	"blob":                        {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
+	"node":                        {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"content_version":             {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	metadataIngestType:            {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
+	metadataProvenanceType:        {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
+	metadataWatchSourceType:       {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", metadataSizeField},
+	"tag":                         {metadataTypeField, "tag_id", "name", "revision"},
+	"node_tag":                    {metadataTypeField, metadataNodeIDField, "tag_id"},
+	"extracted_text":              {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	metadataAuditAuthorityType:    {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
+	metadataAuditScopeType:        {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
+	metadataAuditMembershipType:   {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
+	metadataAuditRecordType:       {metadataTypeField, "digest", "record"},
+	metadataProcessingProfileType: processingMetadataRequiredFields[metadataProcessingProfileType],
+	metadataRenditionBuildType:    processingMetadataRequiredFields[metadataRenditionBuildType],
+	metadataRenditionArtifactType: processingMetadataRequiredFields[metadataRenditionArtifactType],
+	metadataRenditionUnitType:     processingMetadataRequiredFields[metadataRenditionUnitType],
+	metadataRenditionSegmentType:  processingMetadataRequiredFields[metadataRenditionSegmentType],
+	metadataRenditionAttachType:   processingMetadataRequiredFields[metadataRenditionAttachType],
+	metadataRenditionHeadType:     processingMetadataRequiredFields[metadataRenditionHeadType],
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -1247,6 +1341,9 @@ func validateMetadataStateWithVaultIdentity(
 		return err
 	}
 	if err := validateWatchSourceRelations(ctx, tx); err != nil {
+		return err
+	}
+	if err := validateProcessingMetadataState(ctx, tx); err != nil {
 		return err
 	}
 	topology, err := loadAuditTopologyRows(ctx, tx)

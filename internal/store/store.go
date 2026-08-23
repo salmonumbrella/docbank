@@ -52,7 +52,32 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
 		return nil, err
 	}
-	return openCurrentStore(path, driver)
+	s, err := openCurrentStore(path, driver)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.MigrateLegacyPlainText(context.Background()); err != nil {
+		return nil, errors.Join(err, s.Close())
+	}
+	return s, nil
+}
+
+// OpenForRestore opens an already-staged restore database without applying
+// local legacy-cache migration. Restore must compare the exact snapshot
+// authority before it publishes the target; the normal Open path performs the
+// migration after the restored vault is first opened for ordinary use.
+func OpenForRestore(path string, driver docsqlite.Driver) (*Store, error) {
+	if err := docsqlite.Validate(driver); err != nil {
+		return nil, fmt.Errorf("opening restore database: %w", err)
+	}
+	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
+		return nil, err
+	}
+	s, err := openCurrentStore(path, driver)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
