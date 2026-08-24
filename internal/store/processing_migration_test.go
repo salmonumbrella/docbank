@@ -179,8 +179,9 @@ func TestMigrateLegacyPlainTextRollsBackOneAtomicCutover(t *testing.T) {
 	assert.Equal(t, 1, legacyFTS, "legacy serving remains intact when cutover aborts")
 }
 
-// Mutation caught: comparing catalog segments instead of the staged serving
-// generation publishes even when the exact FTS projection disappears.
+// Mutation caught: completing a staged generation whose exact FTS projection
+// disappeared after manifest recording. The immutable-manifest fence rejects
+// the corrupt staged projection before any head can publish on top of it.
 func TestMigrateLegacyPlainTextRejectsCorruptStagedProjection(t *testing.T) {
 	s := newTestStore(t)
 	seedLegacyMigrationRow(t, s, "projection.txt", "77", ExtractionResult{
@@ -197,7 +198,7 @@ func TestMigrateLegacyPlainTextRejectsCorruptStagedProjection(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = s.MigrateLegacyPlainText(t.Context())
-	require.ErrorContains(t, err, "search authority is not exactly compatible")
+	require.ErrorContains(t, err, "has a different immutable manifest")
 	var legacyFTS, lexicalHeads, renditionHeads int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM content_fts`).Scan(&legacyFTS))
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_lexical_heads`).Scan(&lexicalHeads))
@@ -395,6 +396,59 @@ func TestPostCutoverPublicationFailureKeepsExtractionQueued(t *testing.T) {
 	hits, _, err = s.SearchPage(t.Context(), text, 20)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
+}
+
+func TestPurgedLegacyDerivativeStaysSuppressedAcrossRestartUntilExplicitAuthorization(t *testing.T) {
+	// Mutations caught: startup migration/seeding recreates purged portable text;
+	// silently clearing suppression during startup makes purge non-durable.
+	dbPath := filepath.Join(t.TempDir(), "suppressed.db")
+	s, err := Open(dbPath)
+	require.NoError(t, err)
+	const text = "durably-purged-legacy-derivative"
+	hash := fakeHash("7a")
+	node, err := s.CreateFile(t.Context(), s.RootID(), "sensitive.txt", hash,
+		int64(len(text)), "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{
+		BlobHash: hash, Extractor: legacyPlainTextExtractor,
+		ExtractorVersion: legacyPlainTextExtractorVersion, Status: ExtractionOK, Text: text,
+	}))
+	_, err = s.MigrateLegacyPlainText(t.Context())
+	require.NoError(t, err)
+	var buildID string
+	require.NoError(t, s.db.QueryRow(`
+		SELECT build_id FROM rendition_builds WHERE source_sha256=?`, hash).Scan(&buildID))
+	profile, err := legacyPlainTextProfile()
+	require.NoError(t, err)
+	_, err = s.PurgeDerivatives(t.Context(), PurgeRequest{
+		ContentVersionIDs: []string{node.CurrentVersionID},
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	s, err = Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	require.NoError(t, s.SeedTextExtractionQueue(t.Context(),
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion))
+	pending, err := s.PendingTextExtractions(t.Context(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	var builds int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	assert.Zero(t, builds)
+
+	require.NoError(t, s.AuthorizeDerivativeRebuild(t.Context(), DerivativeRebuildAuthorization{
+		SourceSHA256: hash, ProfileFingerprint: profile.Fingerprint,
+		PurgedBuildID: buildID, SupersedingBuildID: buildID,
+		AuthorizedAt: "2026-08-23T17:30:00.000000000Z",
+	}))
+	require.NoError(t, s.SeedTextExtractionQueue(t.Context(),
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion))
+	pending, err = s.PendingTextExtractions(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, hash, pending[0].BlobHash)
 }
 
 // Mutation caught: indexing one FTS row per bounded rendition segment loses

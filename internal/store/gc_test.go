@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"math"
@@ -13,6 +14,82 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 )
+
+func TestLifecycleMetadataRoundTripPreservesDurableRootsAndZeroSegmentMembership(t *testing.T) {
+	// Mutations caught: omitting durable retention/audit roots from JSONL loses
+	// live authority on restore; rebuilding membership from FTS alone loses a
+	// valid zero-segment build; exporting ephemeral roots resurrects unsafe pins.
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	build.LexicalSegments = nil
+	build.Units = nil
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	generationID := fakeHash("8d")
+	_, err := s.StageLexicalGeneration(ctx, generationID)
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T11:00:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{
+		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+		AttachmentID: attachment.ID, PublishedAt: "2026-08-23T11:01:00.000000000Z",
+	}, generationID))
+
+	for _, root := range []CurrentRenditionRoot{
+		{ID: "durable-retention", Kind: RenditionRootRetention, TargetKind: RenditionRootBuild,
+			TargetID: build.ID, FencingToken: 3, RecordedAt: "2026-08-23T11:02:00.000000000Z"},
+		{ID: "durable-audit", Kind: RenditionRootAudit, TargetKind: RenditionRootLexicalGeneration,
+			TargetID: generationID, FencingToken: 4, RecordedAt: "2026-08-23T11:03:00.000000000Z"},
+		{ID: "ephemeral-worker", Kind: RenditionRootWorkerLease, TargetKind: RenditionRootBuild,
+			TargetID: build.ID, FencingToken: 5, RecordedAt: "2026-08-23T11:04:00.000000000Z",
+			ExpiresAt: "2099-08-23T11:05:00.000000000Z"},
+		{ID: "operational-backup", Kind: RenditionRootBackupPin,
+			TargetKind: RenditionRootLexicalGeneration, TargetID: generationID,
+			FencingToken: 6, RecordedAt: "2026-08-23T11:06:00.000000000Z"},
+	} {
+		require.NoError(t, s.PutCurrentRenditionRoot(ctx, root))
+	}
+	released, err := s.ReleaseCurrentRenditionRoot(ctx, "durable-audit", 4)
+	require.NoError(t, err)
+	require.True(t, released)
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	assert.Contains(t, exported.String(), `"root_id":"durable-retention"`)
+	assert.Contains(t, exported.String(), `"root_id":"durable-audit"`)
+	assert.NotContains(t, exported.String(), "ephemeral-worker")
+	assert.NotContains(t, exported.String(), "operational-backup")
+
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadataForRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.RebuildRenditionLexicalProjection(ctx))
+	rebuilt, err := restored.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rebuilt.BuildCount)
+	assert.Equal(t, lexicalBuildDigest([]string{build.ID}), rebuilt.BuildDigest)
+
+	var membership int
+	require.NoError(t, restored.db.QueryRow(`
+		SELECT COUNT(*) FROM rendition_lexical_generation_builds
+		WHERE generation_id=? AND build_id=?`, rebuilt.ID, build.ID).Scan(&membership))
+	assert.Equal(t, 1, membership)
+	var durable, unsafe int
+	require.NoError(t, restored.db.QueryRow(`
+		SELECT COUNT(*) FROM current_rendition_roots
+		WHERE root_kind IN ('retention','audit')`).Scan(&durable))
+	require.NoError(t, restored.db.QueryRow(`
+		SELECT COUNT(*) FROM current_rendition_roots
+		WHERE root_kind NOT IN ('retention','audit')`).Scan(&unsafe))
+	assert.Equal(t, 2, durable)
+	assert.Zero(t, unsafe)
+	require.NoError(t, restored.ValidateMetadata(ctx))
+	var roundTrip bytes.Buffer
+	require.NoError(t, restored.ExportMetadata(ctx, &roundTrip))
+	assert.Equal(t, exported.String(), roundTrip.String())
+}
 
 func TestPageLimitWithSentinelRejectsOverflow(t *testing.T) {
 	_, err := pageLimitWithSentinel(math.MaxInt)
@@ -222,6 +299,128 @@ func TestPurgeDerivativesRetainsActiveWorkerThenCollectsExpiredFence(t *testing.
 	assert.Equal(t, 1, report.RemovedBuilds)
 }
 
+func TestCurrentRenditionRootFencingSurvivesReleaseAndExpiry(t *testing.T) {
+	// Mutation caught: deleting the sole root row on release or expiry forgets
+	// its token high-water and lets a stale producer reacquire exact authority.
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	build := catalogRenditionBuild(s, catalogProcessingProfile(t, false))
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	kinds := []CurrentRenditionRootKind{
+		RenditionRootAttachment, RenditionRootHead, RenditionRootRetention,
+		RenditionRootAudit, RenditionRootJob, RenditionRootReaderLease,
+		RenditionRootWorkerLease, RenditionRootBackupPin,
+	}
+	for index, kind := range kinds {
+		root := CurrentRenditionRoot{
+			ID: fmt.Sprintf("released-root-%d", index), Kind: kind,
+			TargetKind: RenditionRootBuild, TargetID: build.ID,
+			FencingToken: 7, RecordedAt: "2026-08-23T10:10:00.000000000Z",
+		}
+		if kind == RenditionRootReaderLease || kind == RenditionRootWorkerLease {
+			root.ExpiresAt = "2099-08-23T10:15:00.000000000Z"
+		}
+		require.NoError(t, s.PutCurrentRenditionRoot(ctx, root), kind)
+		released, err := s.ReleaseCurrentRenditionRoot(ctx, root.ID, root.FencingToken)
+		require.NoError(t, err, kind)
+		require.True(t, released, kind)
+		require.ErrorIs(t, s.PutCurrentRenditionRoot(ctx, root),
+			ErrCurrentRenditionRootFenced, kind)
+		root.FencingToken--
+		require.ErrorIs(t, s.PutCurrentRenditionRoot(ctx, root),
+			ErrCurrentRenditionRootFenced, kind)
+		root.FencingToken = 8
+		root.RecordedAt = "2026-08-23T10:11:00.000000000Z"
+		require.NoError(t, s.PutCurrentRenditionRoot(ctx, root), kind)
+		released, err = s.ReleaseCurrentRenditionRoot(ctx, root.ID, root.FencingToken)
+		require.NoError(t, err, kind)
+		require.True(t, released, kind)
+	}
+
+	require.NoError(t, s.PutCurrentRenditionRoot(ctx, CurrentRenditionRoot{
+		ID: "retains-expired-lease-target", Kind: RenditionRootRetention,
+		TargetKind: RenditionRootBuild, TargetID: build.ID,
+		FencingToken: 1, RecordedAt: "2026-08-23T10:20:00.000000000Z",
+	}))
+	for index, kind := range []CurrentRenditionRootKind{
+		RenditionRootReaderLease, RenditionRootWorkerLease,
+	} {
+		root := CurrentRenditionRoot{
+			ID: fmt.Sprintf("expired-root-%d", index), Kind: kind,
+			TargetKind: RenditionRootBuild, TargetID: build.ID,
+			FencingToken: 9, RecordedAt: "2020-08-23T10:00:00.000000000Z",
+			ExpiresAt: "2020-08-23T10:05:00.000000000Z",
+		}
+		require.NoError(t, s.PutCurrentRenditionRoot(ctx, root))
+		report, err := s.PurgeDerivatives(ctx, PurgeRequest{})
+		require.NoError(t, err)
+		require.Equal(t, 1, report.ExpiredRootsRemoved)
+		require.ErrorIs(t, s.PutCurrentRenditionRoot(ctx, root),
+			ErrCurrentRenditionRootFenced, kind)
+		root.FencingToken--
+		require.ErrorIs(t, s.PutCurrentRenditionRoot(ctx, root),
+			ErrCurrentRenditionRootFenced, kind)
+		root.FencingToken = 10
+		root.RecordedAt = "2026-08-23T10:21:00.000000000Z"
+		root.ExpiresAt = "2099-08-23T10:25:00.000000000Z"
+		require.NoError(t, s.PutCurrentRenditionRoot(ctx, root), kind)
+	}
+}
+
+func TestStageAndRootAPIsPublishNoCollectibleWindow(t *testing.T) {
+	// Mutation caught: staging and rooting in separate transactions exposes a
+	// complete build or generation to maintenance before its producer's exact
+	// fenced root becomes visible.
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	buildRoot := CurrentRenditionRoot{
+		ID: "atomic-build-worker", Kind: RenditionRootWorkerLease,
+		TargetKind: RenditionRootBuild, TargetID: build.ID,
+		FencingToken: 1, RecordedAt: "2026-08-23T10:30:00.000000000Z",
+		ExpiresAt: "2099-08-23T10:35:00.000000000Z",
+	}
+	require.NoError(t, s.StageRenditionBuildWithRoot(ctx, build, buildRoot))
+	plan, err := s.DerivativeGCPlan(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, plan.Builds)
+
+	require.NoError(t, s.AttachRenditionBuild(ctx, RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T10:31:00.000000000Z",
+	}))
+	generationID := fakeHash("8b")
+	generationRoot := CurrentRenditionRoot{
+		ID: "atomic-generation-backup", Kind: RenditionRootBackupPin,
+		TargetKind: RenditionRootLexicalGeneration, TargetID: generationID,
+		FencingToken: 1, RecordedAt: "2026-08-23T10:32:00.000000000Z",
+	}
+	generation, err := s.StageLexicalGenerationWithRoot(ctx, generationID, generationRoot)
+	require.NoError(t, err)
+	assert.Equal(t, generationID, generation.ID)
+	plan, err = s.DerivativeGCPlan(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, plan.LexicalGenerations)
+
+	invalid := cloneCatalogBuild(build)
+	invalid.ID = fakeHash("8c")
+	invalid.SourceSHA256 = fakeHash("19")
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, invalid.SourceSHA256, 19)
+	}))
+	badRoot := buildRoot
+	badRoot.ID = "atomic-invalid-root"
+	badRoot.Kind = "invalid"
+	badRoot.TargetID = invalid.ID
+	require.Error(t, s.StageRenditionBuildWithRoot(ctx, invalid, badRoot))
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := loadRenditionBuild(ctx, tx, invalid.ID)
+		return err
+	})
+	assert.ErrorIs(t, err, ErrNotFound, "root failure must roll back staged build authority")
+}
+
 func TestDerivativeGCPlanPinsExactActiveAndLeasedLexicalGenerations(t *testing.T) {
 	// Mutation caught: following only the current lexical head would reclaim an
 	// old exact generation while a reader still has it pinned.
@@ -285,6 +484,38 @@ func TestDerivativeGCPlanRetainsBuildManifestThroughRootedGeneration(t *testing.
 	}))
 
 	plan, err := s.DerivativeGCPlan(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, plan.Builds)
+	assert.Empty(t, plan.LexicalGenerations)
+}
+
+func TestDerivativeGCPlanRetainsZeroSegmentBuildThroughGenerationMembership(t *testing.T) {
+	// Mutation caught: inferring generation membership only from FTS rows drops
+	// a valid zero-segment build from exact rooted-generation closure.
+	s, _ := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	segmented := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, segmented))
+	zeroSource := fakeHash("18")
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, zeroSource, 18)
+	}))
+	zero := cloneCatalogBuild(segmented)
+	zero.ID = catalogBuildReplacement
+	zero.SourceSHA256 = zeroSource
+	zero.ProviderOperationID = "synthetic-zero-segment"
+	zero.LexicalSegments = nil
+	require.NoError(t, s.StageRenditionBuild(ctx, zero))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("8a"))
+	require.NoError(t, err)
+	require.NoError(t, s.PutCurrentRenditionRoot(ctx, CurrentRenditionRoot{
+		ID: "zero-segment-generation-pin", Kind: RenditionRootBackupPin,
+		TargetKind: RenditionRootLexicalGeneration, TargetID: generation.ID,
+		FencingToken: 1, RecordedAt: "2026-08-23T11:20:00.000000000Z",
+	}))
+
+	plan, err := s.DerivativeGCPlan(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, plan.Builds)
 	assert.Empty(t, plan.LexicalGenerations)
@@ -401,6 +632,49 @@ func TestPurgeDerivativesRetainsSharedBuildWhileAnyAttachmentRemains(t *testing.
 	assert.Empty(t, unreachable)
 }
 
+func TestPurgeDerivativesKeepsServingGenerationForSharedBuildAttachment(t *testing.T) {
+	// Mutation caught: driving lexical revocation from every requested build
+	// removes the serving generation even when another version attachment still
+	// authorizes that exact shared build.
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	secondProfile := catalogProcessingProfile(t, true)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("90"))
+	require.NoError(t, err)
+	first := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T13:10:00.000000000Z",
+	}
+	second := RenditionAttachmentRecord{
+		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: versions[1],
+		BuildID: build.ID, Profile: secondProfile, AttachedAt: "2026-08-23T13:11:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, first,
+		RenditionHeadRecord{
+			ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: first.ID, PublishedAt: "2026-08-23T13:12:00.000000000Z",
+		}, generation.ID))
+	require.NoError(t, s.AttachRenditionBuild(ctx, second))
+	require.NoError(t, s.PublishRenditionHead(ctx, RenditionHeadRecord{
+		ContentVersionID: versions[1], ProcessingProfileFingerprint: secondProfile.Fingerprint,
+		AttachmentID: second.ID, PublishedAt: "2026-08-23T13:13:00.000000000Z",
+	}))
+
+	report, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{versions[0]}})
+	require.NoError(t, err)
+	assert.Zero(t, report.RemovedBuilds)
+	assert.Zero(t, report.RemovedLexicalGenerations)
+	active, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, generation.ID, active.ID)
+	remaining, err := s.ActiveRendition(ctx, versions[1], secondProfile.Fingerprint)
+	require.NoError(t, err)
+	assert.Equal(t, build.ID, remaining.Build.ID)
+}
+
 func TestPurgeDerivativesDefersExactLiveBackupPinWithoutClaimingRepositoryErasure(t *testing.T) {
 	// Mutation caught: ignoring an active in-vault snapshot pin would collect
 	// exact live bytes mid-capture; treating immutable repository copies as a
@@ -444,10 +718,9 @@ func TestPurgeDerivativesDefersExactLiveBackupPinWithoutClaimingRepositoryErasur
 	assert.Equal(t, 1, report.RemovedLexicalGenerations)
 }
 
-func TestPurgeDerivativesDoesNotLetBuildRootImplicitlyPinLexicalGeneration(t *testing.T) {
-	// Mutation caught: treating a root for one exact build as a root for every
-	// projection containing it would leave selected sensitive lexical text live
-	// even though no head, lease, job, or backup pin requires that generation.
+func TestPurgeDerivativesKeepsServingGenerationWhileExactBuildRemainsRooted(t *testing.T) {
+	// Mutation caught: revoking a serving projection while its exact build still
+	// has independent authority makes that retained build unavailable to readers.
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -475,9 +748,10 @@ func TestPurgeDerivativesDoesNotLetBuildRootImplicitlyPinLexicalGeneration(t *te
 	assert.Equal(t, []string{build.ID}, report.RetainedBuildIDs)
 	assert.Empty(t, report.RetainedLexicalGenerations)
 	assert.Zero(t, report.RemovedBuilds)
-	assert.Equal(t, 1, report.RemovedLexicalGenerations)
-	_, err = s.ActiveLexicalGeneration(ctx)
-	assert.ErrorIs(t, err, ErrNotFound)
+	assert.Zero(t, report.RemovedLexicalGenerations)
+	active, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, generation.ID, active.ID)
 }
 
 func TestPurgeDerivativesCannotCollectGenerationUnderActiveReader(t *testing.T) {
@@ -563,10 +837,10 @@ func TestPurgeDerivativesRollsBackEveryAuthorityOnManifestFailure(t *testing.T) 
 		[]int{builds, artifacts, attachments, heads, generations, lexicalRows})
 }
 
-func TestPurgeDerivativesCannotBypassActiveAuditAuthority(t *testing.T) {
-	// Mutation caught: using a storage-only transaction for live purge would
-	// create an unaudited privileged path that deletes catalog authority while
-	// the vault's audited logical-mutation contract is active.
+func TestPurgeDerivativesRecordsAuditedSuppressionAndHonorsExactAuditRoot(t *testing.T) {
+	// Mutations caught: blanket-rejecting audited purge makes lifecycle policy
+	// unavailable; bypassing audit loses replay; ignoring the exact audit root
+	// collects protected authority while unrelated derivatives remain leaked.
 	s, versions := newRenditionCatalogFixture(t)
 	ctx := t.Context()
 	profile := catalogProcessingProfile(t, false)
@@ -576,17 +850,69 @@ func TestPurgeDerivativesCannotBypassActiveAuditAuthority(t *testing.T) {
 		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
 		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T16:10:00.000000000Z",
 	}))
+	otherSource := fakeHash("1a")
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, otherSource, 20)
+	}))
+	other := cloneCatalogBuild(build)
+	other.ID = catalogBuildReplacement
+	other.SourceSHA256 = otherSource
+	other.ProviderOperationID = "synthetic-unrelated-audited-purge"
+	require.NoError(t, s.StageRenditionBuild(ctx, other))
+	require.NoError(t, s.PutCurrentRenditionRoot(ctx, CurrentRenditionRoot{
+		ID: "exact-audit-build-root", Kind: RenditionRootAudit,
+		TargetKind: RenditionRootBuild, TargetID: build.ID, FencingToken: 1,
+		RecordedAt: "2026-08-23T16:11:00.000000000Z",
+	}))
 	seedInitialAuditAuthority(t, s, s.RootID())
+	var priorSequence int64
+	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+		FROM audit_authority WHERE singleton=1`).Scan(&priorSequence))
 
-	_, err := s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{versions[0]}})
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	report, err := s.PurgeDerivatives(ctx, PurgeRequest{All: true})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.RemovedAttachments)
+	assert.Equal(t, 1, report.RemovedBuilds)
+	assert.Equal(t, []string{build.ID}, report.RetainedBuildIDs)
 	_, err = s.ActiveRendition(ctx, versions[0], profile.Fingerprint)
-	require.ErrorIs(t, err, ErrNotFound, "the fixture attachment was staged, not headed")
-	var builds, attachments int
+	require.ErrorIs(t, err, ErrNotFound)
+	var builds, attachments, suppressions int
 	require.NoError(t, s.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM rendition_builds),
-		(SELECT COUNT(*) FROM rendition_attachments)`).Scan(&builds, &attachments))
-	assert.Equal(t, []int{1, 1}, []int{builds, attachments})
+		(SELECT COUNT(*) FROM rendition_attachments),
+		(SELECT COUNT(*) FROM derivative_purge_suppressions WHERE active=1)`).Scan(
+		&builds, &attachments, &suppressions))
+	assert.Equal(t, []int{1, 0, 2}, []int{builds, attachments, suppressions})
+	var resultingSequence int64
+	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+		FROM audit_authority WHERE singleton=1`).Scan(&resultingSequence))
+	assert.Equal(t, priorSequence+1, resultingSequence)
+	require.NoError(t, s.ValidateMetadata(ctx), "audited derivative purge must replay exactly")
+	_, err = s.PurgeDerivatives(ctx, PurgeRequest{All: true})
+	require.NoError(t, err)
+	var replaySequence int64
+	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+		FROM audit_authority WHERE singleton=1`).Scan(&replaySequence))
+	assert.Equal(t, resultingSequence, replaySequence,
+		"idempotent purge must not allocate empty audit history")
+	authorization := DerivativeRebuildAuthorization{
+		SourceSHA256: otherSource, ProfileFingerprint: profile.Fingerprint,
+		PurgedBuildID: other.ID, SupersedingBuildID: fakeHash("8e"),
+		AuthorizedAt: "2026-08-23T16:20:00.000000000Z",
+	}
+	require.NoError(t, s.AuthorizeDerivativeRebuild(ctx, authorization))
+	require.NoError(t, s.AuthorizeDerivativeRebuild(ctx, authorization))
+	var authorizedSequence int64
+	require.NoError(t, s.db.QueryRow(`SELECT operation_sequence_high_water
+		FROM audit_authority WHERE singleton=1`).Scan(&authorizedSequence))
+	assert.Equal(t, resultingSequence+1, authorizedSequence,
+		"explicit suppression supersession is one idempotent audited transition")
+	require.NoError(t, s.ValidateMetadata(ctx))
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadataForRestore(ctx, bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.ValidateMetadata(ctx))
 }
 
 func TestPurgeDerivativesCollectsUnheadedGenerationOverRetainedBuild(t *testing.T) {

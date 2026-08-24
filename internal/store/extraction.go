@@ -150,6 +150,14 @@ func (s *Store) SeedTextExtractionQueue(
 	if extractor == "" || version < 1 {
 		return errors.New("extractor name and positive version are required")
 	}
+	var suppressionProfile string
+	if extractor == legacyPlainTextExtractor && version == legacyPlainTextExtractorVersion {
+		profile, err := legacyPlainTextProfile()
+		if err != nil {
+			return err
+		}
+		suppressionProfile = profile.Fingerprint
+	}
 	type seed struct {
 		versionID, hash, mimeType string
 		needsExtraction           bool
@@ -193,6 +201,20 @@ func (s *Store) SeedTextExtractionQueue(
 			}
 			if !item.needsExtraction {
 				continue
+			}
+			if suppressionProfile != "" {
+				suppressed, err := legacyDerivativeSuppressedTx(
+					ctx, tx, item.hash, suppressionProfile)
+				if err != nil {
+					return fmt.Errorf("checking extraction purge suppression: %w", err)
+				}
+				if suppressed {
+					if _, err := tx.ExecContext(ctx,
+						`DELETE FROM text_extraction_queue WHERE blob_hash=?`, item.hash); err != nil {
+						return fmt.Errorf("clearing suppressed extraction work: %w", err)
+					}
+					continue
+				}
 			}
 			if _, exists := queued[item.hash]; exists {
 				continue

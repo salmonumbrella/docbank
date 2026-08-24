@@ -18,13 +18,15 @@ import (
 )
 
 const (
-	metadataProcessingProfileType = "processing_profile"
-	metadataRenditionBuildType    = "rendition_build"
-	metadataRenditionArtifactType = "rendition_artifact"
-	metadataRenditionUnitType     = "rendition_unit"
-	metadataRenditionSegmentType  = "rendition_lexical_segment"
-	metadataRenditionAttachType   = "rendition_attachment"
-	metadataRenditionHeadType     = "rendition_head"
+	metadataProcessingProfileType          = "processing_profile"
+	metadataRenditionBuildType             = "rendition_build"
+	metadataRenditionArtifactType          = "rendition_artifact"
+	metadataRenditionUnitType              = "rendition_unit"
+	metadataRenditionSegmentType           = "rendition_lexical_segment"
+	metadataRenditionAttachType            = "rendition_attachment"
+	metadataRenditionHeadType              = "rendition_head"
+	metadataCurrentRenditionRootType       = "current_rendition_root"
+	metadataDerivativePurgeSuppressionType = "derivative_purge_suppression"
 )
 
 type metadataProcessingProfile struct {
@@ -122,6 +124,29 @@ type metadataRenditionHead struct {
 	PublishedAt                  string `json:"published_at"`
 }
 
+type metadataCurrentRenditionRoot struct {
+	Type         string                     `json:"type"`
+	ID           string                     `json:"root_id"`
+	Kind         CurrentRenditionRootKind   `json:"root_kind"`
+	TargetKind   CurrentRenditionTargetKind `json:"target_kind"`
+	TargetID     string                     `json:"target_id"`
+	FencingToken int64                      `json:"fencing_token"`
+	RecordedAt   string                     `json:"recorded_at"`
+	Active       bool                       `json:"active"`
+	ReleasedAt   *string                    `json:"released_at"`
+}
+
+type metadataDerivativePurgeSuppression struct {
+	Type               string  `json:"type"`
+	SourceSHA256       string  `json:"source_sha256"`
+	ProfileFingerprint string  `json:"profile_fingerprint"`
+	BuildID            string  `json:"build_id"`
+	PurgedAt           string  `json:"purged_at"`
+	Active             bool    `json:"active"`
+	SupersededAt       *string `json:"superseded_at"`
+	SupersedingBuildID *string `json:"superseding_build_id"`
+}
+
 var processingMetadataRequiredFields = map[string][]string{
 	metadataProcessingProfileType: {
 		metadataTypeField, "profile_fingerprint", "canonical_profile",
@@ -161,6 +186,14 @@ var processingMetadataRequiredFields = map[string][]string{
 		metadataTypeField, "content_version_id", "processing_profile_fingerprint",
 		"attachment_id", "published_at",
 	},
+	metadataCurrentRenditionRootType: {
+		metadataTypeField, "root_id", "root_kind", "target_kind", "target_id",
+		"fencing_token", "recorded_at", "active", "released_at",
+	},
+	metadataDerivativePurgeSuppressionType: {
+		metadataTypeField, "source_sha256", "profile_fingerprint", "build_id",
+		"purged_at", "active", "superseded_at", "superseding_build_id",
+	},
 }
 
 func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -189,7 +222,75 @@ func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write met
 	if err := exportRenditionAttachments(ctx, tx, write); err != nil {
 		return err
 	}
-	return exportRenditionHeads(ctx, tx, write)
+	if err := exportRenditionHeads(ctx, tx, write); err != nil {
+		return err
+	}
+	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
+		return err
+	}
+	return exportDerivativePurgeSuppressions(ctx, tx, write)
+}
+
+func exportDurableCurrentRenditionRoots(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
+		       active,released_at
+		FROM current_rendition_roots
+		WHERE root_kind IN ('retention','audit')
+		ORDER BY root_id`)
+	if err != nil {
+		return fmt.Errorf("exporting durable current rendition roots: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataCurrentRenditionRoot{Type: metadataCurrentRenditionRootType}
+		var released sql.NullString
+		if err := rows.Scan(&record.ID, &record.Kind, &record.TargetKind, &record.TargetID,
+			&record.FencingToken, &record.RecordedAt, &record.Active, &released); err != nil {
+			return fmt.Errorf("scanning durable current rendition root metadata: %w", err)
+		}
+		if released.Valid {
+			record.ReleasedAt = &released.String
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("durable current rendition root", rows)
+}
+
+func exportDerivativePurgeSuppressions(
+	ctx context.Context, tx metadataQuerier, write metadataWrite,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_sha256,profile_fingerprint,build_id,purged_at,active,
+		       superseded_at,superseding_build_id
+		FROM derivative_purge_suppressions
+		ORDER BY source_sha256,profile_fingerprint,build_id`)
+	if err != nil {
+		return fmt.Errorf("exporting derivative purge suppressions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataDerivativePurgeSuppression{Type: metadataDerivativePurgeSuppressionType}
+		var supersededAt, supersedingBuildID sql.NullString
+		if err := rows.Scan(&record.SourceSHA256, &record.ProfileFingerprint, &record.BuildID,
+			&record.PurgedAt, &record.Active, &supersededAt, &supersedingBuildID); err != nil {
+			return fmt.Errorf("scanning derivative purge suppression metadata: %w", err)
+		}
+		if supersededAt.Valid {
+			record.SupersededAt = &supersededAt.String
+		}
+		if supersedingBuildID.Valid {
+			record.SupersedingBuildID = &supersedingBuildID.String
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rowsError("derivative purge suppression", rows)
 }
 
 func exportProcessingProfiles(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -514,9 +615,108 @@ func (s *Store) importProcessingMetadataRecord(
 			VALUES(?,?,?,?)`, value.ContentVersionID, value.ProcessingProfileFingerprint,
 			value.AttachmentID, value.PublishedAt)
 		return err
+	case metadataCurrentRenditionRootType:
+		var value metadataCurrentRenditionRoot
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		root := CurrentRenditionRoot{
+			ID: value.ID, Kind: value.Kind, TargetKind: value.TargetKind,
+			TargetID: value.TargetID, FencingToken: value.FencingToken,
+			RecordedAt: value.RecordedAt,
+		}
+		if err := validateDurableCurrentRenditionRootMetadata(value, root); err != nil {
+			return err
+		}
+		if value.Active {
+			if err := requireCurrentRenditionTargetTx(ctx, tx, root); err != nil {
+				return err
+			}
+		}
+		var released any
+		if value.ReleasedAt != nil {
+			released = *value.ReleasedAt
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO current_rendition_roots(
+				root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,
+				active,released_at
+			) VALUES(?,?,?,?,?,?,NULL,?,?)`, root.ID, root.Kind, root.TargetKind,
+			root.TargetID, root.FencingToken, root.RecordedAt, value.Active, released)
+		return err
+	case metadataDerivativePurgeSuppressionType:
+		var value metadataDerivativePurgeSuppression
+		if err := decodeMetadataRecord(raw, &value); err != nil {
+			return err
+		}
+		if err := validateMetadataDerivativePurgeSuppression(value); err != nil {
+			return err
+		}
+		var supersededAt, supersedingBuildID any
+		if value.SupersededAt != nil {
+			supersededAt = *value.SupersededAt
+		}
+		if value.SupersedingBuildID != nil {
+			supersedingBuildID = *value.SupersedingBuildID
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO derivative_purge_suppressions(
+				source_sha256,profile_fingerprint,build_id,purged_at,active,
+				superseded_at,superseding_build_id
+			) VALUES(?,?,?,?,?,?,?)`, value.SourceSHA256, value.ProfileFingerprint,
+			value.BuildID, value.PurgedAt, value.Active, supersededAt, supersedingBuildID)
+		return err
 	default:
 		return fmt.Errorf("unknown processing metadata type %q", kind)
 	}
+}
+
+func validateMetadataDerivativePurgeSuppression(
+	value metadataDerivativePurgeSuppression,
+) error {
+	if value.Type != metadataDerivativePurgeSuppressionType ||
+		value.Active == (value.SupersededAt != nil || value.SupersedingBuildID != nil) ||
+		(value.SupersededAt == nil) != (value.SupersedingBuildID == nil) {
+		return errors.New("invalid derivative purge suppression record")
+	}
+	for name, digest := range map[string]string{
+		"source SHA-256": value.SourceSHA256, "profile fingerprint": value.ProfileFingerprint,
+		"build ID": value.BuildID,
+	} {
+		if err := validateCatalogSHA256(digest, name); err != nil {
+			return err
+		}
+	}
+	if err := validateMetadataTime("derivative purge suppression purged_at", value.PurgedAt); err != nil {
+		return err
+	}
+	if value.SupersededAt != nil {
+		if err := validateMetadataTime(
+			"derivative purge suppression superseded_at", *value.SupersededAt); err != nil {
+			return err
+		}
+		return validateCatalogSHA256(*value.SupersedingBuildID, "superseding build ID")
+	}
+	return nil
+}
+
+func validateDurableCurrentRenditionRootMetadata(
+	value metadataCurrentRenditionRoot, root CurrentRenditionRoot,
+) error {
+	if value.Type != metadataCurrentRenditionRootType ||
+		(root.Kind != RenditionRootRetention && root.Kind != RenditionRootAudit) {
+		return errors.New("invalid durable current rendition root record")
+	}
+	if err := validateCurrentRenditionRoot(root); err != nil {
+		return err
+	}
+	if value.Active == (value.ReleasedAt != nil) {
+		return errors.New("durable current rendition root active state is inconsistent")
+	}
+	if value.ReleasedAt != nil {
+		return validateMetadataTime("current rendition root released_at", *value.ReleasedAt)
+	}
+	return nil
 }
 
 type importedProcessingBlob struct {
@@ -1086,6 +1286,103 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			return err
 		}
 		if err := validateRenditionHeadRecord(record); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return validateCurrentRenditionRootState(ctx, tx)
+}
+
+func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) (_ error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
+		       COALESCE(expires_at,''),active,released_at
+		FROM current_rendition_roots ORDER BY root_id`)
+	if err != nil {
+		return fmt.Errorf("reading current rendition root state: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var root CurrentRenditionRoot
+		var active bool
+		var released sql.NullString
+		if err := rows.Scan(&root.ID, &root.Kind, &root.TargetKind, &root.TargetID,
+			&root.FencingToken, &root.RecordedAt, &root.ExpiresAt, &active, &released); err != nil {
+			return fmt.Errorf("scanning current rendition root state: %w", err)
+		}
+		if err := validateCurrentRenditionRoot(root); err != nil {
+			return fmt.Errorf("invalid current rendition root %s: %w", root.ID, err)
+		}
+		if active == released.Valid {
+			return fmt.Errorf("current rendition root %s active state is inconsistent", root.ID)
+		}
+		if released.Valid {
+			if err := validateMetadataTime("current rendition root released_at", released.String); err != nil {
+				return err
+			}
+		}
+		if !active {
+			continue
+		}
+		var present bool
+		switch root.TargetKind {
+		case RenditionRootBuild:
+			err = tx.QueryRowContext(ctx,
+				`SELECT EXISTS(SELECT 1 FROM rendition_builds WHERE build_id=?)`, root.TargetID,
+			).Scan(&present)
+		case RenditionRootLexicalGeneration:
+			var schema bool
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM sqlite_schema WHERE type='table'
+				AND name='rendition_lexical_generations'
+			)`).Scan(&schema)
+			if err == nil && schema {
+				err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+					SELECT 1 FROM rendition_lexical_generations WHERE generation_id=?
+				)`, root.TargetID).Scan(&present)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("validating current rendition root %s target: %w", root.ID, err)
+		}
+		if !present {
+			return fmt.Errorf("current rendition root %s target %s is missing", root.ID, root.TargetID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return validateDerivativePurgeSuppressionState(ctx, tx)
+}
+
+func validateDerivativePurgeSuppressionState(
+	ctx context.Context, tx metadataQuerier,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_sha256,profile_fingerprint,build_id,purged_at,active,
+		       superseded_at,superseding_build_id
+		FROM derivative_purge_suppressions
+		ORDER BY source_sha256,profile_fingerprint,build_id`)
+	if err != nil {
+		return fmt.Errorf("reading derivative purge suppression state: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		value := metadataDerivativePurgeSuppression{Type: metadataDerivativePurgeSuppressionType}
+		var supersededAt, supersedingBuildID sql.NullString
+		if err := rows.Scan(&value.SourceSHA256, &value.ProfileFingerprint, &value.BuildID,
+			&value.PurgedAt, &value.Active, &supersededAt, &supersedingBuildID); err != nil {
+			return err
+		}
+		if supersededAt.Valid {
+			value.SupersededAt = &supersededAt.String
+		}
+		if supersedingBuildID.Valid {
+			value.SupersedingBuildID = &supersedingBuildID.String
+		}
+		if err := validateMetadataDerivativePurgeSuppression(value); err != nil {
 			return err
 		}
 	}

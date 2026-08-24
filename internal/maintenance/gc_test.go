@@ -3,6 +3,7 @@ package maintenance
 import (
 	"bytes"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -39,6 +40,48 @@ func TestRetireLooseCandidatesContinuesAfterMissingLocation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 	assert.Equal(t, []packstore.StoreID{"missing", "present"}, retired)
+}
+
+func TestPurgeDerivativesRetiresPackedDerivativeBytes(t *testing.T) {
+	// Mutation caught: catalog GC alone marks a packed derivative dead while its
+	// sensitive bytes remain recoverable from the live immutable pack file.
+	root := t.TempDir()
+	metadata, err := store.Open(filepath.Join(root, "metadata.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+	blobRoot := filepath.Join(root, "blobs")
+	blobs, err := blob.New(store.NewPackCatalog(metadata), blobRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	written, err := blobs.WriteDetailedContext(
+		t.Context(), bytes.NewReader([]byte("packed synthetic sensitive derivative payload")))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	require.NoError(t, metadata.RecordRenditionBlob(t.Context(), written.Hash, written.Size,
+		store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize,
+			PackEligible: written.PackEligible, Created: written.Created}))
+	packed, err := blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, packed.PacksSealed)
+	records, err := store.NewPackCatalog(metadata).ListPackRecords(t.Context())
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	oldPackPath := filepath.Join(blobRoot, "packs", records[0].PackID[:2],
+		records[0].PackID+packstore.PackExt)
+	require.FileExists(t, oldPackPath)
+
+	report, err := PurgeDerivatives(t.Context(), metadata, blobs, store.PurgeRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Physical.PendingPackedBlobs)
+	assert.Equal(t, 1, report.Repack.PacksRemoved)
+	assert.NoFileExists(t, oldPackPath)
+	records, err = store.NewPackCatalog(metadata).ListPackRecords(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, records)
+	_, err = blobs.Open(written.Hash)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	assert.True(t, report.Purge.ImmutableBackupCopiesUntouched)
 }
 
 func TestPurgeDerivativesRunsLocationAwarePhysicalGC(t *testing.T) {

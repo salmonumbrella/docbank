@@ -90,6 +90,14 @@ func (s *Store) MigrateLegacyPlainText(
 				!utf8.ValidString(row.text.String) {
 				continue
 			}
+			suppressed, err := legacyDerivativeSuppressedTx(
+				ctx, tx, row.blobHash, profile.Fingerprint)
+			if err != nil {
+				return fmt.Errorf("checking legacy derivative purge suppression: %w", err)
+			}
+			if suppressed {
+				continue
+			}
 			if _, authorityErr := requirePhysicalAuthorityTx(tx, row.blobHash); authorityErr != nil {
 				if errors.Is(authorityErr, ErrNotFound) ||
 					errors.Is(authorityErr, ErrPhysicalAuthorityMissing) {
@@ -169,6 +177,18 @@ func (s *Store) MigrateLegacyPlainText(
 					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash,
 				); err != nil {
 					return fmt.Errorf("clearing migrated legacy plain-text work: %w", err)
+				}
+				continue
+			}
+			suppressed, err := legacyDerivativeSuppressedTx(
+				ctx, tx, blobHash, profile.Fingerprint)
+			if err != nil {
+				return fmt.Errorf("checking legacy repair purge suppression: %w", err)
+			}
+			if suppressed {
+				if _, err := tx.ExecContext(ctx,
+					`DELETE FROM text_extraction_queue WHERE blob_hash=?`, blobHash); err != nil {
+					return fmt.Errorf("clearing suppressed legacy repair work: %w", err)
 				}
 				continue
 			}
@@ -506,62 +526,11 @@ func insertLegacyRenditionAttachmentTx(
 func stageLegacyLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx,
 ) (LexicalGeneration, error) {
-	if _, err := tx.ExecContext(ctx, lexicalProjectionSchema); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("initializing migrated lexical projection: %w", err)
-	}
 	rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	generation := LexicalGeneration{
-		ID: lexicalManifestDigest(rows), SegmentCount: len(rows),
-		ManifestDigest: lexicalManifestDigest(rows),
-	}
-	var existingCount int
-	var existingManifest sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT g.segment_count,m.manifest_digest
-		FROM rendition_lexical_generations g
-		LEFT JOIN rendition_lexical_generation_manifests m USING(generation_id)
-		WHERE g.generation_id=?`, generation.ID,
-	).Scan(&existingCount, &existingManifest)
-	if err == nil {
-		existingRows, err := readLexicalManifestRowsTx(ctx, tx, generation.ID, "")
-		if err != nil {
-			return LexicalGeneration{}, err
-		}
-		if !existingManifest.Valid || existingCount != generation.SegmentCount ||
-			lexicalManifestDigest(existingRows) != generation.ManifestDigest {
-			return LexicalGeneration{}, fmt.Errorf(
-				"migrated lexical generation %s has a different immutable manifest", generation.ID,
-			)
-		}
-		return generation, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return LexicalGeneration{}, fmt.Errorf("reading migrated lexical generation: %w", err)
-	}
-	for _, row := range rows {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_fts(generation_id,build_id,segment_id,text)
-			VALUES(?,?,?,?)`, generation.ID, row.buildID, row.segmentID, row.text,
-		); err != nil {
-			return LexicalGeneration{}, fmt.Errorf("building migrated lexical generation: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_generations(generation_id,segment_count,built_at)
-		VALUES(?,?,?)`, generation.ID, generation.SegmentCount, nowRFC3339(),
-	); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("completing migrated lexical generation: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_generation_manifests(generation_id,manifest_digest)
-		VALUES(?,?)`, generation.ID, generation.ManifestDigest,
-	); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("recording migrated lexical manifest: %w", err)
-	}
-	return generation, nil
+	return stageLexicalGenerationTx(ctx, tx, lexicalManifestDigest(rows))
 }
 
 func compareLegacyServingCompatibilityTx(

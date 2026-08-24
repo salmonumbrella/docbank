@@ -712,7 +712,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM rendition_units)
 		    + (SELECT COUNT(*) FROM rendition_lexical_segments)
 		    + (SELECT COUNT(*) FROM rendition_attachments)
-		    + (SELECT COUNT(*) FROM rendition_heads),
+		    + (SELECT COUNT(*) FROM rendition_heads)
+		    + (SELECT COUNT(*) FROM current_rendition_roots)
+		    + (SELECT COUNT(*) FROM derivative_purge_suppressions),
 		  (SELECT COUNT(*) FROM blob_locations)
 		    + (SELECT COUNT(*) FROM blob_packs)
 		    + (SELECT COUNT(*) FROM blob_pack_entries)
@@ -967,26 +969,28 @@ const (
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
 
 var metadataRequiredFields = map[string][]string{
-	"blob":                        {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
-	"node":                        {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":             {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
-	metadataIngestType:            {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
-	metadataProvenanceType:        {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
-	metadataWatchSourceType:       {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", metadataSizeField},
-	"tag":                         {metadataTypeField, "tag_id", "name", "revision"},
-	"node_tag":                    {metadataTypeField, metadataNodeIDField, "tag_id"},
-	"extracted_text":              {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
-	metadataAuditAuthorityType:    {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
-	metadataAuditScopeType:        {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
-	metadataAuditMembershipType:   {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
-	metadataAuditRecordType:       {metadataTypeField, "digest", "record"},
-	metadataProcessingProfileType: processingMetadataRequiredFields[metadataProcessingProfileType],
-	metadataRenditionBuildType:    processingMetadataRequiredFields[metadataRenditionBuildType],
-	metadataRenditionArtifactType: processingMetadataRequiredFields[metadataRenditionArtifactType],
-	metadataRenditionUnitType:     processingMetadataRequiredFields[metadataRenditionUnitType],
-	metadataRenditionSegmentType:  processingMetadataRequiredFields[metadataRenditionSegmentType],
-	metadataRenditionAttachType:   processingMetadataRequiredFields[metadataRenditionAttachType],
-	metadataRenditionHeadType:     processingMetadataRequiredFields[metadataRenditionHeadType],
+	"blob":                                 {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
+	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", "revision", metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
+	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, "blob_hash", metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", "source_version_id"},
+	metadataIngestType:                     {metadataTypeField, "ingest_id", "started_at", "source_kind", "source_desc"},
+	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, "ingest_id", "original_path", "original_mtime", "supersedes"},
+	metadataWatchSourceType:                {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, "blob_hash", metadataSizeField},
+	"tag":                                  {metadataTypeField, "tag_id", "name", "revision"},
+	"node_tag":                             {metadataTypeField, metadataNodeIDField, "tag_id"},
+	"extracted_text":                       {metadataTypeField, "blob_hash", "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
+	metadataAuditAuthorityType:             {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
+	metadataAuditScopeType:                 {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
+	metadataAuditMembershipType:            {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
+	metadataAuditRecordType:                {metadataTypeField, "digest", "record"},
+	metadataProcessingProfileType:          processingMetadataRequiredFields[metadataProcessingProfileType],
+	metadataRenditionBuildType:             processingMetadataRequiredFields[metadataRenditionBuildType],
+	metadataRenditionArtifactType:          processingMetadataRequiredFields[metadataRenditionArtifactType],
+	metadataRenditionUnitType:              processingMetadataRequiredFields[metadataRenditionUnitType],
+	metadataRenditionSegmentType:           processingMetadataRequiredFields[metadataRenditionSegmentType],
+	metadataRenditionAttachType:            processingMetadataRequiredFields[metadataRenditionAttachType],
+	metadataRenditionHeadType:              processingMetadataRequiredFields[metadataRenditionHeadType],
+	metadataCurrentRenditionRootType:       processingMetadataRequiredFields[metadataCurrentRenditionRootType],
+	metadataDerivativePurgeSuppressionType: processingMetadataRequiredFields[metadataDerivativePurgeSuppressionType],
 }
 
 var metadataNullableFields = map[string]map[string]bool{
@@ -994,9 +998,13 @@ var metadataNullableFields = map[string]map[string]bool{
 		"parent_id": true, "current_version_id": true, "trashed_at": true,
 		"trash_parent": true, "trash_name": true,
 	},
-	"content_version":      {"mime_type": true, "source_version_id": true},
-	metadataProvenanceType: {"original_mtime": true, "supersedes": true},
-	"extracted_text":       {"error": true, "text": true},
+	"content_version":                {"mime_type": true, "source_version_id": true},
+	metadataProvenanceType:           {"original_mtime": true, "supersedes": true},
+	"extracted_text":                 {"error": true, "text": true},
+	metadataCurrentRenditionRootType: {"released_at": true},
+	metadataDerivativePurgeSuppressionType: {
+		"superseded_at": true, "superseding_build_id": true,
+	},
 }
 
 func decodeMetadataRecord(raw jsontext.Value, dst any) error {

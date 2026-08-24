@@ -752,7 +752,10 @@ CREATE TABLE IF NOT EXISTS current_rendition_roots (
     fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
     recorded_at   TEXT NOT NULL,
     expires_at    TEXT,
-    CHECK ((root_kind IN ('reader_lease', 'worker_lease')) = (expires_at IS NOT NULL))
+    active        INTEGER NOT NULL CHECK (active IN (0, 1)),
+    released_at   TEXT,
+    CHECK ((root_kind IN ('reader_lease', 'worker_lease')) = (expires_at IS NOT NULL)),
+    CHECK ((active = 1) = (released_at IS NULL))
 );
 
 CREATE INDEX IF NOT EXISTS current_rendition_roots_target
@@ -760,6 +763,25 @@ CREATE INDEX IF NOT EXISTS current_rendition_roots_target
 CREATE INDEX IF NOT EXISTS current_rendition_roots_expiry
     ON current_rendition_roots(expires_at)
     WHERE expires_at IS NOT NULL;
+
+-- Purge suppression is durable logical authority. It prevents startup legacy
+-- convergence from silently recreating an exact purged derivative. A later
+-- explicit authorization supersedes, rather than deletes, that history.
+CREATE TABLE IF NOT EXISTS derivative_purge_suppressions (
+    source_sha256        TEXT NOT NULL,
+    profile_fingerprint  TEXT NOT NULL,
+    build_id             TEXT NOT NULL,
+    purged_at            TEXT NOT NULL,
+    active               INTEGER NOT NULL CHECK (active IN (0, 1)),
+    superseded_at        TEXT,
+    superseding_build_id TEXT,
+    PRIMARY KEY (source_sha256, profile_fingerprint, build_id),
+    CHECK ((active = 1) = (superseded_at IS NULL AND superseding_build_id IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS derivative_purge_suppressions_active_source
+    ON derivative_purge_suppressions(source_sha256, profile_fingerprint)
+    WHERE active = 1;
 
 CREATE TRIGGER IF NOT EXISTS processing_profiles_immutable_update
 BEFORE UPDATE ON processing_profiles BEGIN

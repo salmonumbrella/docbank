@@ -73,6 +73,7 @@ type GCReport struct {
 type DerivativePurgeReport struct {
 	Purge    store.PurgeReport
 	Physical GCReport
+	Repack   RepackReport
 }
 
 type VerifyOptions struct{ Budget Budget }
@@ -335,6 +336,25 @@ func PurgeDerivatives(
 		}
 		cursor = page.NextCursor
 	}
+	cursor = ""
+	for {
+		page, err := Repack(ctx, metadata, blobs, RepackOptions{
+			Budget: Budget{MaxObjects: DefaultMaxObjects, Cursor: cursor},
+			MinAge: time.Nanosecond, MinDeadBytes: 1,
+		})
+		addRepackReport(&report.Repack, page)
+		if err != nil {
+			return report, fmt.Errorf("retiring purged packed derivative bytes: %w", err)
+		}
+		if !page.More {
+			break
+		}
+		if page.NextCursor == "" {
+			return report, errors.New(
+				"retiring purged packed derivative bytes made no resumable progress")
+		}
+		cursor = page.NextCursor
+	}
 	return report, nil
 }
 
@@ -352,6 +372,20 @@ func addGCReport(total *GCReport, page GCReport) {
 	if !page.More {
 		total.NextCursor = ""
 	}
+}
+
+func addRepackReport(total *RepackReport, page RepackReport) {
+	total.MappingsPruned += page.MappingsPruned
+	total.PacksSelected += page.PacksSelected
+	total.PacksRewritten += page.PacksRewritten
+	total.PacksSealed += page.PacksSealed
+	total.PacksRemoved += page.PacksRemoved
+	total.PacksDeferredOversized += page.PacksDeferredOversized
+	total.BlobsRepacked += page.BlobsRepacked
+	total.BytesRepacked += page.BytesRepacked
+	total.BudgetExhausted = total.BudgetExhausted || page.BudgetExhausted
+	total.More = page.More
+	total.NextCursor = page.NextCursor
 }
 
 func retireUnreachableLooseLocations(

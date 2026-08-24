@@ -184,11 +184,15 @@ func (s *Store) PurgeDerivatives(
 	defer lexicalGenerationReaders.Unlock()
 
 	report := PurgeReport{ImmutableBackupCopiesUntouched: true}
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		auditActive, err := auditAuthorityActiveTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		asOf := nowRFC3339()
 		result, err := tx.ExecContext(ctx, `
-			DELETE FROM current_rendition_roots
-			WHERE expires_at IS NOT NULL AND expires_at<=?`, asOf)
+			UPDATE current_rendition_roots SET active=0,released_at=?
+			WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=?`, asOf, asOf)
 		if err != nil {
 			return fmt.Errorf("removing expired current rendition roots: %w", err)
 		}
@@ -222,6 +226,11 @@ func (s *Store) PurgeDerivatives(
 			for _, buildID := range buildIDs {
 				requestedBuilds[buildID] = struct{}{}
 			}
+		}
+		suppressionChanges, err := installDerivativePurgeSuppressionsTx(
+			ctx, tx, requestedBuilds, asOf)
+		if err != nil {
+			return err
 		}
 
 		for _, attachment := range selected {
@@ -258,6 +267,7 @@ func (s *Store) PurgeDerivatives(
 				EXISTS(SELECT 1 FROM rendition_attachments WHERE build_id=?) OR
 				EXISTS(SELECT 1 FROM current_rendition_roots
 				       WHERE target_kind='rendition_build' AND target_id=?
+				         AND active=1
 				         AND (expires_at IS NULL OR expires_at>?))`, buildID, buildID, asOf,
 			).Scan(&rooted); err != nil {
 				return fmt.Errorf("checking rendition build %s roots: %w", buildID, err)
@@ -270,6 +280,12 @@ func (s *Store) PurgeDerivatives(
 			}
 			candidateBuilds[buildID] = struct{}{}
 		}
+		requestedUnrootedBuilds := make(map[string]struct{})
+		for buildID := range requestedBuilds {
+			if _, collectible := candidateBuilds[buildID]; collectible {
+				requestedUnrootedBuilds[buildID] = struct{}{}
+			}
+		}
 
 		lexicalSchema, err := lexicalGenerationSchemaPresentTx(ctx, tx)
 		if err != nil {
@@ -277,8 +293,8 @@ func (s *Store) PurgeDerivatives(
 		}
 		if lexicalSchema {
 			generationRows, err := tx.QueryContext(ctx, `
-				SELECT DISTINCT generation_id,build_id
-				FROM rendition_lexical_fts ORDER BY generation_id,build_id`)
+				SELECT generation_id,build_id
+				FROM rendition_lexical_generation_builds ORDER BY generation_id,build_id`)
 			if err != nil {
 				return fmt.Errorf("reading lexical generation build membership: %w", err)
 			}
@@ -301,6 +317,7 @@ func (s *Store) PurgeDerivatives(
 				       EXISTS(SELECT 1 FROM current_rendition_roots r
 				              WHERE r.target_kind='lexical_generation'
 				                AND r.target_id=g.generation_id
+				                AND r.active=1
 				                AND (r.expires_at IS NULL OR r.expires_at>?))
 				FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
 			if err != nil {
@@ -322,7 +339,7 @@ func (s *Store) PurgeDerivatives(
 					return fmt.Errorf("scanning lexical generation for collection: %w", err)
 				}
 				for _, buildID := range generationBuilds[generation.id] {
-					if _, selected := requestedBuilds[buildID]; selected {
+					if _, selected := requestedUnrootedBuilds[buildID]; selected {
 						generation.targetsRequestedBuild = true
 						break
 					}
@@ -490,6 +507,12 @@ func (s *Store) PurgeDerivatives(
 		sort.Strings(report.RetainedBuildIDs)
 		report.RetainedBuildIDs = slices.Compact(report.RetainedBuildIDs)
 		sort.Strings(report.RetainedLexicalGenerations)
+		if auditActive && len(suppressionChanges) != 0 {
+			if err := s.persistAuditedDerivativeSuppressionChanges(
+				ctx, tx, suppressionChanges); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -574,51 +597,65 @@ func (s *Store) PutCurrentRenditionRoot(ctx context.Context, root CurrentRenditi
 		return err
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := requireCurrentRenditionTargetTx(ctx, tx, root); err != nil {
-			return err
-		}
-		var stored CurrentRenditionRoot
-		err := tx.QueryRowContext(ctx, `
+		return putCurrentRenditionRootTx(ctx, tx, root)
+	})
+}
+
+func putCurrentRenditionRootTx(
+	ctx context.Context, tx *sql.Tx, root CurrentRenditionRoot,
+) error {
+	var stored CurrentRenditionRoot
+	var storedActive bool
+	err := tx.QueryRowContext(ctx, `
 			SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
-			       COALESCE(expires_at,'')
+			       COALESCE(expires_at,''),active
 			FROM current_rendition_roots WHERE root_id=?`, root.ID,
-		).Scan(&stored.ID, &stored.Kind, &stored.TargetKind, &stored.TargetID,
-			&stored.FencingToken, &stored.RecordedAt, &stored.ExpiresAt)
-		if errors.Is(err, sql.ErrNoRows) {
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO current_rendition_roots(
-					root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at
-				) VALUES(?,?,?,?,?,?,NULLIF(?,''))`, root.ID, root.Kind, root.TargetKind,
-				root.TargetID, root.FencingToken, root.RecordedAt, root.ExpiresAt)
-			if err != nil {
-				return fmt.Errorf("recording current rendition root %s: %w", root.ID, err)
-			}
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("reading current rendition root %s: %w", root.ID, err)
-		}
+	).Scan(&stored.ID, &stored.Kind, &stored.TargetKind, &stored.TargetID,
+		&stored.FencingToken, &stored.RecordedAt, &stored.ExpiresAt, &storedActive)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reading current rendition root %s: %w", root.ID, err)
+	}
+	if err == nil {
 		if root.FencingToken < stored.FencingToken {
 			return fmt.Errorf("root %s token %d is older than %d: %w", root.ID,
 				root.FencingToken, stored.FencingToken, ErrCurrentRenditionRootFenced)
 		}
 		if root.FencingToken == stored.FencingToken {
+			if !storedActive {
+				return fmt.Errorf("root %s token %d was already released: %w",
+					root.ID, root.FencingToken, ErrCurrentRenditionRootFenced)
+			}
 			if root == stored {
 				return nil
 			}
 			return fmt.Errorf("root %s token %d names different authority: %w",
 				root.ID, root.FencingToken, ErrCurrentRenditionRootFenced)
 		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE current_rendition_roots
-			SET root_kind=?,target_kind=?,target_id=?,fencing_token=?,recorded_at=?,
-			    expires_at=NULLIF(?,'')
-			WHERE root_id=?`, root.Kind, root.TargetKind, root.TargetID,
-			root.FencingToken, root.RecordedAt, root.ExpiresAt, root.ID); err != nil {
-			return fmt.Errorf("renewing current rendition root %s: %w", root.ID, err)
+	}
+	if err := requireCurrentRenditionTargetTx(ctx, tx, root); err != nil {
+		return err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.ExecContext(ctx, `
+				INSERT INTO current_rendition_roots(
+					root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,
+					active,released_at
+				) VALUES(?,?,?,?,?,?,NULLIF(?,''),1,NULL)`, root.ID, root.Kind, root.TargetKind,
+			root.TargetID, root.FencingToken, root.RecordedAt, root.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("recording current rendition root %s: %w", root.ID, err)
 		}
 		return nil
-	})
+	}
+	if _, err := tx.ExecContext(ctx, `
+			UPDATE current_rendition_roots
+			SET root_kind=?,target_kind=?,target_id=?,fencing_token=?,recorded_at=?,
+			    expires_at=NULLIF(?,''),active=1,released_at=NULL
+			WHERE root_id=?`, root.Kind, root.TargetKind, root.TargetID,
+		root.FencingToken, root.RecordedAt, root.ExpiresAt, root.ID); err != nil {
+		return fmt.Errorf("renewing current rendition root %s: %w", root.ID, err)
+	}
+	return nil
 }
 
 // ReleaseCurrentRenditionRoot releases only the exact fencing token supplied.
@@ -631,9 +668,10 @@ func (s *Store) ReleaseCurrentRenditionRoot(
 	}
 	var released bool
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx,
-			`DELETE FROM current_rendition_roots WHERE root_id=? AND fencing_token=?`,
-			rootID, fencingToken)
+		result, err := tx.ExecContext(ctx, `
+			UPDATE current_rendition_roots SET active=0,released_at=?
+			WHERE root_id=? AND fencing_token=? AND active=1`,
+			nowRFC3339(), rootID, fencingToken)
 		if err != nil {
 			return fmt.Errorf("releasing current rendition root %s: %w", rootID, err)
 		}
@@ -740,6 +778,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 		AND NOT EXISTS (
 			SELECT 1 FROM current_rendition_roots r
 			WHERE r.target_kind='rendition_build' AND r.target_id=b.build_id
+			  AND r.active=1
 			  AND (r.expires_at IS NULL OR r.expires_at>?)
 		)
 		ORDER BY b.build_id,a.blob_hash`, asOf)
@@ -785,6 +824,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 			       EXISTS(SELECT 1 FROM current_rendition_roots r
 			              WHERE r.target_kind='lexical_generation'
 			                AND r.target_id=g.generation_id
+			                AND r.active=1
 			                AND (r.expires_at IS NULL OR r.expires_at>?))
 			FROM rendition_lexical_generations g ORDER BY g.generation_id`, asOf)
 		if err != nil {
@@ -815,7 +855,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 		for _, generationID := range rootedGenerationIDs {
 			buildIDs, err := stringColumnTx(ctx, tx,
 				"rooted lexical generation "+generationID, `
-				SELECT DISTINCT build_id FROM rendition_lexical_fts
+				SELECT build_id FROM rendition_lexical_generation_builds
 				WHERE generation_id=? ORDER BY build_id`, generationID)
 			if err != nil {
 				return DerivativeGCPlan{}, err
@@ -836,7 +876,7 @@ func (s *Store) DerivativeGCPlan(ctx context.Context) (_ DerivativeGCPlan, retEr
 	}
 	expiredRows, err := tx.QueryContext(ctx, `
 		SELECT root_id FROM current_rendition_roots
-		WHERE expires_at IS NOT NULL AND expires_at<=? ORDER BY root_id`, asOf)
+		WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=? ORDER BY root_id`, asOf)
 	if err != nil {
 		return DerivativeGCPlan{}, fmt.Errorf("planning expired current rendition roots: %w", err)
 	}
