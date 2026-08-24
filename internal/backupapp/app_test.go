@@ -1931,3 +1931,77 @@ func backupProcessingProfile(t *testing.T) store.ProcessingProfileRecord {
 		TrustBoundary:                  profile.RetentionDisclosure.TrustBoundary,
 	}
 }
+
+func TestDerivativeAuthorityStatsAdmitProviderRoleArtifacts(t *testing.T) {
+	// Mutation caught: classifying catalog-authorized provider-role artifacts
+	// under short class names made backup creation fail with an unauthorized
+	// class error.
+	fixture := newArchiveFixture(t)
+	providerImage := "synthetic provider image payload"
+	var imageHash string
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		receipt, writeErr := fixture.blobs.WriteDetailedContext(
+			t.Context(), strings.NewReader(providerImage))
+		if writeErr != nil {
+			return writeErr
+		}
+		encoding, err := receipt.EncodingName()
+		if err != nil {
+			return err
+		}
+		imageHash = receipt.Hash
+		return fixture.metadata.RecordRenditionBlob(t.Context(), receipt.Hash, receipt.Size,
+			store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize,
+				PackEligible: receipt.PackEligible, Created: receipt.Created})
+	}))
+	policy := `{"roles":[{"max_count":1,"min_count":1,"role":"provider_image"}],"version":1}`
+	profile := backupProcessingProfile(t)
+	source, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
+	require.NoError(t, err)
+	build := store.RenditionBuildRecord{
+		ID:                                backupHash("provider-build"),
+		VaultID:                           fixture.metadata.VaultID(),
+		SourceSHA256:                      source.BlobHash,
+		RenditionRequestFingerprint:       profile.RenditionRequestFingerprint,
+		EvidenceLexicalFingerprint:        profile.EvidenceLexicalFingerprint,
+		CapturedArtifactPolicyFingerprint: backupHash(policy),
+		CapturedArtifactPolicy:            jsontext.Value(policy),
+		AuthorizationChecksum:             backupHash("provider-authorization"),
+		ProviderOperationID:               "synthetic-provider-image-operation",
+		ProviderReceipt:                   jsontext.Value(`{"provider":"synthetic"}`),
+		EvidenceChecksum:                  backupHash("provider-evidence"),
+		RenditionChecksum:                 backupHash("provider-rendition"),
+		MarkdownChecksum:                  backupHash("provider-markdown"),
+		Completeness:                      document.EvidenceComplete,
+		Warnings:                          []string{},
+		CompletedAt:                       "2026-08-24T00:00:00.000000000Z",
+		DeclaredArtifactCount:             1,
+		Artifacts: []store.RenditionArtifactRecord{{
+			ID: "image", Role: string(document.EvidenceArtifactImage), BlobHash: imageHash,
+			Size: int64(len(providerImage)), Checksum: imageHash, State: store.RenditionArtifactVerified,
+		}},
+	}
+	require.NoError(t, fixture.metadata.StageRenditionBuild(t.Context(), build))
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(
+		t.Context(), repo, "test-version", fixture.metadata, fixture.blobs, backup.CreateOptions{},
+	)
+	require.NoError(t, err)
+	var snapshotStats struct {
+		DerivativeAuthority *struct {
+			Classes []struct {
+				Class          string `json:"class"`
+				Classification string `json:"classification"`
+				Count          int64  `json:"count"`
+			} `json:"classes"`
+		} `json:"derivative_authority"`
+	}
+	require.NoError(t, json.Unmarshal(manifest.Stats, &snapshotStats))
+	require.NotNil(t, snapshotStats.DerivativeAuthority)
+	require.Len(t, snapshotStats.DerivativeAuthority.Classes, 1)
+	assert.Equal(t, "provider_image", snapshotStats.DerivativeAuthority.Classes[0].Class)
+	assert.Equal(t, "included", snapshotStats.DerivativeAuthority.Classes[0].Classification)
+	assert.Equal(t, int64(1), snapshotStats.DerivativeAuthority.Classes[0].Count)
+}

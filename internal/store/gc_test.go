@@ -1518,3 +1518,43 @@ func TestAllBlobs(t *testing.T) {
 	assert.Equal(t, fakeHash("a1"), blobs[0].Hash) // hash-ordered
 	assert.Equal(t, int64(1), blobs[0].Size)
 }
+
+func TestPurgeDerivativesRetainsHeadedGenerationMembershipOverOrphanStagedBuild(t *testing.T) {
+	// Mutation caught: skipping membership protection for a serving generation
+	// left its unattached member build in the deletion candidates, so the
+	// build delete violated the generation-membership foreign key.
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	orphanSource := fakeHash("3e")
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return s.EnsureBlobTx(tx, orphanSource, 20)
+	}))
+	orphan := catalogRenditionBuild(s, profile)
+	orphan.ID = catalogBuildReplacement
+	orphan.SourceSHA256 = orphanSource
+	orphan.ProviderOperationID = "synthetic-interrupted-publication"
+	require.NoError(t, s.StageRenditionBuild(ctx, orphan))
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("91"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-23T17:00:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment,
+		RenditionHeadRecord{
+			ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: attachment.ID, PublishedAt: "2026-08-23T17:01:00.000000000Z",
+		}, generation.ID))
+
+	report, err := s.PurgeDerivatives(ctx, PurgeRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{orphan.ID}, report.RetainedBuildIDs)
+	assert.Zero(t, report.RemovedBuilds)
+	assert.Zero(t, report.RemovedLexicalGenerations)
+	active, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, generation.ID, active.ID)
+}

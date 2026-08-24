@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/kit/backup"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -137,7 +138,12 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 	if len(classes) == 0 {
 		return nil, false, nil
 	}
-	ordered := []string{"normalized_evidence", "sanitized_markdown", "image", "markdown", "structured", "transcript", "lexical_projection"}
+	ordered := []string{
+		"normalized_evidence", "sanitized_markdown",
+		string(document.EvidenceArtifactImage), string(document.EvidenceArtifactMarkdown),
+		string(document.EvidenceArtifactStructured), string(document.EvidenceArtifactTranscript),
+		"lexical_projection",
+	}
 	result := &DerivativeAuthorityStats{
 		Version: derivativeAuthorityVersion, ProviderDependent: []string{},
 	}

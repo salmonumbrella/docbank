@@ -360,9 +360,15 @@ func (s *Store) PurgeDerivatives(
 					}
 					generation.headed = false
 				}
-				if !generation.targetsRequestedBuild && generation.headed {
-					continue
+			if !generation.targetsRequestedBuild && generation.headed {
+				for _, buildID := range generationBuilds[generation.id] {
+					if _, selected := candidateBuilds[buildID]; selected {
+						delete(candidateBuilds, buildID)
+						report.RetainedBuildIDs = append(report.RetainedBuildIDs, buildID)
+					}
 				}
+				continue
+			}
 				if generation.typedRooted || readers[generation.id] != 0 {
 					report.RetainedLexicalGenerations = append(
 						report.RetainedLexicalGenerations, generation.id)
