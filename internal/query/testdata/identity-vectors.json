@@ -100,6 +100,10 @@
     {"name": "non_ascii_mime_case_is_rejected", "media_type": "İmage/png", "filename": "message.eml", "family": "unknown"},
     {"name": "non_ascii_extension_missing_mime", "media_type": "", "filename": "synthetic.İCS", "family": "unknown"},
     {"name": "non_ascii_extension_generic_mime", "media_type": "application/octet-stream", "filename": "synthetic.İCS", "family": "unknown"},
-    {"name": "ascii_uppercase_extension_fallback", "media_type": "application/octet-stream", "filename": "REPORT.PDF", "family": "document"}
+    {"name": "ascii_uppercase_extension_fallback", "media_type": "application/octet-stream", "filename": "REPORT.PDF", "family": "document"},
+    {"name": "jsonl_alias_conflicting_extension", "media_type": "application/jsonl", "filename": "synthetic.pdf", "family": "text"},
+    {"name": "jsonl_alias_ascii_case_and_parameters", "media_type": " APPLICATION/JSONL ; charset=utf-8 ", "filename": "synthetic.pdf", "family": "text"},
+    {"name": "jsonl_canonical_mime", "media_type": "application/x-ndjson", "filename": "synthetic.pdf", "family": "text"},
+    {"name": "jsonl_generic_mime_extension_fallback", "media_type": "application/octet-stream", "filename": "synthetic.JSONL", "family": "text"}
   ]
 }

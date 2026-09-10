@@ -7,7 +7,13 @@ import (
 	"reflect"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"go.kenn.io/docbank/internal/query"
 )
+
+// The envelope allowance covers maximally escaped bounded name and description
+// fields plus JSON member syntax around one maximum-sized payload.
+const maxSavedQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // SavedQueryPayload carries one complete query or literal highlight set as
 // structured JSON. Its raw representation reaches the strict canonical codec
@@ -22,6 +28,9 @@ func (p SavedQueryPayload) MarshalJSON() ([]byte, error) {
 }
 
 func (p *SavedQueryPayload) UnmarshalJSON(raw []byte) error {
+	if len(raw) > query.MaxInputBytes {
+		return errors.New("saved query payload exceeds 128 KiB")
+	}
 	if bytes.Equal(raw, []byte("null")) {
 		return errors.New("saved query payload must be an object")
 	}

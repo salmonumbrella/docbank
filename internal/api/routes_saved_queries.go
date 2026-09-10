@@ -46,8 +46,13 @@ func (o *optionalSavedQueryPayload) UnmarshalJSON(raw []byte) error {
 	if bytes.Equal(raw, []byte("null")) {
 		return errors.New("saved query payload cannot be null")
 	}
+	var value SavedQueryPayload
+	if err := value.UnmarshalJSON(raw); err != nil {
+		return err
+	}
 	o.Set = true
-	return o.Value.UnmarshalJSON(raw)
+	o.Value = value
+	return nil
 }
 
 func (optionalSavedQueryPayload) Schema(r huma.Registry) *huma.Schema {
@@ -81,6 +86,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate) {
 		Summary:       "Save one complete query or literal highlight set",
 		Description:   "Stores intent only. This endpoint does not execute searches or highlight documents.",
 		DefaultStatus: http.StatusCreated,
+		MaxBodyBytes:  maxSavedQueryRequestBytes,
 	}, func(ctx context.Context, in *struct {
 		Body SavedQueryCreateRequest
 	}) (*savedQueryOutput, error) {
@@ -114,8 +120,9 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "updateSavedQuery", Method: http.MethodPatch,
-		Path:    "/api/v1/saved-queries/{saved_query_id}",
-		Summary: "Edit a saved definition under its current revision",
+		Path:         "/api/v1/saved-queries/{saved_query_id}",
+		Summary:      "Edit a saved definition under its current revision",
+		MaxBodyBytes: maxSavedQueryRequestBytes,
 	}, func(ctx context.Context, in *struct {
 		SavedQueryID string `path:"saved_query_id"`
 		IfMatch      string `header:"If-Match"`

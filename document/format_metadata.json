@@ -18,6 +18,7 @@
   {"id":"latex","family":"text","query_family":"text","media_type":"application/x-tex","extensions":["tex","latex"],"unit_kind":"section","provider":true},
   {"id":"json","family":"structured","query_family":"text","media_type":"application/json","extensions":["json"],"unit_kind":"record","provider":true},
   {"id":"jsonl","family":"structured","query_family":"text","media_type":"application/x-ndjson","extensions":["jsonl","ndjson"],"unit_kind":"record","provider":true},
+  {"id":"jsonl-alias","family":"structured","query_family":"text","media_type":"application/jsonl","extensions":[],"unit_kind":"","provider":false},
   {"id":"xml","family":"structured","query_family":"text","media_type":"application/xml","extensions":["xml"],"unit_kind":"record","provider":true},
   {"id":"yaml","family":"structured","query_family":"text","media_type":"application/yaml","extensions":["yaml","yml"],"unit_kind":"record","provider":true},
   {"id":"go","family":"source","query_family":"source_code","media_type":"text/x-go","extensions":["go"],"unit_kind":"section","provider":true},

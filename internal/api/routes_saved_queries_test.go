@@ -58,6 +58,118 @@ func decodeProblem(t *testing.T, body string) api.Error {
 	return problem
 }
 
+func streamedJSONRequest(
+	t *testing.T, tsURL, method, path string, headers map[string]string, body string,
+) (*http.Response, string) {
+	t.Helper()
+	req, err := http.NewRequest(method, tsURL+path, struct{ io.Reader }{strings.NewReader(body)})
+	require.NoError(t, err)
+	require.Zero(t, req.ContentLength)
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	return resp, string(raw)
+}
+
+func TestSavedQueryPayloadRejectsOversizeBeforeMutatingReceiver(t *testing.T) {
+	payload := api.SavedQueryPayload(`{"text":"preserved"}`)
+	before := append(api.SavedQueryPayload(nil), payload...)
+	oversized := []byte("{" + strings.Repeat(" ", 128<<10) + "}")
+
+	err := payload.UnmarshalJSON(oversized)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "128 KiB")
+	assert.Equal(t, before, payload)
+}
+
+func TestSavedQueryHTTPRequestBodyBounds(t *testing.T) {
+	const maxRequestBytes = 160 << 10
+
+	t.Run("accepts maximum payload with legal escaped envelope and omitted payload patch", func(t *testing.T) {
+		ts, _ := newTestServer(t, nil)
+		payload := "{" + strings.Repeat(" ", (128<<10)-2) + "}"
+		body := `{"name":"` + strings.Repeat(`\u0100`, 128) +
+			`","description":"` + strings.Repeat(`\u0100`, 2048) +
+			`","kind":"query","payload":` + payload + `}`
+		require.Len(t, []byte(payload), 128<<10)
+		require.Less(t, len(body), maxRequestBytes)
+
+		resp, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
+			map[string]string{"X-Api-Key": testAPIKey}, body)
+		require.Equal(t, http.StatusCreated, resp.StatusCode, responseBody)
+		var created api.SavedQuery
+		require.NoError(t, json.Unmarshal([]byte(responseBody), &created))
+
+		resp, responseBody = rawJSONRequest(t, ts.URL, http.MethodPatch,
+			"/api/v1/saved-queries/"+created.ID,
+			map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`},
+			`{"name":"Bounded rename"}`)
+		require.Equal(t, http.StatusOK, resp.StatusCode, responseBody)
+		var patched api.SavedQuery
+		require.NoError(t, json.Unmarshal([]byte(responseBody), &patched))
+		assert.Equal(t, "Bounded rename", patched.Name)
+		assert.EqualValues(t, 2, patched.Revision)
+	})
+
+	t.Run("rejects create envelope at limit without adding a definition", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		created, _ := createSavedQuery(t, ts.URL, "Stable definition", `{}`)
+		body := `{"name":"Rejected definition","kind":"query","payload":{}}`
+		body += strings.Repeat(" ", maxRequestBytes-len(body))
+		require.Len(t, []byte(body), maxRequestBytes)
+
+		resp, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
+			map[string]string{"X-Api-Key": testAPIKey}, body)
+		assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, responseBody)
+		items, total, err := s.SavedQueries(t.Context(), "", 100, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 1, total)
+		require.Len(t, items, 1)
+		assert.Equal(t, created.ID, items[0].ID)
+	})
+
+	t.Run("rejects streamed patch envelope at limit without revision mutation", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		created, _ := createSavedQuery(t, ts.URL, "Stable definition", `{}`)
+		body := `{"name":"Rejected rename"}`
+		body += strings.Repeat(" ", maxRequestBytes-len(body))
+		require.Len(t, []byte(body), maxRequestBytes)
+
+		resp, responseBody := streamedJSONRequest(t, ts.URL, http.MethodPatch,
+			"/api/v1/saved-queries/"+created.ID,
+			map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, body)
+		assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, responseBody)
+		after, err := s.SavedQueryByID(t.Context(), created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, created.Name, after.Name)
+		assert.Equal(t, created.Revision, after.Revision)
+	})
+
+	t.Run("rejects oversized nested payload without revision mutation", func(t *testing.T) {
+		ts, s := newTestServer(t, nil)
+		created, _ := createSavedQuery(t, ts.URL, "Stable definition", `{}`)
+		payload := "{" + strings.Repeat(" ", (128<<10)-1) + "}"
+		require.Len(t, []byte(payload), (128<<10)+1)
+
+		resp, responseBody := rawJSONRequest(t, ts.URL, http.MethodPatch,
+			"/api/v1/saved-queries/"+created.ID,
+			map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`},
+			`{"payload":`+payload+`}`)
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, responseBody)
+		after, err := s.SavedQueryByID(t.Context(), created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, string(created.Payload), string(after.Payload))
+		assert.Equal(t, created.Revision, after.Revision)
+	})
+}
+
 func TestSavedQueryHTTPRoundTripPaginationAndFences(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 

@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	maxInputBytes     = 128 << 10
+	// MaxInputBytes is the largest raw QueryV1 or HighlightSetV1 JSON input.
+	MaxInputBytes     = 128 << 10
 	maxCanonicalBytes = 64 << 10
 	maxJSONDepth      = 16
 	maxTextRunes      = 8192
@@ -428,7 +429,7 @@ func normalizeTimestamp(value, field string) (string, error) {
 func oneOf(value string, allowed ...string) bool { return slices.Contains(allowed, value) }
 
 func preflightJSON(raw []byte, allowFilterNull bool) error {
-	if len(raw) > maxInputBytes {
+	if len(raw) > MaxInputBytes {
 		return errors.New("input exceeds 128 KiB")
 	}
 	if err := validateEscapedSurrogates(raw); err != nil {
