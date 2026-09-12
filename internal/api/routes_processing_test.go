@@ -136,6 +136,18 @@ func TestProcessingRoutesRunReadCoverAndSearchOneExactVersion(t *testing.T) {
 	assert.NotContains(t, searchBody, outside.CurrentVersionID)
 }
 
+func TestDocumentSearchRejectsWhitespaceQuery(t *testing.T) {
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/search.txt", "searchable content\n")
+	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+		"query": " \t\n", "mode": "lexical", "profile": "private",
+		"fence": map[string]any{"vault_uid": catalog.VaultID(),
+			"content_version_ids": []string{node.CurrentVersionID}},
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, `"code":"search_query_required"`)
+}
+
 func TestProcessingConsentRoutesRequireReviewedPlanAndRevocationFailsClosed(t *testing.T) {
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/consent.txt", "private consent evidence\n")

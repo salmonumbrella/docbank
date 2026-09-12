@@ -1088,7 +1088,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return retrieval.Report{}, err
 	}
 	if strings.TrimSpace(request.Query) == "" {
-		return retrieval.Report{}, errors.New("document search query is required")
+		return retrieval.Report{}, store.ErrSearchQueryRequired
 	}
 	mode := retrieval.Mode(request.Mode)
 	if mode == "" {

@@ -468,7 +468,7 @@ func fromProcessingError(err error) error {
 			return NewError(item.status, item.code, item.detail)
 		}
 	}
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) {
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
