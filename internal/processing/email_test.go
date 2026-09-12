@@ -337,6 +337,7 @@ func TestEmailPipelineFailureBoundariesAndRetry(t *testing.T) {
 func TestEmailPipelineUnavailableDoesNotRequeue(t *testing.T) {
 	for _, tc := range []struct{ name, source, reason string }{
 		{"blank", "Content-Type: text/plain\r\n\r\n \t\r\n", "empty_body"},
+		{"NUL text", "Content-Type: text/plain\r\n\r\nbefore\x00after", "unsupported_body"},
 		{"empty HTML", "Content-Type: text/html\r\n\r\n<script>hidden</script><template>hidden</template>", "empty_body"},
 		{"unsupported charset", "Content-Type: text/plain; charset=not-a-charset\r\n\r\ntext", "no_supported_body"},
 		{"unsupported media", "Content-Type: application/octet-stream\r\n\r\ntext", "no_supported_body"},

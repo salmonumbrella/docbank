@@ -46,6 +46,9 @@ func bodyUnits(ctx context.Context, s string) ([]document.SourceEvidenceUnitV1, 
 	if !utf8.ValidString(s) {
 		return nil, errors.New("email body text is not valid UTF-8")
 	}
+	if strings.ContainsRune(s, '\x00') {
+		return nil, emailBodyUnavailableError("unsupported_body")
+	}
 	var units []document.SourceEvidenceUnitV1
 	for len(s) > 0 {
 		if err := ctx.Err(); err != nil {
