@@ -79,6 +79,19 @@ test("import collections, label conflicts and stable document navigation", async
     await expect(drawer.getByRole("button", { name: "Clear label", exact: true })).toBeEnabled();
     await drawer.getByRole("button", { name: "Clear label", exact: true }).click();
     await expect.poll(async () => (await (await api(labelRoute)).json()).label).toBeNull();
+
+    // Move the member after its path check, before the directory request completes.
+    await page.route("**/api/v1/nodes/*/children?*", async (route) => {
+      await run("mv", "/Discovery/review-notes.txt", "/review-notes.txt");
+      await route.continue();
+    }, { times: 1 });
+    await drawer.getByRole("button", { name: "Open document /Discovery/review-notes.txt", exact: true }).click();
+    await expect(drawer).not.toBeVisible();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByRole("cell", { name: "review-notes.txt", exact: true })).toHaveCount(0);
+    await run("mv", "/review-notes.txt", "/Discovery/review-notes.txt");
+    await page.getByRole("button", { name: "Import collections", exact: true }).click();
+    await drawer.getByRole("button", { name: `Browse collection Unlabeled import ${collectionID.slice(0, 8)}`, exact: true }).click();
     await drawer.getByRole("button", { name: "Open document /Discovery/review-notes.txt", exact: true }).click();
     await expect(drawer).not.toBeVisible();
     await expect(page.getByRole("cell", { name: "review-notes.txt", exact: true })).toBeVisible();

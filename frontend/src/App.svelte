@@ -313,6 +313,18 @@
     try {
       const page = await children(webSession, nodeID);
       if (request !== generation) return;
+      if (preferredRow && !page.items.some((item) => item.id === preferredSelectedID)) {
+        const current = await statPath(webSession, preferredRow.path);
+        if (request !== generation) return;
+        if (
+          current.id !== preferredSelectedID || current.parent_id !== nodeID ||
+          current.path !== preferredRow.path ||
+          current.path !== `${page.directory.path === "/" ? "" : page.directory.path}/${current.name}`
+        ) {
+          throw new Error("This collection member changed while opening. Reload the collection.");
+        }
+        preferredRow = { node: current, path: preferredRow.path };
+      }
       if (remember && directory) {
         stack = [
           ...stack,
@@ -343,7 +355,7 @@
       if (
         preferredRow &&
         preferredRow.node.id === preferredSelectedID &&
-        !nextRows.some((row) => row.node.id === preferredRow.node.id)
+        !nextRows.some((row) => row.node.id === preferredSelectedID)
       ) {
         nextRows.push(preferredRow);
       }
@@ -370,7 +382,9 @@
         if (cause instanceof APIError && cause.status === 404) {
           replaceRows([], false);
           selectedID = undefined;
-          error = "This directory was moved to trash or removed. Go back or reload the vault.";
+          error = preferredRow
+            ? "This collection member moved or was removed. Reload the collection."
+            : "This directory was moved to trash or removed. Go back or reload the vault.";
         } else {
           handleFailure(cause);
         }
