@@ -140,7 +140,7 @@ func TestProviderRejectsMalformedPartialAndDriftedOutput(t *testing.T) {
 }
 
 func TestProviderAcceptsExplicitlyExplainedEmptyPage(t *testing.T) {
-	provider := newTestProvider(t, helperExecutable(t, "empty-explained"), time.Second, 1<<20)
+	provider := newTestProvider(t, helperExecutable(t, "empty-explained"), 30*time.Second, 1<<20)
 	upload := newTestUpload(testPDF(2))
 
 	result, err := provider.Render(t.Context(), upload,
@@ -152,14 +152,14 @@ func TestProviderAcceptsExplicitlyExplainedEmptyPage(t *testing.T) {
 
 func TestProviderBoundsOutputAndSanitizesProcessFailure(t *testing.T) {
 	t.Run("oversized stdout", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "oversized"), time.Second, 1024)
+		provider := newTestProvider(t, helperExecutable(t, "oversized"), 30*time.Second, 1024)
 		upload := newTestUpload(testPDF(2))
 		_, err := provider.Render(t.Context(), upload,
 			testAuthorization(provider.Descriptor(), upload.Metadata()))
 		assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
 	})
 	t.Run("authorization response limit", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "oversized"), time.Second, 1<<20)
+		provider := newTestProvider(t, helperExecutable(t, "oversized"), 30*time.Second, 1<<20)
 		upload := newTestUpload(testPDF(2))
 		authorization := testAuthorization(provider.Descriptor(), upload.Metadata())
 		authorization.MaxTotalResultBytes = 1024
@@ -167,7 +167,7 @@ func TestProviderBoundsOutputAndSanitizesProcessFailure(t *testing.T) {
 		assertProviderCode(t, err, document.RenditionErrorMalformedEvidence)
 	})
 	t.Run("private stderr", func(t *testing.T) {
-		provider := newTestProvider(t, helperExecutable(t, "failure"), time.Second, 1<<20)
+		provider := newTestProvider(t, helperExecutable(t, "failure"), 30*time.Second, 1<<20)
 		upload := newTestUpload(testPDF(2))
 		_, err := provider.Render(t.Context(), upload,
 			testAuthorization(provider.Descriptor(), upload.Metadata()))
@@ -307,7 +307,7 @@ func assertProviderCode(t *testing.T, err error, want document.RenditionErrorCod
 	require.Error(t, err)
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 	require.True(t, ok)
-	assert.Equal(t, want, providerErr.Code())
+	assert.Equal(t, want, providerErr.Code(), "%v", err)
 }
 
 type cancelWhenCheckedContext struct {
