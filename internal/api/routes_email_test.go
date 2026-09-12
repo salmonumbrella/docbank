@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -111,6 +113,52 @@ func TestEmailRoutesRejectUnknownInputAndInvalidSelections(t *testing.T) {
 		response, body := get(t, ts, base+tc.selection, nil)
 		assert.Equal(t, tc.status, response.StatusCode, tc.selection+": "+body)
 		assert.Contains(t, body, `"code":"`+tc.code+`"`)
+	}
+}
+
+func TestEmailMalformedMIMEPublishesRetrievableEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, headers, body string
+		code                document.EmailDiagnosticCode
+		related             bool
+	}{
+		{"valid control", "Content-Type: text/plain\r\n", "body", "", false},
+		{"missing related boundary", "Content-Type: multipart/related\r\n", "body", document.EmailDiagnosticBoundaryMissing, true},
+		{"invalid related boundary", "Content-Type: multipart/related; boundary=" + strings.Repeat("x", 71) + "\r\n", "body", document.EmailDiagnosticBoundaryInvalid, true},
+		{"unsupported related transfer", "Content-Type: multipart/related; boundary=x\r\nContent-Transfer-Encoding: x-private\r\n", "body", document.EmailDiagnosticTransferUnsupported, true},
+		{"malformed related transfer", "Content-Type: multipart/related; boundary=x\r\nContent-Transfer-Encoding: base64\r\n", "YQ=!", document.EmailDiagnosticTransferInvalid, true},
+		{"empty transfer", "Content-Transfer-Encoding: \t\r\n", "body", document.EmailDiagnosticInvalidHeader, false},
+		{"missing media subtype", "Content-Type: text\r\n", "body", document.EmailDiagnosticInvalidHeader, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			headers := tc.headers + "\r\n"
+			version := createEmailVersion(t, s, "malformed.eml", headers+tc.body)
+			path := "/api/v1/versions/" + version.ID + "/email"
+			response, body := do(t, ts, http.MethodPost, path, nil, struct{}{})
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			response, body = get(t, ts, path, nil)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var metadata api.EmailMetadata
+			require.NoError(t, json.Unmarshal([]byte(body), &metadata))
+			inventory := metadata.Evidence.Inventory
+			require.NotNil(t, inventory)
+			require.Len(t, inventory.Parts, 1)
+			if tc.related {
+				assert.Equal(t, document.EmailInventoryPartial, inventory.State)
+				require.NotNil(t, inventory.Termination)
+				assert.Equal(t, tc.code, inventory.Termination.Code)
+				require.Len(t, inventory.Messages[0].RelatedGroups, 1)
+				assert.Equal(t, "1", inventory.Messages[0].RelatedGroups[0].RootPath)
+			} else if tc.code != "" {
+				diagnostics := slices.Concat(inventory.Parts[0].Diagnostics, inventory.Parts[0].Media.Diagnostics)
+				require.NotEmpty(t, diagnostics)
+				assert.Equal(t, tc.code, diagnostics[0].Code)
+			}
+			response, body = get(t, ts, path+"/generations/"+metadata.GenerationID+"/parts/1/raw_headers", nil)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			assert.Equal(t, headers, body)
+		})
 	}
 }
 

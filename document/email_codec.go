@@ -146,8 +146,8 @@ func validateEmailRecipe(recipe EmailRecipeV1) error {
 	if recipe.ContractVersion != EmailRecipeContractV1 {
 		return fmt.Errorf("email recipe contract version must be %q", EmailRecipeContractV1)
 	}
-	if recipe.ImplementationRevision != 1 {
-		return errors.New("email recipe implementation revision must be 1")
+	if recipe.ImplementationRevision < 1 {
+		return errors.New("email recipe implementation revision must be positive")
 	}
 	if recipe.GoVersion == "" || len(recipe.GoVersion) > 128 || !utf8.ValidString(recipe.GoVersion) {
 		return errors.New("email recipe Go version is invalid")

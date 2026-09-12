@@ -151,7 +151,7 @@ func sourceMetadataForTarget(
 		if size > maxSourceMetadataWindowBytes && boundedLargeMediaSignature(data) {
 			return extractLargeSourceMetadata(bytes.NewReader(data), size)
 		}
-		return ExtractSourceMetadata(data), nil
+		return ExtractSourceMetadata(data)
 	}
 
 	reader, size, err := blobs.OpenSeekableContext(ctx, target.SourceSHA256)
@@ -241,7 +241,10 @@ func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.Source
 		if readErr != nil {
 			return document.SourceMetadataV1{}, fmt.Errorf("reading metadata window: %w", readErr)
 		}
-		metadata := ExtractSourceMetadata(window)
+		metadata, err := ExtractSourceMetadata(window)
+		if err != nil {
+			return document.SourceMetadataV1{}, err
+		}
 		metadata.Warnings = append(metadata.Warnings, sourceWarning(
 			"metadata_window_limited", "container", "bytes",
 			"only the bounded leading metadata window was inspected"))
@@ -256,7 +259,7 @@ func extractLargeSourceMetadata(reader io.ReaderAt, size int64) (document.Source
 			metadata.Warnings = append(metadata.Warnings, *warning)
 			return metadata, nil
 		}
-		return ExtractSourceMetadata(compact), nil
+		return ExtractSourceMetadata(compact)
 	default:
 		metadata := emptySourceMetadata()
 		metadata.Warnings = append(metadata.Warnings, sourceWarning(
@@ -765,7 +768,8 @@ func sourceMetadataMP4StructuralBox(kind string) bool {
 // ExtractSourceMetadata performs bounded, format-signature-based local
 // extraction. It returns warnings for unsupported or malformed input and does
 // not guess from a filename, path, MIME declaration, or caller metadata.
-func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
+// Operational failures return errors so callers can retry without publishing.
+func ExtractSourceMetadata(data []byte) (document.SourceMetadataV1, error) {
 	result := emptySourceMetadata()
 	collector := metadataCollector{record: &result, seen: map[string]bool{}}
 	switch {
@@ -782,27 +786,31 @@ func ExtractSourceMetadata(data []byte) document.SourceMetadataV1 {
 		if err != nil {
 			result.Warnings = append(result.Warnings, sourceWarning(
 				"unparseable_metadata", "media.container", "RAF", "RAF metadata could not be read"))
-			return canonicalSourceMetadataResult(result)
+			break
 		}
-		return metadata
+		return metadata, nil
 	case isSourceMetadataCR3(data):
 		metadata, err := extractCR3SourceMetadata(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			result.Warnings = append(result.Warnings, sourceWarning(
 				"unparseable_metadata", "media.container", "CR3", "CR3 metadata could not be read"))
-			return canonicalSourceMetadataResult(result)
+			break
 		}
-		return metadata
+		return metadata, nil
 	case visualContainerSignature(data):
 		collector.extractVisual(data)
 	case exifTIFFSignature(data):
 		collector.extractTIFFVisual(data)
 	default:
-		if !collector.extractEmail(data) {
+		recognized, err := collector.extractEmail(data)
+		if err != nil {
+			return document.SourceMetadataV1{}, err
+		}
+		if !recognized {
 			result.Warnings = append(result.Warnings, sourceWarning("unsupported_format", "container", "signature", "no supported embedded metadata container was recognized"))
 		}
 	}
-	return canonicalSourceMetadataResult(result)
+	return canonicalSourceMetadataResult(result), nil
 }
 
 func canonicalSourceMetadataResult(metadata document.SourceMetadataV1) document.SourceMetadataV1 {
@@ -1347,47 +1355,43 @@ func (c *metadataCollector) extractOfficeCustom(data []byte) {
 	}
 }
 
-func (c *metadataCollector) extractEmail(data []byte) bool {
+func (c *metadataCollector) extractEmail(data []byte) (recognized bool, resultErr error) {
 	spoolParent, err := os.MkdirTemp("", "docbank-source-email-")
 	if err != nil {
-		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
-		return true
+		return false, fmt.Errorf("creating email metadata spool: %w", err)
 	}
 	defer func() {
 		if err := os.RemoveAll(spoolParent); err != nil {
-			c.warn("unparseable_metadata", "email", "message", "temporary email metadata could not be removed")
+			resultErr = errors.Join(resultErr, fmt.Errorf("removing email metadata spool: %w", err))
 		}
 	}()
 	// OS temporary directories can use a symlink (for example /var on macOS).
 	spoolRoot, err := filepath.EvalSymlinks(spoolParent)
 	if err != nil {
-		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
-		return true
+		return false, fmt.Errorf("canonicalizing email metadata spool: %w", err)
 	}
 	digest := sha256.Sum256(data)
 	decoded, err := emailmime.Decode(context.Background(), hex.EncodeToString(digest[:]),
 		int64(len(data)), bytes.NewReader(data), spoolRoot)
 	if err != nil {
-		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
-		return true
+		return false, fmt.Errorf("decoding email metadata: %w", err)
 	}
 	defer func() {
 		if err := decoded.Close(); err != nil {
-			c.warn("unparseable_metadata", "email", "message", "temporary email metadata could not be removed")
+			resultErr = errors.Join(resultErr, fmt.Errorf("closing email metadata: %w", err))
 		}
 	}()
 	inventory := decoded.Evidence.Inventory
 	if inventory == nil || len(inventory.Parts) == 0 || len(inventory.Messages) == 0 {
 		c.warn("unparseable_metadata", "email", "message", "email metadata could not be read")
-		return true
+		return true, nil
 	}
 	root := inventory.Parts[0]
-	recognized := false
 	for _, header := range root.Headers {
 		recognized = recognized || header.State == document.EmailHeaderValid
 	}
 	if !recognized {
-		return false
+		return false, nil
 	}
 	message := inventory.Messages[0]
 	for _, item := range []struct {
@@ -1432,13 +1436,14 @@ func (c *metadataCollector) extractEmail(data []byte) bool {
 	}
 	reader, err := decoded.OpenArtifact(context.Background(), root.Path, string(document.EmailArtifactRawHeaders))
 	if err != nil {
-		c.warn("unparseable_metadata", "email", "headers", "email raw headers could not be read")
-		return true
+		return false, fmt.Errorf("opening email metadata headers: %w", err)
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(reader, root.HeaderBlock.Size+1))
-	if err := errors.Join(readErr, reader.Close()); err != nil || int64(len(raw)) != root.HeaderBlock.Size {
-		c.warn("unparseable_metadata", "email", "headers", "email raw headers could not be read")
-		return true
+	if err := errors.Join(readErr, reader.Close()); err != nil {
+		return false, fmt.Errorf("reading email metadata headers: %w", err)
+	}
+	if int64(len(raw)) != root.HeaderBlock.Size {
+		return false, fmt.Errorf("email metadata headers length changed: expected=%d read=%d", root.HeaderBlock.Size, len(raw))
 	}
 	var received []string
 	for _, header := range root.Headers {
@@ -1460,7 +1465,7 @@ func (c *metadataCollector) extractEmail(data []byte) bool {
 	if message.Date.State == document.EmailDateInvalid && len(message.Date.Fields) > 1 {
 		c.warn("unparseable_timestamp", "email", "Date", "multiple Date fields prevented timestamp normalization")
 	}
-	return true
+	return true, nil
 }
 
 func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string) {

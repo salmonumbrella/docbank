@@ -57,7 +57,7 @@ func Recipe() document.EmailRecipeV1 {
 }
 
 func recipeWithLimits(limits document.EmailLimitsV1) document.EmailRecipeV1 {
-	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 1, GoVersion: runtime.Version(), CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
+	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 2, GoVersion: runtime.Version(), CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
 }
 
 func Decode(ctx context.Context, sourceSHA256 string, sourceSize int64, source io.Reader, spoolParent string) (*Result, error) {
@@ -290,7 +290,11 @@ func (d *decoder) parseEntity(path string, parent *string, sibling, depth int, m
 	transfer := ""
 	if fields := headerValues(block, "content-transfer-encoding"); len(fields) > 0 {
 		transfer = strings.ToLower(strings.TrimSpace(fields[0].value))
-		d.parts[partIndex].TransferEncoding = &transfer
+		if transfer == "" {
+			d.parts[partIndex].Diagnostics = append(d.parts[partIndex].Diagnostics, d.diagnosticAt(document.EmailDiagnosticInvalidHeader, document.EmailOperationHeaders, path, fields[0].index, "Content-Transfer-Encoding header is empty")...)
+		} else {
+			d.parts[partIndex].TransferEncoding = &transfer
+		}
 		if len(fields) > 1 {
 			d.parts[partIndex].Diagnostics = append(d.parts[partIndex].Diagnostics, d.diagnostic(document.EmailDiagnosticDuplicateHeader, document.EmailOperationHeaders, path, nil, "multiple Content-Transfer-Encoding fields")...)
 		}
@@ -336,6 +340,9 @@ func (d *decoder) parseEntity(path string, parent *string, sibling, depth int, m
 		} else if drainErr != nil {
 			return drainErr
 		}
+		if strings.HasPrefix(mediaType, "multipart/") || mediaType == "message/rfc822" {
+			d.stop(document.EmailDiagnosticTransferInvalid, document.EmailOperationTransfer, path, 0, 0)
+		}
 		d.addUnavailableAlternative(partIndex, mediaType, document.EmailDisplayFailed)
 		return nil
 	}
@@ -360,9 +367,6 @@ func (d *decoder) parseEntity(path string, parent *string, sibling, depth int, m
 		}
 		if err = d.parseMultipart(path, depth, messagePath, payloadName, boundary); err != nil {
 			return err
-		}
-		if mediaType == "multipart/related" {
-			d.addRelatedGroup(messagePath, path)
 		}
 		return nil
 	}
@@ -500,7 +504,8 @@ func (d *decoder) interpretMedia(path string, block parsedHeaderBlock, part *doc
 	fields := headerValues(block, "content-type")
 	if len(fields) > 0 {
 		parsed, parsedParams, err := mime.ParseMediaType(fields[0].value)
-		if err != nil {
+		// ParseMediaType also accepts bare tokens for Content-Disposition.
+		if err != nil || !strings.Contains(parsed, "/") {
 			part.Media.Diagnostics = append(part.Media.Diagnostics, d.essentialDiagnosticAt(&part.Diagnostics, document.EmailDiagnosticInvalidHeader, document.EmailOperationHeaders, path, fields[0].index, "Content-Type header is invalid")...)
 			mediaType = "application/octet-stream"
 		} else {
@@ -719,6 +724,13 @@ func (d *decoder) diagnosticAt(code document.EmailDiagnosticCode, operation docu
 }
 
 func (d *decoder) finishMessages() {
+	// Every declared related container needs a group, including containers
+	// whose boundary, transfer encoding, or budget prevented traversal.
+	for _, part := range d.parts {
+		if part.Media.Declared != nil && *part.Media.Declared == "multipart/related" {
+			d.addRelatedGroup(part.MessagePath, part.Path)
+		}
+	}
 	for index := range d.messages {
 		message := &d.messages[index]
 		var plain, html *string
@@ -742,9 +754,6 @@ func (d *decoder) finishMessages() {
 		if message.SelectedBodyPath == nil && len(message.Alternatives) > 0 {
 			message.Diagnostics = append(message.Diagnostics, d.diagnostic(document.EmailDiagnosticBodyUnavailable, document.EmailOperationBodySelection, message.Path, nil, "no message body alternative is available")...)
 		}
-		slices.SortFunc(message.RelatedGroups, func(left, right document.EmailRelatedGroupV1) int {
-			return comparePartPaths(left.RootPath, right.RootPath)
-		})
 	}
 }
 

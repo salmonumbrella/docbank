@@ -97,6 +97,13 @@ func TestEmailBodyProfileIsCanonicalAndRecipeBound(t *testing.T) {
 	_, otherFingerprints, err := CanonicalProfile(other)
 	require.NoError(t, err)
 	assert.NotEqual(t, fingerprints.Profile, otherFingerprints.Profile)
+	changed = testEmailRecipe()
+	changed.ImplementationRevision++
+	other, err = EmailBodyProfileV1(changed)
+	require.NoError(t, err)
+	_, otherFingerprints, err = CanonicalProfile(other)
+	require.NoError(t, err)
+	assert.NotEqual(t, fingerprints.Profile, otherFingerprints.Profile)
 }
 
 func validDecodedEmail() EmailV1 {
