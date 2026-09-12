@@ -9,6 +9,7 @@
     onselectvisible: () => void;
     ontags?: () => void;
     tagsDisabled?: boolean;
+    oncsv: () => void;
   }
 
   let {
@@ -19,6 +20,7 @@
     onselectvisible,
     ontags,
     tagsDisabled = false,
+    oncsv,
   }: Props = $props();
 </script>
 
@@ -50,6 +52,7 @@
     {#if ontags}
       <Button size="sm" disabled={tagsDisabled} onclick={ontags}>Edit tags</Button>
     {/if}
+    <Button size="sm" onclick={oncsv}>Export page CSV</Button>
   </div>
 </BottomDock>
 
