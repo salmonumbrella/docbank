@@ -1215,6 +1215,17 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			if status.State == "abandoned" {
 				return nil, ErrPlanChanged
 			}
+			if status.State == "failed" && status.FailureCode == store.EmbeddingFailureAuthorization {
+				// Provider credentials and consent share a durable failure category.
+				// Preserve provider partial results when this binding still has consent.
+				_, consentErr := service.catalog.AuthorizeProviderOperation(ctx, store.ProviderOperationAuthorizationRequest{
+					Principal: principal, Scope: scope, ProfileFingerprint: profile.record.Fingerprint,
+					DisclosureFingerprint: binding.DisclosureFingerprint, InputClasses: []string{string(binding.InputKind)},
+					RetainedArtifactClasses: []string{"embedding_vector_set"}})
+				if consentErr != nil {
+					return nil, consentErr
+				}
+			}
 			if processed || status.State == "completed" || status.State == "failed" {
 				break
 			}

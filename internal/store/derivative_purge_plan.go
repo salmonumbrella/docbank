@@ -33,6 +33,13 @@ func (s *Store) DerivativePurgeFingerprint(ctx context.Context, request PurgeReq
  selected_builds AS (
  SELECT build_id FROM rendition_builds
  WHERE ?1 OR build_id IN builds OR build_id IN (SELECT build_id FROM selected_attachments)
+ OR (provider_operation_id='`+legacyPlainTextProvider+`' AND source_sha256 IN
+ (SELECT blob_hash FROM content_versions WHERE version_id IN versions))
+ ),
+ selected_generations AS (
+ SELECT g.generation_id FROM embedding_input_generations g
+ LEFT JOIN rendition_attachments a ON a.attachment_id=g.attachment_id
+ WHERE ?1 OR g.source_version_id IN versions OR g.attachment_id IN attachments OR a.build_id IN builds
  ),
  selected_sets AS (
  SELECT s.* FROM embedding_sets s
@@ -47,6 +54,8 @@ func (s *Store) DerivativePurgeFingerprint(ctx context.Context, request PurgeReq
  FROM selected_attachments a
  UNION ALL SELECT json_array('build',build_id) FROM selected_builds
  UNION ALL SELECT json_array('head',content_version_id,profile_fingerprint,attachment_id) FROM selected_heads
+ UNION ALL SELECT json_array('embedding_generation',generation_id) FROM selected_generations
+ UNION ALL SELECT json_array('embedding_vector',vector_set_id) FROM embedding_vector_sets WHERE ?1
  UNION ALL SELECT json_array('embedding_set',embedding_set_id) FROM selected_sets
  UNION ALL SELECT json_array('embedding_head',h.content_version_id,h.binding_id,h.input_kind,h.embedding_set_id)
  FROM embedding_heads h JOIN selected_sets s ON s.embedding_set_id=h.embedding_set_id

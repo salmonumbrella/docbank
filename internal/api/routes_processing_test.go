@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/docbank/internal/client"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestProcessingPlanRouteIsAuthenticatedAndReturnsReviewedDisclosure(t *testing.T) {
@@ -204,6 +205,9 @@ func TestDerivativePurgeRequiresExactPreviewAndRemovesLiveRendition(t *testing.T
 		map[string]any{"selector": selector, "plan_fingerprint": processingPlan.Fingerprint, "consent": true})
 	require.Equal(t, http.StatusOK, jobResponse.StatusCode, jobBody)
 	job := processingJobFromStream(t, jobBody)
+	packed, err := catalog.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+	require.NoError(t, err)
+	require.Positive(t, packed.PacksSealed)
 
 	purgeRequest := map[string]any{"attachment_ids": []string{job.AttachmentID}}
 	purgePlanResponse, purgePlanBody := do(t, ts, http.MethodPost, "/api/v1/derivatives/purge-plans", nil,

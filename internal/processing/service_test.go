@@ -3,6 +3,7 @@ package processing
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -172,4 +173,81 @@ func TestProcessingServiceRejectsRevokedRenditionWaiter(t *testing.T) {
 	require.Equal(t, renditionRun{jobID: job.ID, waiterID: published.ID, attachmentID: published.AttachmentID}, result)
 	_, err = service.renditionResult(t.Context(), rejected.ID)
 	require.ErrorIs(t, err, ErrConsentRequired)
+}
+
+func TestEmbeddingOnlyConsentPreconditions(t *testing.T) {
+	for _, phase := range []string{"missing", "revoked", "expired-before", "expired-during", "allowed", "provider-authorization"} {
+		t.Run(phase, func(t *testing.T) {
+			fixture, fake, _, original := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+			var profile document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(original.Profile.CanonicalProfile, &profile))
+			profile.Rendition = nil
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			profile.RetentionDisclosure.RetainProviderMarkdown = false
+			provider := &embeddingWorkerProvider{runtime: fake.runtime, binding: original.BindingID, descriptor: original.Descriptor}
+			config := ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
+				Principal: original.Authorization.Principal, Scope: original.Authorization.Scope,
+				Profiles: map[string]ProfileConfig{"direct": {Profile: profile, EmbeddingProviders: map[string]document.EmbeddingProvider{original.BindingID: provider}}}}
+			if phase == "provider-authorization" {
+				fake.runtime.failures[original.BindingID] = []error{errors.New("synthetic credential denied")}
+				configured := config.Profiles["direct"]
+				configured.EmbeddingClassifiers = map[string]func(error) (EmbeddingProviderFailure, time.Duration){original.BindingID: func(error) (EmbeddingProviderFailure, time.Duration) { return EmbeddingProviderAuthorization, 0 }}
+				config.Profiles["direct"] = configured
+			}
+			service, err := NewService(config)
+			require.NoError(t, err)
+			version, err := fixture.catalog.ContentVersionByID(t.Context(), original.ContentVersionID)
+			require.NoError(t, err)
+			selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "direct"}
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			if phase != "missing" {
+				var expiry *time.Time
+				if phase == "expired-before" || phase == "expired-during" {
+					expiry = new(time.Now().Add(2 * time.Second))
+				}
+				_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, ExpiresAt: expiry})
+				require.NoError(t, err)
+				if phase == "revoked" {
+					_, err = service.RevokeConsent(t.Context())
+					require.NoError(t, err)
+				}
+				if phase == "expired-before" {
+					<-time.After(time.Until(*expiry) + 20*time.Millisecond)
+				}
+				if phase == "expired-during" {
+					fake.runtime.inspectInputs = func([]document.EmbeddingInput) { <-time.After(time.Until(*expiry) + 20*time.Millisecond) }
+				}
+			}
+			job, err := service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: false})
+			jobs, readErr := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), version.ID, plan.ProfileFingerprint)
+			if phase == "missing" || phase == "revoked" || phase == "expired-before" {
+				require.ErrorIs(t, readErr, store.ErrNotFound)
+			} else {
+				require.NoError(t, readErr)
+			}
+			switch phase {
+			case "missing":
+				require.ErrorIs(t, err, ErrConsentRequired)
+				require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
+			case "revoked":
+				require.ErrorIs(t, err, store.ErrProcessingConsentRevoked)
+			case "expired-before", "expired-during":
+				require.ErrorIs(t, err, store.ErrProcessingConsentExpired)
+			default:
+				require.NoError(t, err)
+				status, statusErr := service.Status(t.Context(), job.ID)
+				require.NoError(t, statusErr)
+				if phase == "allowed" {
+					require.Equal(t, "completed", status.State)
+				} else {
+					require.Equal(t, "authorization", status.FailureCode)
+				}
+			}
+			if phase == "missing" || phase == "revoked" || phase == "expired-before" {
+				require.Empty(t, jobs)
+				require.Zero(t, fake.runtime.calls())
+			}
+		})
+	}
 }
