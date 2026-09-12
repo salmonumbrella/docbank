@@ -144,6 +144,7 @@ func NewServer(d Deps) *Server {
 	registerTagRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g)
+	registerQueryCompileRoutes(humaAPI, d)
 	registerAuditRoutes(humaAPI, d, g, s.auditPreviews)
 	clearLongRunningBodyReadDeadlines(humaAPI)
 	markRevisionPreconditionsRequired(humaAPI)
