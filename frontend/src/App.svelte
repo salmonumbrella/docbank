@@ -5,6 +5,7 @@
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
+  import FoldersIcon from "@lucide/svelte/icons/folders";
   import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
   import LogOutIcon from "@lucide/svelte/icons/log-out";
   import MapPinIcon from "@lucide/svelte/icons/map-pin";
@@ -37,6 +38,7 @@
   import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
+  import CollectionsDrawer from "./CollectionsDrawer.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import JobsDrawer from "./JobsDrawer.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
@@ -151,6 +153,7 @@
   let savedQueryDraft = $state<Query | null>(null);
   let queryEditorInitial = $state<Query>(parseQuery("{}"));
   let queryURLError = $state("");
+  let collectionsOpen = $state(false);
   let trashOpen = $state(false);
   let manageTagsTarget = $state<Row | null>(null);
   let batchTagsTargets = $state<SelectionTarget[] | null>(null);
@@ -266,6 +269,7 @@
       auditEvidenceOpen = false;
       storageOpen = false;
       backupsOpen = false;
+      collectionsOpen = false;
       trashOpen = false;
       tagCatalogOpen = false;
       uploadTarget = null;
@@ -305,6 +309,7 @@
     remember: boolean,
     preferredSelectedID?: number,
     preserveSort = false,
+    preferredRow?: Row,
   ): Promise<void> {
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
@@ -314,6 +319,18 @@
     try {
       const page = await children(webSession, nodeID);
       if (request !== generation) return;
+      if (preferredRow && !page.items.some((item) => item.id === preferredSelectedID)) {
+        const current = await statPath(webSession, preferredRow.path);
+        if (request !== generation) return;
+        if (
+          current.id !== preferredSelectedID || current.parent_id !== nodeID ||
+          current.path !== preferredRow.path ||
+          current.path !== `${page.directory.path === "/" ? "" : page.directory.path}/${current.name}`
+        ) {
+          throw new Error("This collection member changed while opening. Reload the collection.");
+        }
+        preferredRow = { node: current, path: preferredRow.path };
+      }
       if (remember && directory) {
         stack = [
           ...stack,
@@ -337,21 +354,31 @@
       directory = page.directory;
       const path = page.directory.path;
       if (!path) throw new Error("The selected directory is no longer live.");
-      replaceRows(page.items.map((item) => ({
+      const nextRows = page.items.map((item) => ({
         node: item,
         path: path === "/" ? `/${item.name}` : `${path}/${item.name}`,
-      })), refreshing);
+      }));
+      if (
+        preferredRow &&
+        preferredRow.node.id === preferredSelectedID &&
+        !nextRows.some((row) => row.node.id === preferredSelectedID)
+      ) {
+        nextRows.push(preferredRow);
+      }
+      replaceRows(nextRows, refreshing);
       selectNode(
         rows.some((row) => row.node.id === preferredSelectedID)
           ? preferredSelectedID
-          : rows[0]?.node.id,
+          : preferredSelectedID === undefined
+            ? rows[0]?.node.id
+            : undefined,
       );
       activeQuery = "";
       activeTagID = "";
       taggedInspected = 0;
       taggedTotal = 0;
       taggedTrashed = 0;
-      truncated = page.total > page.items.length;
+      truncated = page.total > rows.length;
       if (!preserveSort) {
         sortField = "name";
         sortDirection = "asc";
@@ -361,7 +388,9 @@
         if (cause instanceof APIError && cause.status === 404) {
           replaceRows([], false);
           selectedID = undefined;
-          error = "This directory was moved to trash or removed. Go back or reload the vault.";
+          error = preferredRow
+            ? "This collection member moved or was removed. Reload the collection."
+            : "This directory was moved to trash or removed. Go back or reload the vault.";
         } else {
           handleFailure(cause);
         }
@@ -663,6 +692,34 @@
     if (selectedID !== undefined) void loadSelectedTags(selectedID);
   }
 
+  async function openCollectionMember(
+    member: Node,
+    current: () => boolean,
+  ): Promise<void> {
+    const path = member.path;
+    if (!path || !path.startsWith("/") || path === "/") {
+      throw new Error("This collection member no longer has a live document path.");
+    }
+    const session = webSession;
+    const exact = await statPath(session, path);
+    if (session !== webSession || !current()) return;
+    if (exact.id !== member.id || exact.kind !== "file") {
+      throw new Error(
+        "This collection member moved or its old path now belongs to another document. Reload the collection before opening it.",
+      );
+    }
+    const split = path.lastIndexOf("/");
+    const parentPath = split === 0 ? "/" : path.slice(0, split);
+    const parent = await statPath(session, parentPath);
+    if (session !== webSession || !current()) return;
+    if (parent.kind !== "dir") {
+      throw new Error("The collection member's parent is no longer a live directory.");
+    }
+    if (!current()) return;
+    collectionsOpen = false;
+    await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
+  }
+
   function handleTrashed(_receipt: Node): void {
     trashTarget = null;
     selectNode(undefined);
@@ -884,6 +941,7 @@
     auditEvidenceOpen = false;
     storageOpen = false;
     backupsOpen = false;
+    collectionsOpen = false;
     trashOpen = false;
     manageTagsTarget = null;
     batchTagsTargets = null;
@@ -975,6 +1033,25 @@
       {#snippet right()}
         <IconButton size="sm" ariaLabel="Saved queries and highlights" onclick={openSavedQueries}>
           <BookmarkIcon size="14" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
+          ariaLabel="Import collections"
+          onclick={() => {
+            historyOpen = false;
+            versionsOpen = false;
+            provenanceOpen = false;
+            jobsOpen = false;
+            auditEvidenceOpen = false;
+            storageOpen = false;
+            backupsOpen = false;
+            trashOpen = false;
+            uploadTarget = null;
+            trashTarget = null;
+            collectionsOpen = true;
+          }}
+        >
+          <FoldersIcon size="14" aria-hidden="true" />
         </IconButton>
         <IconButton
           size="sm"
@@ -1597,6 +1674,14 @@
         session={webSession}
         onclose={() => (jobsOpen = false)}
         onauthfailure={handleFailure}
+      />
+    {/if}
+    {#if collectionsOpen}
+      <CollectionsDrawer
+        session={webSession}
+        onclose={() => (collectionsOpen = false)}
+        onauthfailure={handleFailure}
+        onopenmember={openCollectionMember}
       />
     {/if}
     {#if auditEvidenceOpen}
