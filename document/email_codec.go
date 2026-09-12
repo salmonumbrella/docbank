@@ -667,9 +667,6 @@ func validateEmailMessage(message EmailMessageV1, parts map[string]EmailPartV1, 
 		if !ok || candidate.MessagePath != message.Path {
 			return errors.New("email alternative references wrong message")
 		}
-		if candidate.Disposition != nil && *candidate.Disposition == "attachment" {
-			return errors.New("email attachment cannot be a body alternative")
-		}
 		if alternative.Kind != EmailBodyHTML && alternative.Kind != EmailBodyPlain {
 			return errors.New("email alternative kind is invalid")
 		}
@@ -749,7 +746,7 @@ func emailBodyEligible(part EmailPartV1, parts map[string]EmailPartV1) bool {
 			}
 		}
 	}
-	if media != "text/plain" && media != "text/html" || part.Disposition != nil && *part.Disposition == "attachment" || part.Filename.State == EmailInterpretationDecoded {
+	if media != "text/plain" && media != "text/html" || part.IsAttachmentLike() {
 		return false
 	}
 	current := part
@@ -761,7 +758,7 @@ func emailBodyEligible(part EmailPartV1, parts map[string]EmailPartV1) bool {
 		if parent.MessagePath != messagePath {
 			break
 		}
-		if parent.Protection == EmailProtectionEncrypted || parent.Disposition != nil && *parent.Disposition == "attachment" || parent.Filename.State == EmailInterpretationDecoded {
+		if parent.Protection == EmailProtectionEncrypted || parent.IsAttachmentLike() {
 			return false
 		}
 		current = parent

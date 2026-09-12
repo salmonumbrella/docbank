@@ -116,6 +116,64 @@ func TestEmailPipelineChosenBodySearchAndQMD(t *testing.T) {
 	f.emptySpool(t)
 }
 
+func TestEmailPipelineExcludesAmbiguousAttachments(t *testing.T) {
+	for _, tc := range []struct {
+		name, disposition, nameParameter string
+		container, body                  bool
+	}{
+		{"inline body", "inline", "", false, true},
+		{"attachment", "attachment", "", false, false},
+		{"inline filename", "inline; filename=part.html", "", false, false},
+		{"unsupported filename", "inline; filename*=x-unknown''part.html", "", false, false},
+		{"invalid filename", "inline; filename*=utf-8''bad%XX.html", "", false, false},
+		{"unsupported type name", "", "; name*=x-unknown''part.html", false, false},
+		{"malformed disposition", "attachment; broken", "", false, false},
+		{"conflicting dispositions", "inline\r\nContent-Disposition: attachment; broken", "", false, false},
+		{"container filename", "inline; filename*=x-unknown''parts.mime", "", true, false},
+		{"container disposition", "attachment; broken", "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEmailPipelineFixture(t)
+			media, payload := "text/html", "<p>attachmentonlymarker</p>"
+			if tc.container {
+				media = "multipart/alternative; boundary=a"
+				payload = "--a\r\nContent-Type: text/html\r\n\r\n" + payload + "\r\n--a--\r\n"
+			}
+			headers := "Content-Type: " + media + tc.nameParameter + "\r\n"
+			if tc.disposition != "" {
+				headers += "Content-Disposition: " + tc.disposition + "\r\n"
+			}
+			source := "Content-Type: multipart/mixed; boundary=m\r\n\r\n" +
+				"--m\r\nContent-Type: text/plain\r\n\r\nordinarybodymarker\r\n" +
+				"--m\r\n" + headers + "\r\n" + payload + "\r\n--m--\r\n"
+			target := f.add(t, "message.eml", source, "message/rfc822")
+			view, err := EnsureEmailTarget(t.Context(), f.catalog, f.blobs, f.spool, target)
+			require.NoError(t, err)
+			inventory := view.Evidence.Inventory
+			part := &inventory.Parts[len(inventory.Parts)-1]
+			hits, _, err := f.catalog.SearchPage(t.Context(), "attachmentonlymarker", 10)
+			require.NoError(t, err)
+			if tc.body {
+				require.Len(t, hits, 1)
+				require.NotNil(t, part.BodyUTF8)
+			} else {
+				require.Empty(t, hits)
+				require.Nil(t, part.BodyUTF8)
+				hits, _, err = f.catalog.SearchPage(t.Context(), "ordinarybodymarker", 10)
+				require.NoError(t, err)
+				require.Len(t, hits, 1)
+				// The canonical boundary must reject a derivative for the same part.
+				body := *part.Payload
+				body.Role = document.EmailArtifactBodyUTF8
+				part.BodyUTF8 = &body
+				_, _, err = document.MarshalEmailV1(view.Evidence)
+				require.ErrorContains(t, err, "ineligible email body")
+			}
+			f.emptySpool(t)
+		})
+	}
+}
+
 type emailFaultCatalog struct {
 	*store.Store
 

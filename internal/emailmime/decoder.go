@@ -57,7 +57,7 @@ func Recipe() document.EmailRecipeV1 {
 }
 
 func recipeWithLimits(limits document.EmailLimitsV1) document.EmailRecipeV1 {
-	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 2, GoVersion: runtime.Version(), CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
+	return document.EmailRecipeV1{ContractVersion: document.EmailRecipeContractV1, ImplementationRevision: 3, GoVersion: runtime.Version(), CharsetProfile: "docbank-email-charset/v1", HeaderProfile: "docbank-email-header/v1", FilenameProfile: "docbank-email-filename/v1", BodyProfile: "docbank-email-body-selection/v1", Limits: limits}
 }
 
 func Decode(ctx context.Context, sourceSHA256 string, sourceSize int64, source io.Reader, spoolParent string) (*Result, error) {
@@ -417,7 +417,7 @@ func (d *decoder) addUnavailableAlternative(partIndex int, mediaType string, sta
 func (d *decoder) bodyEligible(partIndex int) bool {
 	part := d.parts[partIndex]
 	messagePath := part.MessagePath
-	if isAttachment(part) {
+	if part.IsAttachmentLike() {
 		return false
 	}
 	for part.ParentPath != nil {
@@ -429,7 +429,7 @@ func (d *decoder) bodyEligible(partIndex int) bool {
 		if parent.MessagePath != messagePath {
 			break
 		}
-		if isAttachment(parent) || parent.Protection == document.EmailProtectionEncrypted {
+		if parent.IsAttachmentLike() || parent.Protection == document.EmailProtectionEncrypted {
 			return false
 		}
 		part = parent
@@ -661,9 +661,6 @@ func cloneString(value *string) *string {
 	}
 	out := *value
 	return &out
-}
-func isAttachment(part document.EmailPartV1) bool {
-	return part.Disposition != nil && *part.Disposition == "attachment" || part.Filename.State == document.EmailInterpretationDecoded
 }
 func asPolicyLimit(err error, path string) *policyLimitError {
 	if policy, ok := errors.AsType[*policyLimitError](err); ok {

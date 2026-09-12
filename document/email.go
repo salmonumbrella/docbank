@@ -222,6 +222,23 @@ type EmailPartV1 struct {
 	BodyUTF8         *EmailArtifactRefV1 `json:"body_utf8"`
 	Diagnostics      []EmailDiagnosticV1 `json:"diagnostics"`
 }
+
+// IsAttachmentLike reports metadata that excludes a part from body selection.
+// A filename need not decode successfully to be present;
+// only an absent disposition or one valid inline disposition permits a body.
+func (part EmailPartV1) IsAttachmentLike() bool {
+	if part.Filename.State != EmailInterpretationMissing || part.Disposition != nil && *part.Disposition != "inline" {
+		return true
+	}
+	dispositions := 0
+	for _, header := range part.Headers {
+		if header.Name != nil && *header.Name == "content-disposition" {
+			dispositions++
+		}
+	}
+	return dispositions > 1 || dispositions > 0 && part.Disposition == nil
+}
+
 type EmailMediaV1 struct {
 	Declared    *string             `json:"declared"`
 	Detected    *string             `json:"detected"`
