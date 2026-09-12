@@ -237,6 +237,21 @@ func TestDerivativePurgeRequiresExactPreviewAndRemovesLiveRendition(t *testing.T
 	assert.Equal(t, http.StatusNotFound, renditionResponse.StatusCode)
 }
 
+func TestDerivativePurgeRoutesRejectNonCanonicalContentVersionIDs(t *testing.T) {
+	ts, _ := newTestServer(t, configureProcessingTestService(t))
+	for _, route := range []string{"purge-plans", "purge-jobs"} {
+		t.Run(route, func(t *testing.T) {
+			request := map[string]any{"content_version_ids": []string{"ABCDEFAB-1234-4ABC-8DEF-123456789ABC"}}
+			if route == "purge-jobs" {
+				request["plan_fingerprint"] = processingTestHash("preview")
+			}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/derivatives/"+route, nil, request)
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Contains(t, body, "content_version_ids")
+		})
+	}
+}
+
 func processingJobFromStream(t *testing.T, body string) api.ProcessingJob {
 	t.Helper()
 	lines := strings.Split(strings.TrimSpace(body), "\n")

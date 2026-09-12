@@ -31,6 +31,28 @@ func TestProcessingServiceSourceFenceIsBoundedCanonicalAuthority(t *testing.T) {
 	require.ErrorContains(t, err, strconv.Itoa(MaxSourceFenceIDs))
 }
 
+func TestDerivativePurgeRequiresCanonicalContentVersionIDs(t *testing.T) {
+	const canonical = "abcdefab-1234-4abc-8def-123456789abc"
+	for _, id := range []string{
+		canonical,
+		"ABCDEFAB-1234-4ABC-8DEF-123456789ABC",
+		"abcdefab12344abc8def123456789abc",
+		"urn:uuid:" + canonical,
+		"abcdefab-1234-1abc-8def-123456789abc",
+		"abcdefab-1234-4abc-cdef-123456789abc",
+	} {
+		t.Run(id, func(t *testing.T) {
+			got, err := normalizeDerivativePurgeRequest(DerivativePurgeRequest{ContentVersionIDs: []string{id}})
+			if id == canonical {
+				require.NoError(t, err)
+				require.Equal(t, []string{canonical}, got.ContentVersionIDs)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidPurgeRequest)
+			}
+		})
+	}
+}
+
 func TestProcessingServicePlanFingerprintSealsDisclosure(t *testing.T) {
 	plan := Plan{VaultUID: "00000000-0000-4000-8000-000000000001",
 		Selector:           Selector{NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000002", Profile: "private"},

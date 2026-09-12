@@ -28,7 +28,7 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	const artifactID = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	const jobID = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	const profileFingerprint = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	body := []byte("# Needle\n\nneedle\n")
+	body := []byte("# Needle\n\nneedle\n\n---\n\nAfter the horizontal rule.\n")
 	bodyHash := sha256.Sum256(body)
 	rendered, _, err := document.EnvelopeRenditionV1(document.RenditionV1{
 		ContractVersion: document.RenditionContractV1, Completeness: document.EvidenceComplete,

@@ -658,8 +658,8 @@ func normalizeDerivativePurgeRequest(request DerivativePurgeRequest) (Derivative
 		for index, value := range result {
 			valid := len(value) == sha256.Size*2
 			if uuidValues {
-				_, err := uuid.Parse(value)
-				valid = err == nil
+				parsed, err := uuid.Parse(value)
+				valid = err == nil && parsed[6]>>4 == 4 && parsed[8]>>6 == 2 && parsed.String() == value
 			} else if valid {
 				decoded, err := hex.DecodeString(value)
 				valid = err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
