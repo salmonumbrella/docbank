@@ -80,19 +80,9 @@ func setupVaultHome(t *testing.T) string {
 // production; no test-only transport exists.
 func startTestDaemon(t *testing.T, dir string) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- runServe(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Error("test daemon did not shut down")
-		}
-	})
+	startServe(t)
 	require.Eventually(t, func() bool {
-		_, _, ok, err := client.Find(ctx, dir)
+		_, _, ok, err := client.Find(t.Context(), dir)
 		return err == nil && ok
 	}, 30*time.Second, 25*time.Millisecond, "test daemon never became ready")
 }
