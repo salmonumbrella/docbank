@@ -632,10 +632,12 @@ export async function restoreNode(
 
 export async function auditStatusForNode(
   session: string,
-  nodeID: number,
+  nodeID?: number,
 ): Promise<AuditStatus> {
   return requestJSON<AuditStatus>(
-    `/api/v1/audit/status?node_id=${encodeURIComponent(nodeID)}`,
+    nodeID === undefined
+      ? "/api/v1/audit/status"
+      : `/api/v1/audit/status?node_id=${encodeURIComponent(nodeID)}`,
     session,
   );
 }
