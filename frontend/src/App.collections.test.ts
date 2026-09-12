@@ -10,7 +10,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("opens the exact collection member when its bounded parent page omits it", async () => {
+it.each(["%2FArchive%2Freport.txt", "%2FArchive"])("opens the exact collection member and locks on a 401 from %s", async (expiredPath) => {
   history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
@@ -54,9 +54,13 @@ it("opens the exact collection member when its bounded parent page omits it", as
     resolveMemberRead = resolve;
   });
   let parentReads = 0;
+  let expireSession = false;
 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (expireSession && url === `/api/v1/path?path=${expiredPath}`) {
+      return new Response("session expired", { status: 401 });
+    }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
@@ -119,4 +123,13 @@ it("opens the exact collection member when its bounded parent page omits it", as
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Import collections" })).toBeNull());
   await Promise.resolve();
   expect(parentReads).toBe(1);
+
+  deferMemberRead = false;
+  await fireEvent.click(screen.getByRole("button", { name: "Import collections" }));
+  const expired = await screen.findByRole("dialog", { name: "Import collections" });
+  await fireEvent.click(await within(expired).findByRole("button", { name: "Browse collection Discovery batch" }));
+  expireSession = true;
+  await fireEvent.click(await within(expired).findByRole("button", { name: "Open document /Archive/report.txt" }));
+  expect(await screen.findByText("Open your Docbank")).toBeTruthy();
+  expect(screen.queryByRole("dialog", { name: "Import collections" })).toBeNull();
 });

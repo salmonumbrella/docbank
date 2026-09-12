@@ -248,7 +248,7 @@
     try {
       await onopenmember(member, current);
     } catch (cause) {
-      if (current()) openError = message(cause);
+      if (current() && !authFailure(cause)) openError = message(cause);
     } finally {
       if (current()) openingMemberID = null;
     }
