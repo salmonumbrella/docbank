@@ -64,7 +64,8 @@ func (s *Store) DerivativePurgeFingerprint(ctx context.Context, request PurgeReq
  WHERE ?1 OR j.job_id IN builds OR w.content_version_id IN versions OR w.attachment_id IN attachments
  UNION ALL SELECT json_array('embedding_job',j.job_id)
  FROM embedding_jobs j
- WHERE ?1 OR j.content_version_id IN versions OR (j.input_kind='rendition_chunk' AND EXISTS (
+ WHERE ?1 OR j.content_version_id IN versions OR j.generation_id IN selected_generations
+ OR (j.input_kind='rendition_chunk' AND EXISTS (
  SELECT 1 FROM selected_heads h WHERE h.content_version_id=j.content_version_id AND h.profile_fingerprint=j.profile_fingerprint
  ))
  ORDER BY identity`, args...)

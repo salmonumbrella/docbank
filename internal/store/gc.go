@@ -950,6 +950,21 @@ func purgeEmbeddingCatalogTx(
 		if generationIDs == nil {
 			generationIDs = []string{}
 		}
+		// Historical attachments do not suppress their replacement's binding,
+		// but their own pending work must be fenced before collecting its inputs.
+		generations, err := json.Marshal(generationIDs)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM current_rendition_roots WHERE root_kind=? AND root_id IN (
+			SELECT job_id FROM embedding_jobs WHERE generation_id IN (SELECT value FROM json_each(?)))`,
+			RenditionRootWorkerLease, string(generations)); err != nil {
+			return nil, fmt.Errorf("removing selected embedding worker leases: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_jobs
+			WHERE generation_id IN (SELECT value FROM json_each(?))`, string(generations)); err != nil {
+			return nil, fmt.Errorf("removing selected embedding jobs: %w", err)
+		}
 		roots := map[CurrentRenditionTargetKind][]string{RenditionRootEmbeddingGeneration: generationIDs}
 		for _, candidate := range catalogSets {
 			if candidate.explicit {
