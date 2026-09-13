@@ -6,12 +6,13 @@ multi-user, multi-tenant, or internet-facing deployment.
 
 Key assumptions reviewers MUST account for:
 
-1. COMPILATION IS CI'S JOB. The tree is gated by `go build`, `go vet`,
-   and the full test suite with `-tags fts5` and CGO on Linux, macOS,
-   and Windows before any review runs. Do not report "this does not
-   compile" findings; if code looks syntactically impossible, verify
-   against the go.mod language version before flagging (see 2), and
-   prefer flagging logic over legality.
+1. REVIEW THE RECORDED IMMUTABLE RESULT. Use the controller-recorded
+   commit, commands, and results as verification evidence. Do not routinely
+   rerun build, vet, test suites, or race suites. Run an extra check only for
+   a named unresolved risk and only against the immutable reviewed HEAD in an
+   isolated inspection checkout, never another task's working tree. If code
+   looks syntactically impossible, verify against the go.mod language version
+   before flagging (see 2), and prefer flagging logic over legality.
 
 2. GO VERSION: go.mod pins Go 1.27+. Go 1.26 added value-form `new(v)`,
    which returns `*T` pointing to v — e.g. `new("clean")` is valid and

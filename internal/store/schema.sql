@@ -92,6 +92,126 @@ BEFORE UPDATE ON source_metadata_generations BEGIN
     SELECT RAISE(ABORT, 'source metadata generations are immutable');
 END;
 
+CREATE TABLE IF NOT EXISTS document_event_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1), contract_version TEXT NOT NULL,
+    deriver_fingerprint TEXT NOT NULL, input_epoch INTEGER NOT NULL CHECK (input_epoch > 0),
+    publication_epoch INTEGER NOT NULL CHECK (publication_epoch > 0), updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_event_generations (
+    generation_id TEXT PRIMARY KEY,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    contract_version TEXT NOT NULL, deriver_fingerprint TEXT NOT NULL, inputs_sha256 TEXT NOT NULL,
+    document_kind TEXT NOT NULL, described_kind TEXT NOT NULL,
+    canonical_json BLOB NOT NULL,
+    checksum TEXT NOT NULL, event_count INTEGER NOT NULL CHECK (event_count >= 0), created_at TEXT NOT NULL,
+    UNIQUE (content_version_id, generation_id)
+);
+
+CREATE TABLE IF NOT EXISTS document_event_heads (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    generation_id TEXT NOT NULL UNIQUE REFERENCES document_event_generations(generation_id) ON DELETE CASCADE,
+    input_epoch INTEGER NOT NULL, published_at TEXT NOT NULL,
+    FOREIGN KEY (content_version_id, generation_id)
+        REFERENCES document_event_generations(content_version_id, generation_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS document_events (
+    generation_id TEXT NOT NULL REFERENCES document_event_generations(generation_id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL, source_key TEXT NOT NULL, date_kind TEXT NOT NULL,
+    source_kind_raw TEXT NOT NULL,
+    date_value TEXT NOT NULL,
+    raw_value TEXT NOT NULL,
+    precision TEXT NOT NULL, fraction_digits INTEGER NOT NULL CHECK (fraction_digits BETWEEN 0 AND 9),
+    timezone_kind TEXT NOT NULL, zone_text TEXT NOT NULL, offset_seconds INTEGER,
+    axis_key TEXT NOT NULL,
+    utc_key TEXT,
+    claim_basis TEXT NOT NULL,
+    parse_confidence TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL, evidence_id TEXT NOT NULL, evidence_sha256 TEXT NOT NULL,
+    evidence_locator BLOB NOT NULL, sensitive INTEGER NOT NULL CHECK (sensitive IN (0, 1)),
+    PRIMARY KEY (generation_id, event_id), UNIQUE (generation_id, source_key, date_kind)
+);
+
+CREATE TABLE IF NOT EXISTS document_event_actors (
+    generation_id TEXT NOT NULL, event_id TEXT NOT NULL, role TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0), actor_key TEXT NOT NULL,
+    display_name TEXT NOT NULL, address TEXT NOT NULL, claim_json BLOB NOT NULL,
+    sensitive INTEGER NOT NULL CHECK (sensitive IN (0, 1)),
+    PRIMARY KEY (generation_id, event_id, role, ordinal),
+    FOREIGN KEY (generation_id, event_id) REFERENCES document_events(generation_id, event_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS document_event_primaries (
+    generation_id TEXT NOT NULL, scope_class TEXT NOT NULL, disclosure TEXT NOT NULL,
+    event_id TEXT NOT NULL, rule_id TEXT NOT NULL, reason TEXT NOT NULL,
+    PRIMARY KEY (generation_id, scope_class, disclosure),
+    FOREIGN KEY (generation_id, event_id) REFERENCES document_events(generation_id, event_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS document_event_builds (
+    operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, deriver_fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL, target_epoch INTEGER NOT NULL,
+    scanned INTEGER NOT NULL, published INTEGER NOT NULL, unavailable INTEGER NOT NULL,
+    failed INTEGER NOT NULL, started_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS provenance_version_bindings (
+    provenance_identity TEXT NOT NULL REFERENCES provenance(identity) ON DELETE CASCADE,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    observed_at TEXT NOT NULL, basis_ref TEXT NOT NULL,
+    PRIMARY KEY (provenance_identity, content_version_id)
+);
+
+CREATE TABLE IF NOT EXISTS document_event_dirty (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL, reason TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_event_attempts (
+    content_version_id TEXT PRIMARY KEY REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    input_epoch INTEGER NOT NULL, input_revision INTEGER NOT NULL, inputs_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL, diagnostic_json BLOB NOT NULL, attempted_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS document_events_axis_all
+    ON document_events(axis_key, generation_id, event_id);
+CREATE INDEX IF NOT EXISTS document_events_axis
+    ON document_events(date_kind, axis_key, generation_id, event_id);
+CREATE INDEX IF NOT EXISTS document_events_utc
+    ON document_events(date_kind, utc_key, generation_id, event_id) WHERE utc_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS document_events_generation
+    ON document_events(generation_id, date_kind);
+CREATE INDEX IF NOT EXISTS document_event_actors_key
+    ON document_event_actors(actor_key, role, generation_id, event_id);
+CREATE INDEX IF NOT EXISTS provenance_version_bindings_version
+    ON provenance_version_bindings(content_version_id);
+
+CREATE TRIGGER IF NOT EXISTS document_event_generations_immutable_update
+BEFORE UPDATE ON document_event_generations BEGIN
+    SELECT RAISE(ABORT, 'document event generations are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS document_events_immutable_update
+BEFORE UPDATE ON document_events BEGIN
+    SELECT RAISE(ABORT, 'document events are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS document_event_actors_immutable_update
+BEFORE UPDATE ON document_event_actors BEGIN
+    SELECT RAISE(ABORT, 'document event actors are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS document_event_primaries_immutable_update
+BEFORE UPDATE ON document_event_primaries BEGIN
+    SELECT RAISE(ABORT, 'document event primaries are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS provenance_version_bindings_immutable_update
+BEFORE UPDATE ON provenance_version_bindings BEGIN
+    SELECT RAISE(ABORT, 'provenance version bindings are immutable');
+END;
+
 -- Physical placement authority is store-scoped. The logical blobs table says
 -- which content Docbank retains; these rows say where verified bytes live.
 -- Lifecycle and placement policy stay in Go.

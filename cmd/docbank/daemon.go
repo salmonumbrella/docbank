@@ -485,6 +485,10 @@ func startProcessingJobs(
 	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
 		return fmt.Errorf("starting source metadata backfill: %w", err)
 	}
+	documentEvents := processing.NewDocumentEventBackfill(s, gate.MutateContext, logger)
+	if err := supervisor.Start("derive:document-events", documentEvents.Run); err != nil {
+		return fmt.Errorf("starting document event backfill: %w", err)
+	}
 	return nil
 }
 
