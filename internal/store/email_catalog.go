@@ -521,6 +521,13 @@ const missingEmailVersionIDsQuery = `SELECT version_id FROM content_versions
 				AND g.recipe_fingerprint=?
 			JOIN email_body_results b ON b.email_attachment_id=a.attachment_id
 			WHERE h.content_version_id=content_versions.version_id
+			AND (b.state='unavailable' OR EXISTS (
+				SELECT 1 FROM rendition_heads rh
+				JOIN rendition_attachments ra ON ra.attachment_id=rh.attachment_id
+				JOIN rendition_lexical_generation_builds gb ON gb.build_id=ra.build_id
+				JOIN rendition_lexical_heads lh ON lh.generation_id=gb.generation_id
+				WHERE rh.attachment_id=b.rendition_attachment_id
+			))
 		)
 		ORDER BY version_id LIMIT 100`
 

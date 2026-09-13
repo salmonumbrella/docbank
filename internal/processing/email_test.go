@@ -478,7 +478,7 @@ func TestEmailPipelinePreservesLegacyAndUnrelatedHeads(t *testing.T) {
 	old, err := f.catalog.EmailMetadata(t.Context(), target.Version.ID)
 	require.NoError(t, err)
 	evidence := old.Evidence
-	evidence.Recipe.GoVersion = "go1.27.1"
+	evidence.Recipe.GoVersion += "-different"
 	evidence.Outcome = "unavailable"
 	evidence.Inventory = nil
 	evidence.Failure = &document.EmailFailureV1{Code: "source_unsupported", Operation: "source", Detail: "Synthetic next decoder refusal."}
@@ -500,6 +500,33 @@ func TestEmailPipelinePreservesLegacyAndUnrelatedHeads(t *testing.T) {
 	for _, source := range sources {
 		require.NotEqual(t, *old.BodySearch.RenditionAttachmentID, source.AttachmentID)
 	}
+	// Re-selecting retained evidence must restore search through the ordinary worker.
+	reselected, err := f.catalog.PublishEmailGeneration(t.Context(), store.EmailPublication{
+		ContentVersionID: target.Version.ID, CanonicalJSON: old.Generation.CanonicalJSON,
+		Artifacts: old.Generation.Artifacts,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "pending", reselected.BodySearch.State)
+	bodyProfile, err := EmailBodyProfileFingerprint()
+	require.NoError(t, err)
+	missing, err := f.catalog.MissingEmailTargetsAfter(t.Context(), old.Generation.RecipeFingerprint, bodyProfile, "", 100)
+	require.NoError(t, err)
+	require.Len(t, missing, 1)
+	require.Equal(t, target.Version.ID, missing[0].Version.ID)
+	completed, err := BackfillEmailTargets(t.Context(), f.catalog, f.blobs, f.spool, missing)
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+	restored, err := f.catalog.EmailMetadata(t.Context(), target.Version.ID)
+	require.NoError(t, err)
+	require.Equal(t, old.BodySearch, restored.BodySearch)
+	for _, term := range []string{"outerhtmlmarker", "legacypreservedmarker", "unrelatedpreservedmarker"} {
+		hits, _, err = f.catalog.SearchPage(t.Context(), term, 10)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+	}
+	missing, err = f.catalog.MissingEmailTargetsAfter(t.Context(), old.Generation.RecipeFingerprint, bodyProfile, "", 100)
+	require.NoError(t, err)
+	require.Empty(t, missing)
 	require.NoError(t, f.catalog.ValidateMetadata(t.Context()))
 }
 func TestEmailPipelineSuppressionRaces(t *testing.T) {

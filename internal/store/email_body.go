@@ -168,6 +168,13 @@ func emailBodySearch(ctx context.Context, q metadataQuerier, v EmailMetadataView
 		return EmailBodySearch{}, err
 	}
 	if !serving {
+		var selected bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_heads WHERE content_version_id=? AND attachment_id=?)`, v.Version.ID, v.Attachment.ID).Scan(&selected); err != nil {
+			return EmailBodySearch{}, err
+		}
+		if selected {
+			return EmailBodySearch{State: "pending"}, nil
+		}
 		return unavailable("superseded"), nil
 	}
 	return EmailBodySearch{State: "available", RenditionBuildID: new(buildID), RenditionAttachmentID: r.RenditionAttachmentID}, nil
