@@ -104,7 +104,7 @@
 </script>
 
 <section class="query-bar" aria-label="Query editor">
-  <div class="heading"><h2>Query editor</h2><Button size="sm" onclick={close}>Close query editor</Button></div>
+  <div class="heading"><h2>Query editor</h2><Button size="sm" disabled={schemaError !== ""} onclick={close}>Close query editor</Button></div>
   <p>Edit complete query intent. This draft does not change the live results below.</p>
   <div class="controls">
     <SelectDropdown value={draft.syntax} options={syntaxOptions} title="Query syntax" onchange={(value) => { draft = {...draft,syntax:value as Query["syntax"]}; validate(true); }} />
@@ -126,7 +126,7 @@
   <div class="summaries" aria-label="Structured facet summaries">
     {#each Object.entries(draft.filters).filter(([, value]) => value !== undefined) as [key, value]}<Chip>{key}: {JSON.stringify(value)}</Chip>{/each}
   </div>
-  {#if schemaError}<p role="alert">{schemaError}</p>{/if}
+  {#if schemaError}<p role="alert">{schemaError} Correct the draft or choose Discard query draft before closing.</p>{/if}
   <div aria-live="polite">
     {#if pending}<span class="checking"><Spinner size={14} /> Validating query…</span>{/if}
     {#if preview}

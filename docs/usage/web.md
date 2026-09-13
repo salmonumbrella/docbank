@@ -133,6 +133,10 @@ expression. A newer edit cancels and supersedes an older validation request.
 stable identity. Closing the query editor keeps the draft in the tab and URL;
 **Discard query draft** removes it.
 
+If the draft has malformed input, such as incomplete facets JSON, correct it
+or choose **Discard query draft** before closing. The editor stays open so
+those unfinished edits are not lost.
+
 Validation does not execute a search. **Run query** remains unavailable because
 the live-search endpoint cannot honor the complete expression, facets, and
 ordering contract. Ordinary name/content search remains separate and does not

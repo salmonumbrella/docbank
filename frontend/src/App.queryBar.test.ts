@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 import App from "./App.svelte";
 
 const query = {v:1,text:"name:manual OR saved:review",syntax:"advanced",mode:"lexical",filters:{exclude_tag_ids:["11111111-1111-4111-8111-111111111111"]},sort:{field:"size",direction:"desc"}};
-afterEach(() => { cleanup(); history.replaceState(null,"","/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); history.replaceState(null,"","/"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 it("opens full URL intent in the editor and keeps edits through save and reopening without executing", async () => {
   history.replaceState(null,"",`/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`);
   vi.stubGlobal("ResizeObserver",class {observe(){} unobserve(){} disconnect(){}});
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   const root = {id:1,name:"",kind:"dir",path:"/",revision:1,size:0,created_at:"2026-01-01T00:00:00Z",modified_at:"2026-01-01T00:00:00Z"};
   const fetch = vi.spyOn(globalThis,"fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -29,6 +31,22 @@ it("opens full URL intent in the editor and keeps edits through save and reopeni
   expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe("NOT tag:missing");
   expect(fetch.mock.calls.some(([url]) => String(url).startsWith("/api/v1/search"))).toBe(false);
   expect(location.hash).not.toContain("synthetic");
+  await fireEvent.input(screen.getByLabelText("Structured facets JSON"), { target: { value: '{"size_min":' } });
+  await fireEvent.input(screen.getByLabelText("Query expression"), { target: { value: "unfinished draft" } });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Query mode: lexical" }));
+  await fireEvent.click(screen.getByRole("option", { name: "hybrid" }));
+  (screen.getByRole("button", { name: "Close query editor" }) as HTMLButtonElement).click();
+  await tick();
+  expect(screen.queryByRole("region", { name: "Query editor" })).not.toBeNull();
+  expect((screen.getByLabelText("Structured facets JSON") as HTMLTextAreaElement).value).toBe('{"size_min":');
+  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe("unfinished draft");
+  expect(screen.getByRole("combobox", { name: "Query mode: hybrid" })).toBeTruthy();
+  await fireEvent.input(screen.getByLabelText("Structured facets JSON"), { target: { value: '{"size_min":2}' } });
+  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
+  expect(screen.queryByRole("region", { name: "Query editor" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  expect((screen.getByLabelText("Query expression") as HTMLTextAreaElement).value).toBe("unfinished draft");
+  await fireEvent.input(screen.getByLabelText("Structured facets JSON"), { target: { value: '{"size_min":' } });
   await fireEvent.click(screen.getByRole("button",{name:"Discard query draft"}));
   expect(location.hash).toBe("");
   expect(screen.queryByRole("region",{name:"Query editor"})).toBeNull();
