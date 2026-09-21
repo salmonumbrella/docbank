@@ -390,7 +390,7 @@ func (s *Store) trashEmpty(
 		where += ` AND trashed_at <= ?`
 		args = append(args, time.Now().UTC().Add(-olderThan).Format(timestampLayout))
 	}
-	// Media authority and mailbox receipts retain exact content versions.
+	// Media, mailbox, and package authority retain exact content versions.
 	// Exclude their source and attachment subtrees so a retained document
 	// cannot abort deletion of unrelated trash roots.
 	where += ` AND NOT EXISTS (
@@ -409,6 +409,14 @@ func (s *Store) trashEmpty(
 		   OR EXISTS (SELECT 1 FROM email_document_relations relation
 			JOIN mailbox_transfer_receipts receipt ON receipt.document_publication_id=relation.operation_id
 			WHERE relation.child_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM collection_snapshot_members member
+			WHERE member.content_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM collection_snapshot_representations representation
+			WHERE representation.content_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM package_labels label
+			WHERE label.content_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM package_import_receipts receipt
+			WHERE receipt.content_version_id=version.version_id)
 	)`
 	selection := `SELECT id FROM nodes WHERE ` + where + ` ORDER BY trashed_at ASC, id ASC`
 	selectionArgs := append([]any(nil), args...)

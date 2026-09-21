@@ -25,7 +25,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	wantNames := []string{
 		"get_vault_info", "list_documents", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
-		"get_processing_status", "get_processing_coverage",
+		"get_processing_status", "get_processing_coverage", "get_package_import",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -46,14 +46,15 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 	readOnly := catalogNames(toolCatalog(false))
 	enabledTools := toolCatalog(true)
 	enabled := catalogNames(enabledTools)
-	require.Equal(t, append(append([]string{}, readOnly...), "start_processing"), enabled)
+	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "start_package_import"), enabled)
 
-	write := enabledTools[len(enabledTools)-1]
-	require.NotNil(t, write.Annotations)
-	assert.False(t, write.Annotations.ReadOnlyHint)
-	assert.False(t, write.Annotations.IdempotentHint)
-	assert.Equal(t, new(false), write.Annotations.DestructiveHint)
-	assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
+	for index, write := range enabledTools[len(enabledTools)-2:] {
+		require.NotNil(t, write.Annotations)
+		assert.False(t, write.Annotations.ReadOnlyHint)
+		assert.Equal(t, index == 1, write.Annotations.IdempotentHint)
+		assert.Equal(t, new(false), write.Annotations.DestructiveHint)
+		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
+	}
 
 	for _, allowProcessing := range []bool{false, true} {
 		server := newServerWithOptions(testImplementation(), ServerOptions{AllowProcessing: allowProcessing})

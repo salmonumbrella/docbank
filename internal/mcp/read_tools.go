@@ -70,6 +70,8 @@ func executeReadTool(
 		output, err = getProcessingStatus(ctx, lease, raw)
 	case "get_processing_coverage":
 		output, err = getProcessingCoverage(ctx, lease, raw)
+	case "get_package_import":
+		output, err = getPackageImport(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}
