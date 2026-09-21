@@ -1,7 +1,7 @@
 ---
 title: Importing Documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
-last_edited: 2026-09-12
+last_edited: 2026-09-21
 ---
 
 # Importing Documents
@@ -86,6 +86,86 @@ command for these retry guarantees; referenced versions and relations cannot
 be silently pruned. Trash empty skips these messages, attachments and containing
 folders while deleting unrelated eligible trash. Ordinary `docbank add message.eml` does not invent an
 external transfer identity.
+
+## Load-file review packages
+
+Use `docbank package` for a received review package with a DAT or CSV metadata
+load file and optional OPT or LFP page map. Preflight parses the load files,
+resolves every declared volume and file, checks PDF page counts, and records a
+sealed manifest without changing the vault.
+
+```bash
+docbank package preflight ./VOL001 \
+  --profile dat-concordance-v1 \
+  --page-map-profile opt-standard-v1 \
+  --encoding windows-1252 \
+  --map ./mapping.json \
+  --json
+```
+
+Metadata profiles are `dat-concordance-v1` and `csv-rfc4180-v1`. Page maps use
+`opt-standard-v1`, `opt-pagecount5-v1`, or `lfp-ipro-v1`; omit
+`--page-map-profile` to select the standard OPT or IPRO LFP profile from the
+extension. Supported encodings are `utf-8`, `utf-8-bom`, `utf-16le`,
+`utf-16be`, `windows-1252`, and `iso-8859-1`. A mapping file uses the
+`loadfile-mapping/v1` contract to bind sender columns to document IDs, files,
+family relationships, dates, custodians, and received labels. It can also map
+declared volume names to roots inside the package.
+
+Review the record, page, and diagnostic counts before starting the import.
+Blocking diagnostics must be fixed in the source or mapping and preflighted
+again. A preflight expires after 24 hours. The destination must already exist:
+
+```bash
+docbank mkdir /review
+docbank package import <preflight-id> \
+  --into /review \
+  --name vendor-production-01 \
+  --party 'Example Legal' \
+  --operation-id <uuid> \
+  --index-supplied-text
+
+docbank package import status <operation-id>
+docbank package import cancel <operation-id>
+```
+
+The operation ID makes an exact retry idempotent, including after the
+preflight expires. Status reports committed records, total records, and gaps.
+Jobs survive daemon restart, and cancel stops a queued or running job at its
+next fenced boundary.
+
+By default, a missing declared representation fails the import. Add
+`--accept-partial` to keep records whose supported representations are still
+available and finish with a `partial` report that lists the gaps. This option
+does not override a blocking preflight. It covers a package that changes or
+loses a referenced file after a successful preview.
+
+`--index-supplied-text` uses a mapped `loadfile.file.supplied_text` file as the
+searchable rendition for that occurrence. Docbank retains the sender text as
+its own immutable representation, binds it to the exact native and package
+occurrence, and labels the resulting text as supplied, degraded provenance. It
+does not claim that the text was extracted from the native. Without the flag,
+the supplied-text file remains retained but is not selected for search. Text
+selected for indexing is limited to 4 MiB; a larger mapped supplied-text file
+is retained, but an import that requests indexing fails explicitly. The native
+must be PDF, TIFF, plain text, or JSON; requesting supplied-text indexing for
+another native media type also fails explicitly.
+
+### Import a ZIP in the web app
+
+In a destination folder, choose **Import load files** and select a ZIP. The
+browser hashes the file, uploads verified 64 MiB chunks, seals the complete
+digest, and shows the same preflight counts and diagnostics before enabling
+**Import package**. The web flow accepts a nonempty ZIP up to 256 GiB. Its
+expanded contents are limited to 50 GiB and 1,000,000 entries; absolute paths,
+parent traversal, backslashes, links, special files, and case-folded duplicate
+paths are rejected.
+
+The web form exposes Concordance DAT or RFC 4180 CSV metadata, standard or
+page-count OPT and IPRO LFP page maps, and UTF-8 or Windows-1252 source text.
+Use the CLI when the package needs another supported encoding or a custom
+mapping document. The web app polls the durable operation and reports imported
+records, gaps, and the total.
 
 ## Ordinary file imports
 

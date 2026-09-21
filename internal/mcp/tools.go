@@ -20,7 +20,7 @@ const toolCatalogTTLMs = 60_000
 
 func catalogInstructions(allowProcessing bool) string {
 	if allowProcessing {
-		return "Docbank exposes bounded reads plus guarded start_processing; processing still requires prior operator consent for the exact plan."
+		return "Docbank exposes bounded reads plus guarded write tools; processing still requires prior operator consent for the exact plan."
 	}
 	return "Docbank exposes a bounded read-only document surface."
 }
@@ -31,6 +31,7 @@ type toolDefinition struct {
 	description string
 	schemas     func() (schema, schema)
 	write       bool
+	idempotent  bool
 }
 
 var readToolDefinitions = []toolDefinition{
@@ -43,6 +44,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},
 	{name: "get_processing_coverage", title: "Get processing coverage", description: "Read rendition and embedding coverage for an exact source fence.", schemas: getProcessingCoverageSchemas},
+	{name: "get_package_import", title: "Get package import", description: "Read durable progress for one load-file import operation.", schemas: getPackageImportSchemas},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -51,10 +53,16 @@ var processingToolDefinition = toolDefinition{
 	schemas:     startProcessingSchemas, write: true,
 }
 
+var packageImportToolDefinition = toolDefinition{
+	name: "start_package_import", title: "Start package import",
+	description: "Start or replay a reviewed load-file import using its preflight identity and operation UUID.",
+	schemas:     startPackageImportSchemas, write: true, idempotent: true,
+}
+
 func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 	definitions := readToolDefinitions
 	if allowProcessing {
-		definitions = append(slices.Clone(definitions), processingToolDefinition)
+		definitions = append(slices.Clone(definitions), processingToolDefinition, packageImportToolDefinition)
 	}
 	nonDestructive := false
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
@@ -63,7 +71,7 @@ func toolCatalog(allowProcessing bool) []*sdkmcp.Tool {
 		openWorld := definition.write
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
-			IdempotentHint: !definition.write, DestructiveHint: &nonDestructive, OpenWorldHint: &openWorld,
+			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &nonDestructive, OpenWorldHint: &openWorld,
 		}
 		tools = append(tools, &sdkmcp.Tool{
 			Name: definition.name, Title: definition.title, Description: definition.description,
@@ -81,8 +89,13 @@ func registerToolCatalog(
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
-		handler := processingToolHandler(lease, plans, output, logger)
-		if tool.Name != processingToolDefinition.name {
+		var handler sdkmcp.ToolHandler
+		switch tool.Name {
+		case processingToolDefinition.name:
+			handler = processingToolHandler(lease, plans, output, logger)
+		case packageImportToolDefinition.name:
+			handler = packageImportToolHandler(lease, output, logger)
+		default:
 			handler = readToolHandler(lease, plans, tool.Name, output, logger)
 		}
 		server.AddTool(tool, handler)

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-09-21
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
 ---
@@ -42,6 +42,49 @@ the same sealed source with different settings or a different destination.
 
 See [Mailbox archives](usage/importing.md#mailbox-archives) for retention,
 limits, explicit continuation and the EML transfer retry contract.
+
+## docbank package
+
+```text
+docbank package preflight <directory> --profile PROFILE --encoding ENCODING [--page-map-profile PROFILE] [--map FILE] [--json]
+docbank package import <preflight-id> --name NAME [--into /] [--party LABEL] [--operation-id UUID] [--accept-partial] [--index-supplied-text] [--json]
+docbank package import status <operation-id> [--json]
+docbank package import cancel <operation-id> [--json]
+```
+
+`preflight` validates a local load-file package without importing it. The path
+must be a directory visible to the daemon. It discovers one DAT or CSV metadata
+load file and an optional OPT or LFP page map, resolves declared files beneath
+the package root, checks page and family relationships, and returns record,
+page, and diagnostic counts. A blocking preview cannot be imported.
+
+| Preflight flag | Default | Meaning |
+|----------------|---------|---------|
+| `--profile` | required | `dat-concordance-v1` or `csv-rfc4180-v1` metadata profile |
+| `--encoding` | required | Declared source encoding: UTF-8, UTF-8 with BOM, UTF-16LE/BE, Windows-1252, or ISO-8859-1 |
+| `--page-map-profile` | extension default | `opt-standard-v1`, `opt-pagecount5-v1`, or `lfp-ipro-v1` |
+| `--map` | none | Path to a `loadfile-mapping/v1` JSON document |
+| `--json` | false | Emit the complete machine-readable preflight summary |
+
+`import` starts a durable job from the sealed preflight manifest. `--into` must
+name an existing folder. `--operation-id` defaults to a new version-4 UUID;
+reuse an explicit ID with the same arguments for an idempotent retry. Human
+output has the operation ID, state, committed and total record counts, and gap
+count. `status` reads that report again. `cancel` stops queued or running work
+at a fenced boundary.
+
+| Import flag | Default | Meaning |
+|-------------|---------|---------|
+| `--name` | required | Stable package name, up to 128 characters |
+| `--into` | `/` | Existing virtual destination folder |
+| `--party` | empty | Sending-party label, up to 64 characters |
+| `--operation-id` | generated UUID | Stable identity for exact retries and status reads |
+| `--accept-partial` | false | Retain supported records and report representations that became unavailable after preflight |
+| `--index-supplied-text` | false | Publish mapped sender text up to 4 MiB for PDF, TIFF, plain-text, or JSON natives as the searchable rendition with degraded provenance; unsupported or larger inputs fail explicitly |
+| `--json` | false | Emit the machine-readable job report |
+
+See [Load-file review packages](usage/importing.md#load-file-review-packages)
+for mapping, partial-import behavior, and the bounded ZIP web flow.
 
 ## docbank email-pdf
 

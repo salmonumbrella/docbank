@@ -1,10 +1,19 @@
 package api
 
+type PackageContainer struct {
+	ContainerID string `json:"container_id"`
+	Format      string `json:"format"`
+	State       string `json:"state"`
+	SHA256      string `json:"sha256"`
+	Size        int64  `json:"size"`
+	CreatedAt   string `json:"created_at"`
+}
+
 type PackagePreflightRequest struct {
 	Profile        string `json:"profile" minLength:"1"`
 	PageMapProfile string `json:"page_map_profile,omitzero"`
 	Encoding       string `json:"encoding" minLength:"1"`
-	SourceKind     string `json:"source_kind" enum:"root"`
+	SourceKind     string `json:"source_kind" enum:"root,container"`
 	SourceRef      string `json:"source_ref" minLength:"1"`
 	Mapping        []byte `json:"mapping,omitzero"`
 }
@@ -46,4 +55,28 @@ type PackageDiagnosticPage struct {
 	Diagnostics []PackageDiagnostic `json:"diagnostics"`
 	Total       int                 `json:"total"`
 	NextCursor  string              `json:"next_cursor,omitzero"`
+}
+
+type PackageImportRequest struct {
+	PreflightID       string `json:"preflight_id"`
+	Into              string `json:"into"`
+	Name              string `json:"name"`
+	Party             string `json:"party"`
+	OperationID       string `json:"operation_id"`
+	AcceptPartial     bool   `json:"accept_partial,omitzero"`
+	IndexSuppliedText bool   `json:"index_supplied_text,omitzero"`
+}
+
+type PackageImportJob struct {
+	OperationID string   `json:"operation_id"`
+	JobID       string   `json:"job_id"`
+	PackageID   string   `json:"package_id"`
+	PreflightID string   `json:"preflight_id"`
+	State       string   `json:"state"`
+	Committed   int      `json:"committed"`
+	Total       int      `json:"total"`
+	GapCount    int      `json:"gap_count"`
+	Gaps        []string `json:"gaps,omitempty"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
 }

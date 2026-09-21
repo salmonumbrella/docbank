@@ -49,6 +49,8 @@ func stringSchema(maxLength int) schema {
 
 func enumSchema(values ...string) schema { return schema{"type": "string", "enum": values} }
 
+func booleanSchema() schema { return schema{"type": "boolean"} }
+
 func integerSchema(minimum, maximum int64) schema {
 	result := schema{"type": "integer", "minimum": minimum}
 	if maximum > 0 {
@@ -88,6 +90,30 @@ func cursorSchema() schema {
 		"type": "string", "maxLength": maxCursorCharacters,
 		"pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$",
 	}
+}
+
+func packageImportOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(schema{
+		"operation_id": uuidSchema(), "job_id": uuidSchema(), "package_id": uuidSchema(),
+		"preflight_id": uuidSchema(), "state": enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
+		"committed": integerSchema(0, 100_000), "total": integerSchema(1, 100_000),
+		"gap_count": integerSchema(0, 100_000), "gaps": arraySchema(sha256Schema(), 100),
+		"created_at": dateTimeSchema(), "updated_at": dateTimeSchema(),
+	}), cacheRequired("operation_id", "job_id", "package_id", "preflight_id", "state", "committed", "total", "gap_count", "gaps", "created_at", "updated_at")...)
+}
+
+func getPackageImportSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"operation_id": uuidSchema()}, "operation_id"), packageImportOutputSchema()
+}
+
+func startPackageImportSchemas() (schema, schema) {
+	return rootObjectSchema(schema{
+		"preflight_id": uuidSchema(),
+		"into":         schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
+		"name":         schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+		"party":        stringSchema(64), "operation_id": uuidSchema(),
+		"accept_partial": booleanSchema(), "index_supplied_text": booleanSchema(),
+	}, "preflight_id", "into", "name", "operation_id", "accept_partial", "index_supplied_text"), packageImportOutputSchema()
 }
 
 func privateCacheProperties() schema {
@@ -193,7 +219,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["limit"] = integerSchema(1, 100)
 	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
 	properties["binding_id"] = stringSchema(128)
-	properties["explain"] = schema{"type": "boolean"}
+	properties["explain"] = booleanSchema()
 	input := rootObjectSchema(properties, "query", "profile")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
@@ -216,14 +242,14 @@ func searchDocumentsSchemas() (schema, schema) {
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage": objectSchema(schema{
-			"binding_required":   schema{"type": "boolean"},
+			"binding_required":   booleanSchema(),
 			"scoped_documents":   integerSchema(0, 4096),
 			"complete_documents": integerSchema(0, 4096),
 			"state":              stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", "state"),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
-		"truncated":       schema{"type": "boolean"},
+		"truncated":       booleanSchema(),
 	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	return input, output
@@ -259,7 +285,7 @@ func listDocumentVersionsSchemas() (schema, schema) {
 		"size":               integerSchema(0, 0),
 		"media_type":         stringSchema(255),
 		"recorded_at":        dateTimeSchema(),
-		"is_current":         schema{"type": "boolean"},
+		"is_current":         booleanSchema(),
 	}, "node_id", "content_version_id", "size", "media_type", "recorded_at", "is_current")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"node_id": integerSchema(1, 0), "items": arraySchema(item, 250),
@@ -283,7 +309,7 @@ func readRenditionTextSchemas() (schema, schema) {
 		"text": stringSchema(maxRenditionChars), "media_type": schema{"type": "string", "const": "text/markdown"},
 		"checksum": sha256Schema(), "requested_offset": integerSchema(0, 1<<31-1),
 		"actual_start": integerSchema(0, 1<<31-1), "actual_end": integerSchema(0, 1<<31-1),
-		"next_offset": integerSchema(0, 1<<31-1), "eof": schema{"type": "boolean"},
+		"next_offset": integerSchema(0, 1<<31-1), "eof": booleanSchema(),
 		"response_bytes": integerSchema(0, maxToolResponseBytes),
 	}), cacheRequired("vault_id", "node_id", "content_version_id", "attachment_id", "build_id", "profile_fingerprint",
 		"text", "media_type", "checksum", "requested_offset", "actual_start", "actual_end", "next_offset", "eof", "response_bytes")...)
@@ -316,7 +342,7 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"trust_boundary":     enumSchema("local_process", "operator_network", "hosted_provider"),
 		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "rendition_chunk", "query_text"), "maxItems": 3, "uniqueItems": true},
 		"runtime_disclosure": runtimeDisclosure,
-		"disclose_filename":  schema{"type": "boolean"},
+		"disclose_filename":  booleanSchema(),
 		"filename":           stringSchema(255),
 	}, "capability", "provider_id", "trust_boundary", "input_classes", "runtime_disclosure", "disclose_filename")
 	output := rootObjectSchema(withPrivateCache(schema{
@@ -334,7 +360,7 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"estimate": objectSchema(schema{
 			"source_bytes": integerSchema(0, 0), "provider_calls": integerSchema(0, 0), "vector_spaces": integerSchema(0, 0),
 		}, "source_bytes", "provider_calls", "vector_spaces"),
-		"consent_required":   schema{"type": "boolean"},
+		"consent_required":   booleanSchema(),
 		"consent_state":      enumSchema("active", "required", "expired", "revoked"),
 		"backup_consequence": stringSchema(4096),
 	}), cacheRequired("fingerprint", "vault_uid", "selector", "profile_fingerprint", "flow", "disclosed_classes",
@@ -359,7 +385,7 @@ func getProcessingCoverageSchemas() (schema, schema) {
 		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true},
 	}, "profile", "vault_id", "content_version_ids")
 	class := objectSchema(schema{
-		"name": stringSchema(128), "required": schema{"type": "boolean"}, "state": stringSchema(64),
+		"name": stringSchema(128), "required": booleanSchema(), "state": stringSchema(64),
 		"complete": integerSchema(0, 4096), "unavailable": integerSchema(0, 4096), "stale": integerSchema(0, 4096),
 		"ineligible": integerSchema(0, 4096), "rebuilding": integerSchema(0, 4096), "total": integerSchema(0, 4096),
 		"previous_generation_serving": integerSchema(0, 4096),

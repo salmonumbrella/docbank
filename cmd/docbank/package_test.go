@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -33,6 +34,19 @@ func TestPackagePreflightCLIUsesDaemonAndReturnsTypedResult(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &result))
 	assert.Equal(t, 1, result.Records)
 	assert.False(t, result.Blocking)
+	operation := uuid.NewString()
+	out, err = runCLI(t, "package", "import", result.PreflightID, "--name", "synthetic-package",
+		"--operation-id", operation, "--index-supplied-text", "--json")
+	require.NoError(t, err)
+	var job api.PackageImportJob
+	require.NoError(t, json.Unmarshal([]byte(out), &job))
+	assert.Equal(t, operation, job.OperationID)
+	assert.Equal(t, 1, job.Total)
+	out, err = runCLI(t, "package", "import", "status", operation, "--json")
+	require.NoError(t, err)
+	var status api.PackageImportJob
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	assert.Equal(t, job.JobID, status.JobID)
 }
 
 func TestPackagePreflightCLIRequiresDeclaredCodec(t *testing.T) {
