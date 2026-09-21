@@ -72,6 +72,16 @@ func executeReadTool(
 		output, err = getProcessingCoverage(ctx, lease, raw)
 	case "get_package_import":
 		output, err = getPackageImport(ctx, lease, raw)
+	case "list_bates_namespaces":
+		output, err = listBatesNamespaces(ctx, lease, raw)
+	case "preview_bates_stamp":
+		output, err = previewBatesStamp(ctx, lease, raw)
+	case "get_bates_allocation":
+		output, err = getBatesAllocation(ctx, lease, raw)
+	case "list_bates_exports":
+		output, err = listBatesExports(ctx, lease, raw)
+	case "get_bates_export":
+		output, err = getBatesExport(ctx, lease, raw)
 	default:
 		return nil, errors.New("unknown Docbank read tool")
 	}

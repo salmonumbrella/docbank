@@ -9,6 +9,7 @@ import (
 
 const (
 	jsonSchemaDraft       = "https://json-schema.org/draft/2020-12/schema"
+	jsonSchemaConst       = "const"
 	maxToolResponseBytes  = 1 << 20
 	maxToolErrorBytes     = 1024
 	maxPathBytes          = 16 << 10
@@ -17,6 +18,9 @@ const (
 	maxCursorCharacters   = maxCursorBytes
 	maxRenditionChars     = 16_000
 	defaultRenditionChars = 8_000
+	maxBatesLabels        = 250
+	maxBatesAffixChars    = 128
+	maxBatesLabelChars    = maxBatesAffixChars*2 + 10
 )
 
 type schema = map[string]any
@@ -116,10 +120,146 @@ func startPackageImportSchemas() (schema, schema) {
 	}, "preflight_id", "into", "name", "operation_id", "accept_partial", "index_supplied_text"), packageImportOutputSchema()
 }
 
+func batesNamespaceSchema() schema {
+	return objectSchema(schema{
+		"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
+		"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, 10),
+		"created_at": dateTimeSchema(),
+	}, "namespace_id", "prefix", "suffix", "padding", "created_at")
+}
+
+func batesPageLabelSchema() schema {
+	return objectSchema(schema{
+		"ordinal":       integerSchema(1, maxBatesLabels),
+		"occurrence_id": schema{"type": "string", "pattern": "^[0-9a-f]{32}$", "minLength": 32, "maxLength": 32},
+		"source_page":   integerSchema(1, 0), "output_page": integerSchema(1, 0),
+		"label": stringSchema(maxBatesLabelChars),
+	}, "ordinal", "occurrence_id", "source_page", "output_page", "label")
+}
+
+func batesPlanInputSchema() schema {
+	return rootObjectSchema(schema{
+		"operation_id": uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
+		"recipe_sha256": sha256Schema(), "start_at": integerSchema(0, 0),
+	}, "operation_id", "namespace_id", "snapshot_id", "recipe_sha256", "start_at")
+}
+
+func batesPlanOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(schema{
+		"namespace": batesNamespaceSchema(), "start_sequence": integerSchema(1, 0),
+		"end_sequence": integerSchema(1, 0), "labels": arraySchema(batesPageLabelSchema(), maxBatesLabels),
+		"stamped_nothing": booleanSchema(),
+	}), cacheRequired("namespace", "start_sequence", "end_sequence", "labels", "stamped_nothing")...)
+}
+
+func batesAllocationOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(schema{
+		"allocation_id": uuidSchema(), "namespace_id": uuidSchema(), "snapshot_id": uuidSchema(),
+		"recipe_sha256": sha256Schema(), "state": enumSchema("reserved", "committed", "abandoned"),
+		"start_sequence": integerSchema(1, 0), "end_sequence": integerSchema(1, 0),
+		"labels": arraySchema(batesPageLabelSchema(), maxBatesLabels), "created_at": dateTimeSchema(),
+		"committed_at": dateTimeSchema(),
+	}), cacheRequired("allocation_id", "namespace_id", "snapshot_id", "recipe_sha256", "state",
+		"start_sequence", "end_sequence", "labels", "created_at")...)
+}
+
+func listBatesNamespacesSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{"cursor": uuidSchema(), "limit": integerSchema(1, maxBatesLabels)})
+	output := rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(batesNamespaceSchema(), maxBatesLabels), "total": integerSchema(0, 0),
+		"next_cursor": uuidSchema(),
+	}), cacheRequired("items", "total")...)
+	return input, output
+}
+
+func ensureBatesNamespaceSchemas() (schema, schema) {
+	return rootObjectSchema(schema{
+			"prefix": stringSchema(maxBatesAffixChars), "suffix": stringSchema(maxBatesAffixChars),
+			"padding": integerSchema(1, 10),
+		}, "prefix", "padding"), rootObjectSchema(withPrivateCache(schema{
+			"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
+			"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, 10),
+			"created_at": dateTimeSchema(),
+		}), cacheRequired("namespace_id", "prefix", "suffix", "padding", "created_at")...)
+}
+
+func previewBatesStampSchemas() (schema, schema) {
+	return batesPlanInputSchema(), batesPlanOutputSchema()
+}
+
+func reserveBatesRangeSchemas() (schema, schema) {
+	return batesPlanInputSchema(), batesAllocationOutputSchema()
+}
+
+func getBatesAllocationSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"allocation_id": uuidSchema()}, "allocation_id"), batesAllocationOutputSchema()
+}
+
+func batesExportPageReceiptSchema() schema {
+	return objectSchema(schema{
+		"ordinal": integerSchema(1, maxBatesLabels), "occurrence_id": stringSchema(128),
+		"source_blob_sha256": sha256Schema(), "source_page": integerSchema(1, 0),
+		"output_page": integerSchema(1, maxBatesLabels), "label": stringSchema(maxBatesLabelChars),
+	}, "ordinal", "occurrence_id", "source_blob_sha256", "source_page", "output_page", "label")
+}
+
+func batesExportProperties() schema {
+	return schema{
+		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "blob_sha256": sha256Schema(),
+		"size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
+		"page_count": integerSchema(1, maxBatesLabels), "recipe_sha256": sha256Schema(),
+		"manifest_sha256": sha256Schema(), "state": schema{"type": "string", jsonSchemaConst: "verified"},
+		"created_at": dateTimeSchema(), "pages": arraySchema(batesExportPageReceiptSchema(), maxBatesLabels),
+	}
+}
+
+func batesExportOutputSchema() schema {
+	return rootObjectSchema(withPrivateCache(batesExportProperties()), cacheRequired(
+		"artifact_id", "allocation_id", "blob_sha256", "size", "media_type", "page_count",
+		"recipe_sha256", "manifest_sha256", "state", "created_at", "pages")...)
+}
+
+func batesRecipeSchema() schema {
+	return objectSchema(schema{
+		"contract":     schema{"type": "string", jsonSchemaConst: "bates-stamp/v1"},
+		"namespace_id": uuidSchema(), "prefix": stringSchema(maxBatesAffixChars),
+		"suffix": stringSchema(maxBatesAffixChars), "padding": integerSchema(1, 10),
+		"start_at":      integerSchema(1, 9_999_999_999),
+		"position":      enumSchema("top-left", "top-center", "top-right", "middle-left", "middle-center", "middle-right", "bottom-left", "bottom-center", "bottom-right"),
+		"margin_points": integerSchema(0, 144), "font_name": schema{"type": "string", jsonSchemaConst: "Helvetica"},
+		"font_size_points": schema{"type": "integer", jsonSchemaConst: 9}, "color": schema{"type": "string", jsonSchemaConst: "#000000"},
+		"opacity": schema{"type": "number", jsonSchemaConst: 1}, "units": schema{"type": "string", jsonSchemaConst: "point"},
+		"rotation_policy": schema{"type": "string", jsonSchemaConst: "follow_page"}, "restamp": schema{"type": "boolean", jsonSchemaConst: false},
+		"engine_identity": objectSchema(schema{
+			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.15.0"},
+			"api":     schema{"type": "string", jsonSchemaConst: "AddWatermarksMap"},
+			"options": schema{"type": "array", jsonSchemaConst: []string{"onTop=true", "update=restamp"}},
+		}, "name", "version", "api", "options"),
+	}, "contract", "namespace_id", "prefix", "suffix", "padding", "start_at", "position", "margin_points",
+		"font_name", "font_size_points", "color", "opacity", "units", "rotation_policy", "restamp", "engine_identity")
+}
+
+func listBatesExportsSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{"after": uuidSchema(), "limit": integerSchema(1, maxBatesLabels)})
+	output := rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(objectSchema(batesExportProperties(), "artifact_id", "allocation_id", "blob_sha256", "size", "media_type", "page_count", "recipe_sha256", "manifest_sha256", "state", "created_at", "pages"), maxBatesLabels),
+		"total": integerSchema(0, 0), "next_after": uuidSchema(),
+	}), cacheRequired("items", "total")...)
+	return input, output
+}
+
+func getBatesExportSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"allocation_id": uuidSchema()}, "allocation_id"), batesExportOutputSchema()
+}
+
+func publishBatesExportSchemas() (schema, schema) {
+	return rootObjectSchema(schema{"allocation_id": uuidSchema(), "recipe": batesRecipeSchema()}, "allocation_id", "recipe"), batesExportOutputSchema()
+}
+
 func privateCacheProperties() schema {
 	return schema{
-		"ttlMs":      schema{"type": "integer", "const": 0},
-		"cacheScope": schema{"type": "string", "const": "private"},
+		"ttlMs":      schema{"type": "integer", jsonSchemaConst: 0},
+		"cacheScope": schema{"type": "string", jsonSchemaConst: "private"},
 	}
 }
 
@@ -306,7 +446,7 @@ func readRenditionTextSchemas() (schema, schema) {
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id": uuidSchema(), "node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
 		"attachment_id": sha256Schema(), "build_id": sha256Schema(), "profile_fingerprint": sha256Schema(),
-		"text": stringSchema(maxRenditionChars), "media_type": schema{"type": "string", "const": "text/markdown"},
+		"text": stringSchema(maxRenditionChars), "media_type": schema{"type": "string", jsonSchemaConst: "text/markdown"},
 		"checksum": sha256Schema(), "requested_offset": integerSchema(0, 1<<31-1),
 		"actual_start": integerSchema(0, 1<<31-1), "actual_end": integerSchema(0, 1<<31-1),
 		"next_offset": integerSchema(0, 1<<31-1), "eof": booleanSchema(),
@@ -405,7 +545,7 @@ func startProcessingSchemas() (schema, schema) {
 	output := rootObjectSchema(withPrivateCache(schema{
 		"job_id": sha256Schema(), "rendition_job_id": sha256Schema(), "attachment_id": sha256Schema(),
 		"embedding_job_ids": arraySchema(sha256Schema(), 64), "profile_fingerprint": sha256Schema(),
-		"content_version_id": uuidSchema(), "state": schema{"type": "string", "const": "queued"},
+		"content_version_id": uuidSchema(), "state": schema{"type": "string", jsonSchemaConst: "queued"},
 	}), cacheRequired("job_id", "embedding_job_ids", "profile_fingerprint", "content_version_id", "state")...)
 	return input, output
 }

@@ -26,6 +26,8 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_vault_info", "list_documents", "search_documents", "get_document",
 		"list_document_versions", "read_rendition_text", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
+		"list_bates_namespaces", "preview_bates_stamp", "get_bates_allocation",
+		"list_bates_exports", "get_bates_export",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {
@@ -46,12 +48,13 @@ func TestProcessingToolIsConstructionTimeOptIn(t *testing.T) {
 	readOnly := catalogNames(toolCatalog(false))
 	enabledTools := toolCatalog(true)
 	enabled := catalogNames(enabledTools)
-	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "start_package_import"), enabled)
+	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "start_package_import",
+		"ensure_bates_namespace", "reserve_bates_range", "publish_bates_export"), enabled)
 
-	for index, write := range enabledTools[len(enabledTools)-2:] {
+	for index, write := range enabledTools[len(enabledTools)-5:] {
 		require.NotNil(t, write.Annotations)
 		assert.False(t, write.Annotations.ReadOnlyHint)
-		assert.Equal(t, index == 1, write.Annotations.IdempotentHint)
+		assert.Equal(t, index != 0, write.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), write.Annotations.DestructiveHint)
 		assert.Equal(t, new(true), write.Annotations.OpenWorldHint)
 	}
@@ -294,6 +297,9 @@ func TestExpectedDomainErrorsAreBoundedToolResults(t *testing.T) {
 		{name: "invalid cursor", err: fmt.Errorf("private cursor detail: %w", store.ErrInvalidDocumentCursor),
 			code: "invalid_document_cursor", redaction: "private cursor detail"},
 		{name: "scope", err: &daemonconn.SourceFenceScopeTooLargeError{ObservedScopeCount: 4097}, code: "scope_too_large"},
+		{name: "Bates reservation conflict", err: store.ErrBatesReservationConflict, code: "bates_reservation_conflict"},
+		{name: "Bates page mismatch", err: store.ErrBatesPageCountMismatch, code: "bates_page_count_mismatch"},
+		{name: "Bates overflow", err: store.ErrBatesOverflow, code: "bates_overflow"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
