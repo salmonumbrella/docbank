@@ -145,6 +145,23 @@ CREATE INDEX IF NOT EXISTS nodes_live_modified ON nodes(modified_at DESC, name, 
     WHERE trashed_at IS NULL;
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
+-- Stable public document identity is separate from a mutable path and node
+-- revision. Federation aliases are explicit adopted authority, never inferred.
+CREATE TABLE IF NOT EXISTS document_identities (
+    document_uid TEXT PRIMARY KEY,
+    node_id      INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_identity_aliases (
+    domain_uid          TEXT NOT NULL,
+    source_vault_uid    TEXT NOT NULL,
+    source_document_uid TEXT NOT NULL,
+    local_document_uid  TEXT NOT NULL REFERENCES document_identities(document_uid),
+    mapped_at           TEXT NOT NULL,
+    PRIMARY KEY (domain_uid, source_vault_uid, source_document_uid)
+);
+
 CREATE TABLE IF NOT EXISTS blobs (
     hash       TEXT PRIMARY KEY,
     size       INTEGER NOT NULL CHECK (size >= 0),

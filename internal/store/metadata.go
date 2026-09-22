@@ -336,6 +336,10 @@ func (layout metadataSourceLayout) hasPersons() bool {
 	return layout.schemaVersion >= peopleStorageSchemaVersion
 }
 
+func (layout metadataSourceLayout) hasDocumentIdentities() bool {
+	return layout.schemaVersion >= documentIdentityStorageSchemaVersion
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -403,6 +407,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportContentVersions(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasDocumentIdentities() {
+		if err := exportDocumentIdentityMetadata(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if layout.hasPersons() {
 		if err := exportPersonMetadata(ctx, tx, write); err != nil {
@@ -1065,6 +1074,8 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM text_extraction_queue)
 		    + (SELECT COUNT(*) FROM text_searchable_versions)
 		    + (SELECT COUNT(*) FROM content_fts)
+		    + (SELECT COUNT(*) FROM document_identities)
+		    + (SELECT COUNT(*) FROM document_identity_aliases)
 		    + (SELECT COUNT(*) FROM audit_records)
 		    + (SELECT COUNT(*) FROM audit_authority)
 		    + (SELECT COUNT(*) FROM audit_scopes)
@@ -1240,6 +1251,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if isPersonMetadataType(kind) {
 		return importPersonMetadataRecord(ctx, tx, kind, raw)
+	}
+	if kind == metadataDocumentIdentityType || kind == metadataDocumentIdentityAliasType {
+		return importDocumentIdentityMetadataRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
 	case "blob":
@@ -1581,6 +1595,8 @@ var metadataRequiredFields = map[string][]string{
 	metadataPersonCandidateType:            personMetadataRequiredFields[metadataPersonCandidateType],
 	"node":                                 {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", metadataRevisionField, metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
+	metadataDocumentIdentityType:           {metadataTypeField, "document_uid", metadataNodeIDField, metadataCreatedAtField},
+	metadataDocumentIdentityAliasType:      {metadataTypeField, "domain_uid", "source_vault_uid", "source_document_uid", "local_document_uid", "mapped_at"},
 	metadataIngestType:                     {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
 	metadataCollectionLabelType:            {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, "updated_at"},
 	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
@@ -1995,6 +2011,11 @@ func validateMetadataStateWithVaultIdentity(
 	if err := validateMetadataRelations(ctx, tx); err != nil {
 		return err
 	}
+	if layout.hasDocumentIdentities() {
+		if err := validateDocumentIdentityMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
 	if layout.hasPostV3Metadata() {
 		if err := validateProvenanceVersionBindingRelations(ctx, tx); err != nil {
 			return err
@@ -2253,6 +2274,23 @@ func validateMetadataRelations(ctx context.Context, tx metadataQuerier) error {
 			  SELECT p.identity FROM provenance p JOIN reachable r ON p.supersedes=r.identity
 			)
 			SELECT (SELECT COUNT(*) FROM reachable) != (SELECT COUNT(*) FROM provenance)`},
+	}
+	for _, check := range checks {
+		var failed bool
+		if err := tx.QueryRowContext(ctx, check.query).Scan(&failed); err != nil {
+			return fmt.Errorf("validating metadata (%s): %w", check.name, err)
+		}
+		if failed {
+			return errors.New(check.name)
+		}
+	}
+	return nil
+}
+
+func validateDocumentIdentityMetadataState(ctx context.Context, tx metadataQuerier) error {
+	checks := []struct{ name, query string }{
+		{"document identity references non-file node", `SELECT EXISTS(SELECT 1 FROM document_identities i LEFT JOIN nodes n ON n.id=i.node_id WHERE n.id IS NULL OR n.kind != 'file')`},
+		{"document identity alias references missing authority", `SELECT EXISTS(SELECT 1 FROM document_identity_aliases a LEFT JOIN document_identities i ON i.document_uid=a.local_document_uid WHERE i.document_uid IS NULL)`},
 	}
 	for _, check := range checks {
 		var failed bool
