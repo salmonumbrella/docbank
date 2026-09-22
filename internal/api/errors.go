@@ -91,6 +91,7 @@ var storeErrCodes = []struct {
 }{
 	{store.ErrSearchQueryRequired, http.StatusUnprocessableEntity, "search_query_required"},
 	{store.ErrNotFound, http.StatusNotFound, "not_found"},
+	{store.ErrDocumentIdentityUnavailable, http.StatusNotFound, "not_found"},
 	{store.ErrExists, http.StatusConflict, "exists"},
 	{store.ErrCycle, http.StatusConflict, "cycle"},
 	{store.ErrStaleRevision, http.StatusPreconditionFailed, "stale_revision"},

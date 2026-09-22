@@ -340,6 +340,10 @@ func (layout metadataSourceLayout) hasDocumentIdentities() bool {
 	return layout.schemaVersion >= documentIdentityStorageSchemaVersion
 }
 
+func (layout metadataSourceLayout) hasMetadataAuthority() bool {
+	return layout.schemaVersion >= metadataAuthorityStorageSchemaVersion
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -410,6 +414,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if layout.hasDocumentIdentities() {
 		if err := exportDocumentIdentityMetadata(ctx, tx, write); err != nil {
+			return err
+		}
+	}
+	if layout.hasMetadataAuthority() {
+		if err := exportDocumentMetadataAuthority(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -1076,6 +1085,9 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		    + (SELECT COUNT(*) FROM content_fts)
 		    + (SELECT COUNT(*) FROM document_identities)
 		    + (SELECT COUNT(*) FROM document_identity_aliases)
+		    + (SELECT COUNT(*) FROM metadata_schema_versions)
+		    + (SELECT COUNT(*) FROM metadata_values)
+		    + (SELECT COUNT(*) FROM metadata_imported_frontmatter)
 		    + (SELECT COUNT(*) FROM audit_records)
 		    + (SELECT COUNT(*) FROM audit_authority)
 		    + (SELECT COUNT(*) FROM audit_scopes)
@@ -1254,6 +1266,9 @@ func (s *Store) importMetadataRecord(
 	}
 	if kind == metadataDocumentIdentityType || kind == metadataDocumentIdentityAliasType {
 		return importDocumentIdentityMetadataRecord(ctx, tx, kind, raw)
+	}
+	if isDocumentMetadataAuthorityType(kind) {
+		return importDocumentMetadataAuthorityRecord(ctx, tx, kind, raw)
 	}
 	switch kind {
 	case "blob":
@@ -1597,6 +1612,9 @@ var metadataRequiredFields = map[string][]string{
 	"content_version":                      {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
 	metadataDocumentIdentityType:           {metadataTypeField, "document_uid", metadataNodeIDField, metadataCreatedAtField},
 	metadataDocumentIdentityAliasType:      {metadataTypeField, "domain_uid", "source_vault_uid", "source_document_uid", "local_document_uid", "mapped_at"},
+	metadataSchemaVersionType:              {metadataTypeField, "schema", metadataCreatedAtField},
+	metadataValueType:                      {metadataTypeField, "value"},
+	metadataImportedFrontmatterType:        {metadataTypeField, "frontmatter"},
 	metadataIngestType:                     {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
 	metadataCollectionLabelType:            {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, "updated_at"},
 	metadataProvenanceType:                 {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
@@ -2013,6 +2031,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.hasDocumentIdentities() {
 		if err := validateDocumentIdentityMetadataState(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.hasMetadataAuthority() {
+		if err := validateDocumentMetadataAuthorityState(ctx, tx); err != nil {
 			return err
 		}
 	}

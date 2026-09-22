@@ -1281,6 +1281,39 @@ export interface DocumentIdentity {
   path: string;
 }
 
+export type MetadataValueLane = typeof MetadataValueLane[keyof typeof MetadataValueLane];
+
+
+export const MetadataValueLane = {
+  user_override: 'user_override',
+  source_extracted: 'source_extracted',
+  machine_proposal: 'machine_proposal',
+} as const;
+
+export interface MetadataValue {
+  accepted: boolean;
+  captured_at: string;
+  content_version_id?: string;
+  document_uid: string;
+  field_key: string;
+  lane: MetadataValueLane;
+  producer: string;
+  /** @minimum 1 */
+  revision: number;
+  schema_uid: string;
+  /** @minimum 1 */
+  schema_version: number;
+  source_pointer: string;
+  value: string | number | boolean | string[];
+}
+
+export interface DocumentMetadata {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  document_uid: string;
+  values: MetadataValue[];
+}
+
 export type DocumentMissingCoverageKind = typeof DocumentMissingCoverageKind[keyof typeof DocumentMissingCoverageKind];
 
 
@@ -2973,6 +3006,37 @@ export interface Message {
   separator: string;
   sequence: number;
   start: number;
+}
+
+export interface MetadataField {
+  embedding_eligible: boolean;
+  enum_values?: string[];
+  filterable: boolean;
+  key: string;
+  keyword_searchable: boolean;
+  kind: string;
+  provenance_lanes?: string[];
+  required_for_profile: boolean;
+  sensitive: boolean;
+}
+
+export interface MetadataScope {
+  id: string;
+  kind: string;
+}
+
+export interface MetadataSchema {
+  fields: MetadataField[];
+  name: string;
+  scope: MetadataScope;
+  uid: string;
+  version: number;
+}
+
+export interface MetadataSchemaList {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  schemas: MetadataSchema[];
 }
 
 export interface MkdirPathRequest {
@@ -6861,6 +6925,30 @@ return sessionJSON<DocumentSummaryResolveResponse>(getResolveDocumentSummariesUr
 
 
 
+export const getGetDocumentMetadataUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/documents/${encodeURIComponent(String(id))}/metadata`
+}
+
+/**
+ * @summary Read retained metadata values by stable document identity
+ */
+export const getDocumentMetadata = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<DocumentMetadata> => {
+
+  return sessionJSON<DocumentMetadata>(getGetDocumentMetadataUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getListDuplicateContentUrl = (params?: ListDuplicateContentParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -9014,6 +9102,30 @@ return sessionJSON<MediaReceipt>(getRetryMediaSourceUrl(sourceId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaRetryBody)
+  }
+);}
+
+
+
+export const getListMetadataSchemasUrl = () => {
+
+
+
+
+  return `/api/v1/metadata/schemas`
+}
+
+/**
+ * @summary List immutable metadata schema versions
+ */
+export const listMetadataSchemas = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<MetadataSchemaList> => {
+
+  return sessionJSON<MetadataSchemaList>(getListMetadataSchemasUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

@@ -1701,6 +1701,52 @@ func (c *Client) ResolveDocumentSummaries(ctx context.Context, options *ResolveD
 	return responseParser(ctx, resp)
 }
 
+// GetDocumentMetadata Read retained metadata values by stable document identity
+func (c *Client) GetDocumentMetadata(ctx context.Context, options *GetDocumentMetadataRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentMetadataResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/documents/{id}/metadata",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetDocumentMetadataResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetDocumentMetadataResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetDocumentMetadataResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetDocumentMetadataErrorResponse](resp, "GetDocumentMetadataErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/documents/{id}/metadata")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListDuplicateContent Find live documents that share current content
 func (c *Client) ListDuplicateContent(ctx context.Context, options *ListDuplicateContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDuplicateContentResponse, error) {
 	var err error
@@ -4421,6 +4467,51 @@ func (c *Client) RetryMediaSource(ctx context.Context, options *RetryMediaSource
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/sources/{source_id}/retry")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListMetadataSchemas List immutable metadata schema versions
+func (c *Client) ListMetadataSchemas(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListMetadataSchemasResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/metadata/schemas",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListMetadataSchemasResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListMetadataSchemasResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListMetadataSchemasResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListMetadataSchemasErrorResponse](resp, "ListMetadataSchemasErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/metadata/schemas")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -10258,6 +10349,37 @@ func (o *ResolveDocumentSummariesRequestOptions) GetHeader() (map[string]string,
 	return nil, nil
 }
 
+// GetDocumentMetadataRequestOptions is the options needed to make a request to GetDocumentMetadata.
+type GetDocumentMetadataRequestOptions struct {
+	PathParams *GetDocumentMetadataPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetDocumentMetadataRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetDocumentMetadataRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetDocumentMetadataRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetDocumentMetadataRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListDuplicateContentRequestOptions is the options needed to make a request to ListDuplicateContent.
 type ListDuplicateContentRequestOptions struct {
 	Query *ListDuplicateContentQuery
@@ -15304,6 +15426,10 @@ type GetCollectionQualityPath struct {
 	ID string `json:"id"`
 }
 
+type GetDocumentMetadataPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
 type RemoveEmailDocumentPublicationPath struct {
 	OperationID string `json:"operation_id"`
 }
@@ -16186,6 +16312,10 @@ type ResolveDocumentSummariesResponse = api.DocumentSummaryResolveResponse
 
 type ResolveDocumentSummariesErrorResponse = Error
 
+type GetDocumentMetadataResponse = api.DocumentMetadata
+
+type GetDocumentMetadataErrorResponse = Error
+
 type ListDuplicateContentResponse = api.DuplicatePage
 
 type ListDuplicateContentErrorResponse = Error
@@ -16403,6 +16533,10 @@ type ImportMediaArtifactResponse = api.MediaReceipt
 type RetryMediaSourceResponse = api.MediaReceipt
 
 type RetryMediaSourceErrorResponse = Error
+
+type ListMetadataSchemasResponse = api.MetadataSchemaList
+
+type ListMetadataSchemasErrorResponse = Error
 
 type CreateNodeResponse = api.Node
 
@@ -17029,6 +17163,8 @@ type DocumentEvidenceReference = api.DocumentEvidenceReference
 
 type DocumentIdentity = api.DocumentIdentity
 
+type DocumentMetadata = api.DocumentMetadata
+
 type DocumentMissingCoverage = api.DocumentMissingCoverage
 
 type DocumentPage = api.DocumentPage
@@ -17340,6 +17476,16 @@ type MediaTimestamp = api.MediaTimestamp
 type Member = bundle.Member
 
 type Message = mailbox.Message
+
+type MetadataField = document.MetadataField
+
+type MetadataSchema = document.MetadataSchema
+
+type MetadataSchemaList = api.MetadataSchemaList
+
+type MetadataScope = document.MetadataScope
+
+type MetadataValue = api.MetadataValue
 
 type MkdirPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.

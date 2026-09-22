@@ -241,6 +241,29 @@ func TestUpgradeReleasedSchemaCreatesEmptySavedQueryRunAuthority(t *testing.T) {
 	}
 }
 
+// Mutation caught: omitting the metadata sidecar tables from a fresh current
+// schema during the released JSONL cutover.
+func TestUpgradeReleasedSchemaCreatesEmptyMetadataAuthority(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			createV090Fixture(t, dbPath, test.driver)
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			var schemas, values, frontmatter int
+			require.NoError(t, s.db.QueryRow(`SELECT
+				(SELECT COUNT(*) FROM metadata_schema_versions),
+				(SELECT COUNT(*) FROM metadata_values),
+				(SELECT COUNT(*) FROM metadata_imported_frontmatter)`).Scan(
+				&schemas, &values, &frontmatter))
+			assert.Zero(t, schemas)
+			assert.Zero(t, values)
+			assert.Zero(t, frontmatter)
+		})
+	}
+}
+
 func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 	for _, test := range v090UpgradeDrivers() {
 		t.Run(test.name, func(t *testing.T) {
@@ -283,6 +306,31 @@ func TestOpenRejectsCurrentDatabaseWithoutProvenanceVersionBindings(t *testing.T
 				require.NoError(t, reopened.Close())
 			}
 			require.ErrorContains(t, err, "unexpected provenance_version_bindings layout")
+		})
+	}
+}
+
+func TestOpenRejectsCurrentDatabaseWithoutMetadataAuthority(t *testing.T) {
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			_, err = db.Exec(`DROP TABLE metadata_values`)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			reopened, err := Open(dbPath, test.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "metadata_values")
 		})
 	}
 }

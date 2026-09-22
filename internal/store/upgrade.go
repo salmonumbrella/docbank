@@ -97,6 +97,7 @@ var currentSchemaTables = [...]string{
 	"document_people_generations", "document_people_heads", "document_people_builds",
 	"document_people",
 	"document_identities", "document_identity_aliases",
+	"metadata_schema_versions", "metadata_values", "metadata_imported_frontmatter",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in

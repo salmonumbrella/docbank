@@ -2671,6 +2671,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentMetadata:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DocumentMetadata.json
+          format: uri
+          readOnly: true
+          type: string
+        document_uid:
+          format: uuid
+          type: string
+        values:
+          items:
+            $ref: "#/components/schemas/MetadataValue"
+          type: array
+      required:
+        - document_uid
+        - values
+      type: object
+      x-go-type: api.DocumentMetadata
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentMissingCoverage:
       additionalProperties: false
       properties:
@@ -7104,6 +7129,170 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/mailbox
         name: mailbox
+    MetadataField:
+      additionalProperties: false
+      properties:
+        embedding_eligible:
+          type: boolean
+        enum_values:
+          items:
+            type: string
+          type: array
+        filterable:
+          type: boolean
+        key:
+          type: string
+        keyword_searchable:
+          type: boolean
+        kind:
+          type: string
+        provenance_lanes:
+          items:
+            type: string
+          type: array
+        required_for_profile:
+          type: boolean
+        sensitive:
+          type: boolean
+      required:
+        - key
+        - kind
+        - required_for_profile
+        - sensitive
+        - filterable
+        - keyword_searchable
+        - embedding_eligible
+      type: object
+      x-go-type: document.MetadataField
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    MetadataSchema:
+      additionalProperties: false
+      properties:
+        fields:
+          items:
+            $ref: "#/components/schemas/MetadataField"
+          type: array
+        name:
+          type: string
+        scope:
+          $ref: "#/components/schemas/MetadataScope"
+        uid:
+          type: string
+        version:
+          format: int64
+          type: integer
+      required:
+        - uid
+        - version
+        - name
+        - scope
+        - fields
+      type: object
+      x-go-type: document.MetadataSchema
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    MetadataSchemaList:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MetadataSchemaList.json
+          format: uri
+          readOnly: true
+          type: string
+        schemas:
+          items:
+            $ref: "#/components/schemas/MetadataSchema"
+          type: array
+      required:
+        - schemas
+      type: object
+      x-go-type: api.MetadataSchemaList
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    MetadataScope:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+      required:
+        - kind
+        - id
+      type: object
+      x-go-type: document.MetadataScope
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    MetadataValue:
+      additionalProperties: false
+      properties:
+        accepted:
+          type: boolean
+        captured_at:
+          format: date-time
+          type: string
+        content_version_id:
+          format: uuid
+          type: string
+        document_uid:
+          format: uuid
+          type: string
+        field_key:
+          type: string
+        lane:
+          enum:
+            - user_override
+            - source_extracted
+            - machine_proposal
+          type: string
+        producer:
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        schema_uid:
+          format: uuid
+          type: string
+        schema_version:
+          format: int64
+          minimum: 1
+          type: integer
+        source_pointer:
+          type: string
+        value:
+          oneOf:
+            - type: string
+            - format: double
+              type: number
+            - type: boolean
+            - items:
+                type: string
+              type: array
+      required:
+        - document_uid
+        - schema_uid
+        - schema_version
+        - field_key
+        - value
+        - lane
+        - accepted
+        - producer
+        - source_pointer
+        - captured_at
+        - revision
+      type: object
+      x-go-type: api.MetadataValue
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MkdirPathRequest:
       additionalProperties: false
       properties:
@@ -13741,6 +13930,30 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve bounded exact current live document summaries
+  /api/v1/documents/{id}/metadata:
+    get:
+      operationId: getDocumentMetadata
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentMetadata"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read retained metadata values by stable document identity
   /api/v1/duplicates:
     get:
       description: Groups are ordered by SHA-256. Counts exclude historical versions and trash; each group displays at most 16 current references. No content is deleted or merged.
@@ -15340,6 +15553,23 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Retry explicit processing for one source
+  /api/v1/metadata/schemas:
+    get:
+      operationId: listMetadataSchemas
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetadataSchemaList"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List immutable metadata schema versions
   /api/v1/nodes:
     post:
       description: kind must be "dir"; file creation is POST /api/v1/ingest for server-side paths or digest-checked POST /api/v1/uploads for remote bytes.

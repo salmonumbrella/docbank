@@ -162,6 +162,45 @@ CREATE TABLE IF NOT EXISTS document_identity_aliases (
     PRIMARY KEY (domain_uid, source_vault_uid, source_document_uid)
 );
 
+-- Sidecar metadata stays separate from source and rendition envelopes. Schema
+-- versions and captured values are immutable authority; generated projections
+-- are rebuilt from these rows by later metadata/query work.
+CREATE TABLE IF NOT EXISTS metadata_schema_versions (
+    schema_uid     TEXT NOT NULL,
+    schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+    canonical_json BLOB NOT NULL CHECK (length(canonical_json) > 0),
+    created_at     TEXT NOT NULL,
+    PRIMARY KEY (schema_uid, schema_version)
+);
+
+CREATE TABLE IF NOT EXISTS metadata_values (
+    document_uid       TEXT NOT NULL REFERENCES document_identities(document_uid) ON DELETE CASCADE,
+    content_version_id TEXT NOT NULL DEFAULT '',
+    schema_uid         TEXT NOT NULL,
+    schema_version     INTEGER NOT NULL,
+    field_key          TEXT NOT NULL,
+    value_json         BLOB NOT NULL CHECK (length(value_json) > 0),
+    lane               TEXT NOT NULL,
+    accepted           INTEGER NOT NULL CHECK (accepted IN (0, 1)),
+    producer           TEXT NOT NULL,
+    source_pointer     TEXT NOT NULL DEFAULT '',
+    captured_at        TEXT NOT NULL,
+    revision           INTEGER NOT NULL CHECK (revision >= 1),
+    PRIMARY KEY (document_uid, content_version_id, schema_uid, schema_version, field_key, lane, revision),
+    FOREIGN KEY (schema_uid, schema_version)
+        REFERENCES metadata_schema_versions(schema_uid, schema_version)
+);
+CREATE INDEX IF NOT EXISTS metadata_values_document
+    ON metadata_values(document_uid, content_version_id, schema_uid, schema_version, field_key);
+
+CREATE TABLE IF NOT EXISTS metadata_imported_frontmatter (
+    document_uid       TEXT NOT NULL REFERENCES document_identities(document_uid) ON DELETE CASCADE,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    raw                BLOB NOT NULL CHECK (length(raw) > 0),
+    captured_at        TEXT NOT NULL,
+    PRIMARY KEY (document_uid, content_version_id)
+);
+
 CREATE TABLE IF NOT EXISTS blobs (
     hash       TEXT PRIMARY KEY,
     size       INTEGER NOT NULL CHECK (size >= 0),
