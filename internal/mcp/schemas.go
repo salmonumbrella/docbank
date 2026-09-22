@@ -17,6 +17,8 @@ const (
 	maxCursorCharacters   = maxCursorBytes
 	maxRenditionChars     = 16_000
 	defaultRenditionChars = 8_000
+	jsonSchemaBoolean     = "boolean"
+	jsonSchemaMaxItems    = "maxItems"
 )
 
 type schema = map[string]any
@@ -60,7 +62,7 @@ func integerSchema(minimum, maximum int64) schema {
 func arraySchema(items schema, maximum int) schema {
 	result := schema{"type": "array", "items": items} //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
 	if maximum > 0 {
-		result["maxItems"] = maximum
+		result[jsonSchemaMaxItems] = maximum
 	}
 	return result
 }
@@ -131,7 +133,7 @@ func documentSummarySchema() schema {
 func fenceInputProperties() schema {
 	return schema{
 		"content_version_ids": schema{
-			"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true,
+			"type": "array", "items": uuidSchema(), "minItems": 1, jsonSchemaMaxItems: 4096, "uniqueItems": true,
 		},
 		"filters": objectSchema(schema{
 			"tag_id":          uuidSchema(),
@@ -146,7 +148,7 @@ func fenceInputProperties() schema {
 func fenceAuthoritySchema() schema {
 	return objectSchema(schema{
 		"vault_id":            uuidSchema(),
-		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "maxItems": 4096, "uniqueItems": true},
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(), jsonSchemaMaxItems: 4096, "uniqueItems": true},
 	}, "vault_id", "content_version_ids")
 }
 
@@ -193,7 +195,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["limit"] = integerSchema(1, 100)
 	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
 	properties["binding_id"] = stringSchema(128)
-	properties["explain"] = schema{"type": "boolean"}
+	properties["explain"] = schema{"type": jsonSchemaBoolean}
 	input := rootObjectSchema(properties, "query", "profile")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
@@ -216,14 +218,14 @@ func searchDocumentsSchemas() (schema, schema) {
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
 		"coverage": objectSchema(schema{
-			"binding_required":   schema{"type": "boolean"},
+			"binding_required":   schema{"type": jsonSchemaBoolean},
 			"scoped_documents":   integerSchema(0, 4096),
 			"complete_documents": integerSchema(0, 4096),
 			"state":              stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", "state"),
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
-		"truncated":       schema{"type": "boolean"},
+		"truncated":       schema{"type": jsonSchemaBoolean},
 	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	return input, output
@@ -259,7 +261,7 @@ func listDocumentVersionsSchemas() (schema, schema) {
 		"size":               integerSchema(0, 0),
 		"media_type":         stringSchema(255),
 		"recorded_at":        dateTimeSchema(),
-		"is_current":         schema{"type": "boolean"},
+		"is_current":         schema{"type": jsonSchemaBoolean},
 	}, "node_id", "content_version_id", "size", "media_type", "recorded_at", "is_current")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"node_id": integerSchema(1, 0), "items": arraySchema(item, 250),
@@ -283,10 +285,98 @@ func readRenditionTextSchemas() (schema, schema) {
 		"text": stringSchema(maxRenditionChars), "media_type": schema{"type": "string", "const": "text/markdown"},
 		"checksum": sha256Schema(), "requested_offset": integerSchema(0, 1<<31-1),
 		"actual_start": integerSchema(0, 1<<31-1), "actual_end": integerSchema(0, 1<<31-1),
-		"next_offset": integerSchema(0, 1<<31-1), "eof": schema{"type": "boolean"},
+		"next_offset": integerSchema(0, 1<<31-1), "eof": schema{"type": jsonSchemaBoolean},
 		"response_bytes": integerSchema(0, maxToolResponseBytes),
 	}), cacheRequired("vault_id", "node_id", "content_version_id", "attachment_id", "build_id", "profile_fingerprint",
 		"text", "media_type", "checksum", "requested_offset", "actual_start", "actual_end", "next_offset", "eof", "response_bytes")...)
+	return input, output
+}
+
+func passageRefSchema() schema {
+	return objectSchema(schema{
+		"version":               schema{"type": "integer", "const": 1},
+		"federation_domain_uid": uuidSchema(),
+		"vault_uid":             uuidSchema(),
+		"document_uid":          uuidSchema(),
+		"content_version_id":    uuidSchema(),
+		"source_sha256":         sha256Schema(),
+		"rendition_build_id":    sha256Schema(),
+		"attachment_id":         sha256Schema(),
+		"body_sha256":           sha256Schema(),
+		"byte_start":            integerSchema(0, 1<<31-1),
+		"byte_end":              integerSchema(1, 1<<31-1),
+		"quote_sha256":          sha256Schema(),
+	}, "version", "vault_uid", "document_uid", "content_version_id", "source_sha256",
+		"rendition_build_id", "attachment_id", "body_sha256", "byte_start", "byte_end", "quote_sha256")
+}
+
+func sourceLocatorSchema() schema {
+	return objectSchema(schema{
+		"kind":         enumSchema("generic", "line", "message", "page", "record", "segment", "section", "sheet", "slide", "spine"),
+		"index_origin": enumSchema("none", "one", "zero"),
+		"start":        integerSchema(0, 1<<31-1),
+		"end":          integerSchema(0, 1<<31-1),
+		"name":         stringSchema(1024),
+	}, "kind", "index_origin", "start", "end")
+}
+
+func outlineSectionSchema() schema {
+	return objectSchema(schema{
+		"key":                  sha256Schema(),
+		"title":                stringSchema(8192),
+		"level":                integerSchema(0, 6),
+		"occurrence":           integerSchema(1, 4096),
+		"byte_start":           integerSchema(0, 1<<31-1),
+		"byte_end":             integerSchema(0, 1<<31-1),
+		"own_byte_end":         integerSchema(0, 1<<31-1),
+		"estimated_utf8_bytes": integerSchema(0, 1<<31-1),
+		"estimated_runes":      integerSchema(0, 1<<31-1),
+		"child_count":          integerSchema(0, 4096),
+		"preamble":             schema{"type": jsonSchemaBoolean},
+		"source_locator":       sourceLocatorSchema(),
+		"children": schema{
+			"type": "array", "items": schema{"$ref": "#/$defs/outlineSection"}, jsonSchemaMaxItems: 4096,
+		},
+	}, "key", "title", "level", "occurrence", "byte_start", "byte_end", "own_byte_end",
+		"estimated_utf8_bytes", "estimated_runes", "child_count", "preamble", "children")
+}
+
+func getDocumentOutlineSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{"ref": passageRefSchema()}, "ref")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"body_sha256":        sha256Schema(),
+		"rendition_build_id": sha256Schema(),
+		"sections": schema{
+			"type": "array", "items": schema{"$ref": "#/$defs/outlineSection"},
+			"minItems": 1, jsonSchemaMaxItems: 4096,
+		},
+	}), cacheRequired("body_sha256", "rendition_build_id", "sections")...)
+	output["$defs"] = schema{"outlineSection": outlineSectionSchema()}
+	return input, output
+}
+
+func readPassageSectionSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"ref":              passageRefSchema(),
+		"navigation_key":   sha256Schema(),
+		"include_children": schema{"type": jsonSchemaBoolean, "default": false},
+		"max_bytes": schema{
+			"type": "integer", "minimum": 1, "maximum": 256 << 10, "default": 32 << 10,
+		},
+		"continuation": stringSchema(4096),
+	}, "ref", "navigation_key")
+	selection := objectSchema(schema{
+		"key": sha256Schema(), "title": stringSchema(8192), "level": integerSchema(0, 6),
+		"byte_start": integerSchema(0, 1<<31-1), "byte_end": integerSchema(0, 1<<31-1),
+		"include_children": schema{"type": jsonSchemaBoolean}, "source_locator": sourceLocatorSchema(),
+	}, "key", "title", "level", "byte_start", "byte_end", "include_children")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"body_sha256": sha256Schema(), "rendition_build_id": sha256Schema(),
+		"section": selection, "text": stringSchema(256 << 10), "ref": passageRefSchema(),
+		"page_start": integerSchema(0, 1<<31-1), "page_end": integerSchema(0, 1<<31-1),
+		"complete": schema{"type": jsonSchemaBoolean}, "continuation": stringSchema(4096),
+	}), cacheRequired("body_sha256", "rendition_build_id", "section", "text", "page_start",
+		"page_end", "complete")...)
 	return input, output
 }
 
@@ -307,16 +397,16 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"model":                   stringSchema(1024),
 		"model_revision":          stringSchema(1024),
 		"vector_space":            stringSchema(1024),
-		"metadata_classes":        schema{"type": "array", "items": stringSchema(128), "maxItems": 64, "uniqueItems": true},
-		"retained_artifact_roles": schema{"type": "array", "items": stringSchema(128), "maxItems": 64, "uniqueItems": true},
+		"metadata_classes":        schema{"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 64, "uniqueItems": true},
+		"retained_artifact_roles": schema{"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 64, "uniqueItems": true},
 	}, "immediate_processor", "ultimate_processor", "endpoint", "deployment", "metadata_classes", "retained_artifact_roles")
 	flowHop := objectSchema(schema{
 		"capability":         enumSchema("rendition", "embedding", "query_embedding"),
 		"provider_id":        stringSchema(128),
 		"trust_boundary":     enumSchema("local_process", "operator_network", "hosted_provider"),
-		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "rendition_chunk", "query_text"), "maxItems": 3, "uniqueItems": true},
+		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "rendition_chunk", "query_text"), jsonSchemaMaxItems: 3, "uniqueItems": true},
 		"runtime_disclosure": runtimeDisclosure,
-		"disclose_filename":  schema{"type": "boolean"},
+		"disclose_filename":  schema{"type": jsonSchemaBoolean},
 		"filename":           stringSchema(255),
 	}, "capability", "provider_id", "trust_boundary", "input_classes", "runtime_disclosure", "disclose_filename")
 	output := rootObjectSchema(withPrivateCache(schema{
@@ -326,15 +416,15 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"profile_fingerprint": sha256Schema(),
 		"flow":                arraySchema(flowHop, 129),
 		"disclosed_classes": schema{
-			"type": "array", "items": stringSchema(128), "maxItems": 129, "uniqueItems": true,
+			"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 129, "uniqueItems": true,
 		},
 		"retained_classes": schema{
-			"type": "array", "items": stringSchema(128), "maxItems": 129, "uniqueItems": true,
+			"type": "array", "items": stringSchema(128), jsonSchemaMaxItems: 129, "uniqueItems": true,
 		},
 		"estimate": objectSchema(schema{
 			"source_bytes": integerSchema(0, 0), "provider_calls": integerSchema(0, 0), "vector_spaces": integerSchema(0, 0),
 		}, "source_bytes", "provider_calls", "vector_spaces"),
-		"consent_required":   schema{"type": "boolean"},
+		"consent_required":   schema{"type": jsonSchemaBoolean},
 		"consent_state":      enumSchema("active", "required", "expired", "revoked"),
 		"backup_consequence": stringSchema(4096),
 	}), cacheRequired("fingerprint", "vault_uid", "selector", "profile_fingerprint", "flow", "disclosed_classes",
@@ -356,10 +446,10 @@ func getProcessingCoverageSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"profile":             schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"},
 		"vault_id":            uuidSchema(),
-		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true},
+		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, jsonSchemaMaxItems: 4096, "uniqueItems": true},
 	}, "profile", "vault_id", "content_version_ids")
 	class := objectSchema(schema{
-		"name": stringSchema(128), "required": schema{"type": "boolean"}, "state": stringSchema(64),
+		"name": stringSchema(128), "required": schema{"type": jsonSchemaBoolean}, "state": stringSchema(64),
 		"complete": integerSchema(0, 4096), "unavailable": integerSchema(0, 4096), "stale": integerSchema(0, 4096),
 		"ineligible": integerSchema(0, 4096), "rebuilding": integerSchema(0, 4096), "total": integerSchema(0, 4096),
 		"previous_generation_serving": integerSchema(0, 4096),
