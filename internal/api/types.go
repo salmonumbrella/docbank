@@ -873,10 +873,10 @@ type ContentVerification struct {
 }
 
 // UploadReceipt proves which bytes the daemon computed and which stable node
-// now names them. Status is "added" for a new node and "skipped" for an
-// idempotent retry that converged on an existing node.
+// now names them. Ordinary uploads return added or skipped; push uploads also
+// report updated, linked, or duplicate_skipped.
 type UploadReceipt struct {
-	Status       string `json:"status" enum:"added,skipped"`
+	Status       string `json:"status" enum:"added,skipped,updated,linked,duplicate_skipped"`
 	Node         Node   `json:"node"`
 	ComputedHash string `json:"computed_hash" pattern:"^[0-9a-f]{64}$"`
 	ComputedSize int64  `json:"computed_size"`

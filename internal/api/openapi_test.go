@@ -771,3 +771,19 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	require.True(t, schemas["SavedQueryFiltersSchema"].Properties["gps_bounds"].Nullable)
 	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
 }
+
+func TestOpenAPIPushRequiresPortableIdentityAndVerifiedBytes(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	operation := doc.Paths["/api/v1/push/uploads"].Post
+	require.NotNil(t, operation)
+	assert.Equal(t, "uploadPushFile", operation.OperationID)
+	required := map[string]bool{}
+	for _, parameter := range operation.Parameters {
+		required[parameter.Name] = parameter.Required
+	}
+	for _, name := range []string{"push_name", "source_ref", "duplicates", "parent_id", "name", api.BlobHashHeader, api.BlobSizeHeader} {
+		assert.True(t, required[name], name)
+	}
+	assert.NotNil(t, doc.Paths["/api/v1/push/source"].Get)
+}

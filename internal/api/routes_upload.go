@@ -23,6 +23,9 @@ var errInvalidUploadEnvelope = errors.New("invalid upload multipart envelope")
 
 func registerUploadRoute(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	registerUploadOpenAPI(api)
+	registerPushUploadOpenAPI(api)
+	registerPushRoutes(api, d)
+	mux.HandleFunc("POST /api/v1/push/uploads", func(w http.ResponseWriter, r *http.Request) { handleUpload(w, r, d, g) })
 	mux.HandleFunc("POST /api/v1/uploads", func(w http.ResponseWriter, r *http.Request) {
 		handleUpload(w, r, d, g)
 	})
@@ -79,6 +82,15 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 		writeError(w, identityErr)
 		return
 	}
+	var source *store.PushSource
+	if r.URL.Path == "/api/v1/push/uploads" {
+		source = &store.PushSource{Name: r.URL.Query().Get("push_name"), Ref: r.URL.Query().Get("source_ref"), ModifiedAt: r.URL.Query().Get("modified_at"), Duplicates: r.URL.Query().Get("duplicates")}
+		if err := store.ValidatePushSource(*source); err != nil {
+			writeError(w, NewError(http.StatusUnprocessableEntity, "validation", err.Error()))
+			return
+		}
+	}
+	status := "skipped"
 	maxBody := expectedSize + uploadMultipartOverhead
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	multipartReader, readErr := r.MultipartReader()
@@ -139,7 +151,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 				return errors.Join(fmt.Errorf("%w: reading end of multipart body: %w",
 					errInvalidUploadEnvelope, nextErr), prepared.Discard())
 			}
-			result, prepareErr = prepared.Commit(r.Context())
+			if source != nil {
+				result, status, prepareErr = prepared.CommitPush(r.Context(), *source)
+			} else {
+				result, prepareErr = prepared.Commit(r.Context())
+			}
 			return prepareErr
 		})
 	})
@@ -147,7 +163,6 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 		writeError(w, uploadError(opErr))
 		return
 	}
-	status := "skipped"
 	httpStatus := http.StatusOK
 	if result.Added {
 		status = "added"
@@ -233,4 +248,27 @@ func uploadError(err error) *Error {
 		}
 		return NewError(http.StatusInternalServerError, "internal", err.Error())
 	}
+}
+
+func registerPushUploadOpenAPI(api huma.API) {
+	original := api.OpenAPI().Paths["/api/v1/uploads"].Post
+	operation := *original
+	operation.Path = "/api/v1/push/uploads"
+	operation.OperationID = "uploadPushFile"
+	operation.Summary = "Upload one digest-checked push source"
+	operation.Description = original.Description + " Records push provenance atomically. Existing source identities follow their node and version changed source bytes. Duplicate policy applies only to new identities."
+	operation.Parameters = append([]*huma.Param{}, original.Parameters...)
+	for _, field := range []struct {
+		name, description string
+		required          bool
+		max               int
+	}{
+		{"push_name", "Portable push identity; lowercase letters, digits, -, _, .", true, 64},
+		{"source_ref", "Canonical relative slash path", true, 4096},
+		{"duplicates", "New-identity duplicate policy: link, skip, or create", true, 6},
+		{"modified_at", "Original source modification time in canonical UTC RFC3339Nano", false, 64},
+	} {
+		operation.Parameters = append(operation.Parameters, &huma.Param{Name: field.name, In: openAPIQueryLocation, Required: field.required, Description: field.description, Schema: &huma.Schema{Type: openAPIStringType, MaxLength: new(field.max)}})
+	}
+	api.OpenAPI().AddOperation(&operation)
 }

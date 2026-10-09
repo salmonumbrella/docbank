@@ -210,6 +210,58 @@ func TestUpgradeReleasedV0150PreservesAuthorityAndPendingWork(t *testing.T) {
 	}
 }
 
+func TestUpgradeReleasedV0151PreservesPhotoSets(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0151SQL, 29)
+			ctx := t.Context()
+
+			asset := albumAsset(t, legacy, "released-photo.jpg")
+			set, err := legacy.CreatePhotoSet(ctx, "Released collection")
+			require.NoError(t, err)
+			set, err = legacy.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true,
+				PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+
+			var releasedMetadata bytes.Buffer
+			snapshot, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+			require.NoError(t, err)
+			require.NoError(t, exportReleasedMetadataSnapshot(ctx, snapshot, &releasedMetadata, 29))
+			require.NoError(t, snapshot.Rollback())
+			require.NoError(t, db.Close())
+
+			upgraded, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, upgraded.Close()) }()
+
+			var version int
+			require.NoError(t, upgraded.db.QueryRow(`
+				SELECT schema_version FROM vault_metadata WHERE singleton=1`).Scan(&version))
+			assert.Equal(t, currentStorageSchemaVersion, version)
+
+			actualSet, err := upgraded.PhotoSet(ctx, set.ID, "")
+			require.NoError(t, err)
+			assert.Equal(t, set.Name, actualSet.Name)
+			assert.Equal(t, int64(1), actualSet.MemberCount)
+			members, err := photoSetMemberIDs(ctx, upgraded.db, set.ID)
+			require.NoError(t, err)
+			assert.Equal(t, []string{asset.ID}, members)
+
+			var receiptCount int
+			require.NoError(t, upgraded.db.QueryRow(`
+				SELECT COUNT(*) FROM photo_change_receipts WHERE set_id=?`, set.ID).Scan(&receiptCount))
+			assert.Equal(t, 2, receiptCount)
+
+			var upgradedMetadata bytes.Buffer
+			require.NoError(t, upgraded.ExportMetadata(ctx, &upgradedMetadata))
+			assert.Equal(t, releasedMetadata.String(), upgradedMetadata.String())
+			require.FileExists(t, path+v29BackupSuffix)
+		})
+	}
+}
+
 // Coverage guard: each released schema still upgrades to the current one.
 // When the current schema moves past a fixture's version, this test fails
 // until that version has a cutover adapter.
@@ -282,6 +334,29 @@ func TestOpenRejectsChangedReleasedV0150Layout(t *testing.T) {
 				require.NoError(t, s.Close())
 			}
 			require.ErrorContains(t, err, "not a released v0.15.0 database: unexpected storage_operations columns")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "a refused upgrade leaves the vault unchanged")
+		})
+	}
+}
+
+func TestOpenRejectsChangedReleasedV0151Layout(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, _ := newReleasedFixtureStore(t, path, driver.driver, schemaV0151SQL, 29)
+			_, err := db.Exec(`ALTER TABLE photo_sets ADD COLUMN unexpected TEXT`)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			s, err := Open(path, driver.driver)
+			if s != nil {
+				require.NoError(t, s.Close())
+			}
+			require.ErrorContains(t, err, "not a released v0.15.1 database: unexpected photo_sets columns")
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, before, after, "a refused upgrade leaves the vault unchanged")

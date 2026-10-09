@@ -2491,6 +2491,19 @@ func (c *Connection) Upload(
 	ctx context.Context, parentID int64, name, mimeType, expectedHash string,
 	expectedSize int64, content io.Reader,
 ) (api.UploadReceipt, error) {
+	return c.upload(ctx, parentID, name, mimeType, expectedHash, expectedSize, content, nil)
+}
+
+// PushUpload uses a distinct route so incompatible daemons cannot ignore the
+// source identity. Only a matching independently computed receipt is success.
+func (c *Connection) PushUpload(ctx context.Context, parentID int64, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, source store.PushSource) (api.UploadReceipt, error) {
+	if err := store.ValidatePushSource(source); err != nil {
+		return api.UploadReceipt{}, err
+	}
+	return c.upload(ctx, parentID, name, mimeType, expectedHash, expectedSize, content, &source)
+}
+
+func (c *Connection) upload(ctx context.Context, parentID int64, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, source *store.PushSource) (api.UploadReceipt, error) {
 	var receipt api.UploadReceipt
 	if parentID <= 0 {
 		return receipt, errors.New("upload parent ID must be positive")
@@ -2540,11 +2553,17 @@ func (c *Connection) Upload(
 	}()
 
 	var responseHTTP *http.Response
-	_, callErr := c.apiWithResponse(&responseHTTP).UploadFile(runtime.WithStreamingResponse(ctx), &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, func(_ context.Context, req *http.Request) error {
+	editor := func(_ context.Context, req *http.Request) error {
 		req.Body = pipeReader
 		req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 		return nil
-	})
+	}
+	var callErr error
+	if source == nil {
+		_, callErr = c.apiWithResponse(&responseHTTP).UploadFile(runtime.WithStreamingResponse(ctx), &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, editor)
+	} else {
+		_, callErr = c.apiWithResponse(&responseHTTP).UploadPushFile(runtime.WithStreamingResponse(ctx), &apiclient.UploadPushFileRequestOptions{Query: &apiclient.UploadPushFileQuery{ParentID: parentID, Name: name, PushName: source.Name, SourceRef: source.Ref, Duplicates: source.Duplicates, ModifiedAt: &source.ModifiedAt}, Header: &apiclient.UploadPushFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, editor)
+	}
 	if callErr != nil {
 		_ = pipeReader.CloseWithError(callErr)
 		<-writeDone
@@ -2557,12 +2576,23 @@ func (c *Connection) Upload(
 		<-writeDone
 		return receipt, decodeError(resp)
 	}
+	_ = pipeReader.Close()
 	writerErr := <-writeDone
 	if writerErr != nil {
 		return receipt, fmt.Errorf("streaming upload %q: %w", name, writerErr)
 	}
 	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
 		return receipt, fmt.Errorf("decoding upload response: %w", err)
+	}
+	if source != nil {
+		switch receipt.Status {
+		case "added", "updated", "linked", "skipped", "duplicate_skipped":
+		default:
+			return api.UploadReceipt{}, &responseDecodeError{err: errors.New("push receipt has an unknown outcome")}
+		}
+		if receipt.Node.ID <= 0 || receipt.Node.Kind != "file" || receipt.Node.Revision <= 0 || receipt.ComputedHash != expectedHash || receipt.ComputedSize != expectedSize {
+			return api.UploadReceipt{}, &responseDecodeError{err: errors.New("push receipt does not confirm the declared file identity")}
+		}
 	}
 	return receipt, nil
 }

@@ -1121,6 +1121,9 @@ CREATE TABLE IF NOT EXISTS provenance (
 );
 
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
+-- Provenance consumers look up source-relative references without adding a
+-- logical storage constraint.
+CREATE INDEX IF NOT EXISTS provenance_source_reference ON provenance(original_path, ingest_id);
 CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
     ON provenance(supersedes) WHERE supersedes IS NOT NULL;
 
@@ -1136,6 +1139,20 @@ CREATE TABLE IF NOT EXISTS watch_sources (
     blob_hash  TEXT NOT NULL,
     size       INTEGER NOT NULL CHECK (size >= 0),
     PRIMARY KEY (watch_name, source_ref)
+) WITHOUT ROWID;
+
+-- A pushed source remembers its last accepted digest independently of its
+-- prunable content-version history. The digest is identity evidence, not a
+-- physical-byte reference; pruning can release the old source bytes.
+CREATE TABLE IF NOT EXISTS push_sources (
+    push_name          TEXT NOT NULL,
+    source_ref         TEXT NOT NULL,
+    node_id            INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    provenance_identity TEXT NOT NULL UNIQUE REFERENCES provenance(identity) ON DELETE CASCADE,
+    blob_hash          TEXT NOT NULL,
+    size               INTEGER NOT NULL CHECK (size >= 0),
+    accepted_at        TEXT NOT NULL,
+    PRIMARY KEY (push_name, source_ref)
 ) WITHOUT ROWID;
 
 -- Ingest and provenance facts are append-only authority. Corrections add a

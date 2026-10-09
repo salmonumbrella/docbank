@@ -5329,6 +5329,17 @@ export interface ProvenancePage {
   total: number;
 }
 
+export interface PushSourceState {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  hash?: string;
+  known: boolean;
+  node?: Node;
+  /** @minimum 0 */
+  size: number;
+}
+
 export interface PutExportChunkRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6421,6 +6432,9 @@ export type UploadReceiptStatus = typeof UploadReceiptStatus[keyof typeof Upload
 export const UploadReceiptStatus = {
   added: 'added',
   skipped: 'skipped',
+  updated: 'updated',
+  linked: 'linked',
+  duplicate_skipped: 'duplicate_skipped',
 } as const;
 
 export interface UploadReceipt {
@@ -7323,6 +7337,66 @@ export type PromotePhotoNodeHeaders = {
 
 export type SetPhotoSettingsHeaders = {
 'If-Match': string;
+};
+
+export type GetPushSourceParams = {
+/**
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * @maxLength 4096
+ */
+source_ref: string;
+};
+
+export type UploadPushFileParams = {
+/**
+ * Stable destination directory node ID
+ */
+parent_id: number;
+/**
+ * Virtual filename; must equal the multipart filename
+ * @minLength 1
+ */
+name: string;
+/**
+ * Portable push identity; lowercase letters, digits, -, _, .
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * Canonical relative slash path
+ * @maxLength 4096
+ */
+source_ref: string;
+/**
+ * New-identity duplicate policy: link, skip, or create
+ * @maxLength 6
+ */
+duplicates: string;
+/**
+ * Original source modification time in canonical UTC RFC3339Nano
+ * @maxLength 64
+ */
+modified_at?: string;
+};
+
+export type UploadPushFileHeaders = {
+/**
+ * Expected lowercase hexadecimal SHA-256 of the file payload
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+/**
+ * Expected raw file byte length
+ * @minimum 0
+ */
+'X-Docbank-Blob-Size': string;
+};
+
+export type UploadPushFileBody = {
+  file: Blob | File;
 };
 
 export type ReadRenditionTextParams = {
@@ -14809,6 +14883,88 @@ return sessionJSON<DocumentSourceFenceResolution>(getResolveDocumentSourceFenceU
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSourceFenceResolveRequest)
+  }
+);}
+
+
+
+export const getGetPushSourceUrl = (params: GetPushSourceParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/source?${stringifiedParams}` : `/api/v1/push/source`
+}
+
+/**
+ * Uses push name plus relative source path. Unknown identities return known=false; mapped trash is an error. The last accepted source hash is independent of the node's current version.
+ * @summary Read the last accepted bytes for one push source
+ */
+export const getPushSource = async (params: GetPushSourceParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PushSourceState> => {
+
+  return sessionJSON<PushSourceState>(getGetPushSourceUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUploadPushFileUrl = (params: UploadPushFileParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/uploads?${stringifiedParams}` : `/api/v1/push/uploads`
+}
+
+/**
+ * Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities follow their node and version changed source bytes. Duplicate policy applies only to new identities.
+ * @summary Upload one digest-checked push source
+ */
+export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
+    params: UploadPushFileParams,
+    headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
+    const formData = new FormData();
+formData.append(`file`, uploadPushFileBody.file);
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<UploadReceipt>(getUploadPushFileUrl(params),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) },
+    body: formData
   }
 );}
 

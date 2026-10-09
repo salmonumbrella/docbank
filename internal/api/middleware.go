@@ -38,6 +38,8 @@ func timeoutExempt(method, path string) bool {
 		return true
 	}
 	switch path {
+	case "/api/v1/push/uploads":
+		return method == http.MethodPost
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/packages/exports", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
 		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
 		"/api/v1/exports/sources", "/api/v1/exports/plans", "/api/v1/bates/allocations", "/api/v1/bates/exports",

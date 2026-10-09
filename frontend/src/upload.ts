@@ -5,6 +5,8 @@ import { APIError } from "./api-transport.js";
 import { type BrowserSession } from "./browser-session.js";
 import type { UploadReceipt } from "./generated/docbank.js";
 
+type BrowserUploadReceipt = UploadReceipt & { status: "added" | "skipped" };
+
 const hashChunkBytes = 1024 * 1024;
 const uploadSocketPath = "/api/daemon/web-upload";
 const uploadProofDomain = "docbank-web-upload-v1\u0000";
@@ -70,7 +72,7 @@ export function validateUploadReceipt(
   name: string,
   expectedHash: string,
   expectedSize: number,
-): void {
+): asserts receipt is BrowserUploadReceipt {
   if (
     (receipt.status !== "added" && receipt.status !== "skipped") ||
     receipt.computed_hash !== expectedHash ||
@@ -114,7 +116,7 @@ export interface UploadTransport {
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
-  ): Promise<UploadReceipt>;
+  ): Promise<BrowserUploadReceipt>;
 }
 
 export class UploadChannelError extends Error {
@@ -206,7 +208,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
-  ): Promise<UploadReceipt> {
+  ): Promise<BrowserUploadReceipt> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
     }

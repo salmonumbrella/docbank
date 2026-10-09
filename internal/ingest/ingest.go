@@ -328,6 +328,15 @@ func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retEr
 	return result, nil
 }
 
+// CommitPush grants source and version authority only after transport verification.
+func (p *PreparedUpload) CommitPush(ctx context.Context, source store.PushSource) (result UploadResult, outcome string, retErr error) {
+	result = p.result
+	defer func() { retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash)) }()
+	result.Node, outcome, retErr = p.ing.Store.AcceptPush(ctx, source, p.parentID, p.name, result.ComputedHash, result.ComputedSize, p.mimeType, result.physical)
+	result.Added = outcome == "added"
+	return result, outcome, retErr
+}
+
 // Discard removes a loose duplicate of already-packed authority when a
 // transport envelope is rejected before Commit. Authority-free bytes are left
 // for exclusively serialized GC because another writer may still be using the

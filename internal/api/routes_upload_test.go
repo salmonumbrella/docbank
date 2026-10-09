@@ -28,6 +28,9 @@ type uploadRequest struct {
 	expectedHash string
 	expectedSize int64
 	extraPart    bool
+	pushName     string
+	sourceRef    string
+	duplicates   string
 }
 
 func sendUpload(
@@ -52,7 +55,14 @@ func sendUpload(
 	require.NoError(t, writer.Close())
 
 	query := url.Values{"parent_id": {strconv.FormatInt(parentID, 10)}, "name": {in.name}}
-	req, err := http.NewRequest(http.MethodPost, tsURL+"/api/v1/uploads?"+query.Encode(), &body)
+	route := "/api/v1/uploads"
+	if in.pushName != "" {
+		route = "/api/v1/push/uploads"
+		query.Set("push_name", in.pushName)
+		query.Set("source_ref", in.sourceRef)
+		query.Set("duplicates", in.duplicates)
+	}
+	req, err := http.NewRequest(http.MethodPost, tsURL+route+"?"+query.Encode(), &body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set(api.BlobHashHeader, in.expectedHash)
@@ -215,6 +225,82 @@ func TestUploadRejectsTruncatedMultipartAsValidation(t *testing.T) {
 	assert.Contains(t, response.String(), `"code":"validation"`)
 	_, err = s.NodeByPath(t.Context(), "/bad.txt")
 	require.ErrorIs(t, err, store.ErrNotFound)
+	blobs, err := s.AllBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, blobs)
+}
+
+func TestPushUploadIdentityVersionsAndIdempotence(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	in := uploadRequest{name: "report.txt", pushName: "laptop", sourceRef: "report.txt", duplicates: "create", content: []byte("first")}
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var first api.UploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var repeated api.UploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &repeated))
+	assert.Equal(t, first.Node.ID, repeated.Node.ID)
+	assert.Equal(t, first.Node.Revision, repeated.Node.Revision)
+	in.content = []byte("second")
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var changed api.UploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &changed))
+	assert.Equal(t, "updated", changed.Status)
+	assert.Equal(t, first.Node.ID, changed.Node.ID)
+	assert.NotEqual(t, first.Node.CurrentVersionID, changed.Node.CurrentVersionID)
+}
+
+func TestPushUploadDuplicatePolicies(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []string{"link", "skip", "create"} {
+		t.Run(policy, func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			in := uploadRequest{name: "first.txt", pushName: "laptop", sourceRef: "first.txt", duplicates: policy, content: []byte("same bytes")}
+			in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+			resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+			require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+			var first api.UploadReceipt
+			require.NoError(t, json.Unmarshal([]byte(body), &first))
+			in.name, in.sourceRef = "second.txt", "second.txt"
+			resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+			var second api.UploadReceipt
+			require.NoError(t, json.Unmarshal([]byte(body), &second))
+			if policy == "create" {
+				require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+				assert.NotEqual(t, first.Node.ID, second.Node.ID)
+			} else {
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+				assert.Equal(t, first.Node.ID, second.Node.ID)
+				expected := "linked"
+				if policy == "skip" {
+					expected = "duplicate_skipped"
+				}
+				assert.Equal(t, expected, second.Status)
+			}
+			facts, err := s.NodeProvenance(t.Context(), first.Node.ID, 100, 0)
+			require.NoError(t, err)
+			if policy == "link" {
+				assert.Len(t, facts.Items, 2)
+			} else {
+				assert.Len(t, facts.Items, 1)
+			}
+		})
+	}
+}
+
+func TestPushUploadMismatchGrantsNoSourceAuthority(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	in := uploadRequest{name: "bad.txt", pushName: "laptop", sourceRef: "bad.txt", duplicates: "link", content: []byte("bytes"), expectedHash: uploadIdentity([]byte("other")), expectedSize: 5}
+	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, "digest_mismatch")
 	blobs, err := s.AllBlobs(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, blobs)
