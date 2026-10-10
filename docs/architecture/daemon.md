@@ -152,8 +152,10 @@ can't accidentally spawn one.
 
 [`docbank push`](../usage/pushing.md) instead connects to its explicit `--to`
 origin with an operator-supplied API key. It does not discover, start, or replace
-a local daemon. Its target must support the push routes; an older daemon returns
-an error before any upload.
+a local daemon. Every new connection must first answer a key challenge, proving
+it holds the API key without either side sending it; only then does the key or
+any document byte cross that connection. Its target must support the push
+routes; an older daemon returns an error before any upload.
 
 A background-spawned daemon (started via auto-start, `daemon start`, or
 `daemon restart`) exits after `[server] idle_timeout` (default 30

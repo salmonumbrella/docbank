@@ -12835,6 +12835,42 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PushUploadReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PushUploadReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        computed_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        computed_size:
+          format: int64
+          type: integer
+        node:
+          $ref: "#/components/schemas/Node"
+        status:
+          enum:
+            - added
+            - updated
+            - linked
+            - skipped
+            - duplicate_skipped
+          type: string
+      required:
+        - status
+        - node
+        - computed_hash
+        - computed_size
+      type: object
+      x-go-type: api.PushUploadReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PutExportChunkRequest:
       additionalProperties: false
       properties:
@@ -16120,9 +16156,6 @@ components:
           enum:
             - added
             - skipped
-            - updated
-            - linked
-            - duplicate_skipped
           type: string
       required:
         - status
@@ -16849,6 +16882,28 @@ paths:
                   - proof
                 type: object
           description: Daemon ownership proof
+  /api/daemon/key-challenge:
+    get:
+      operationId: challengeAPIKey
+      parameters:
+        - in: query
+          name: nonce
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  proof:
+                    type: string
+                required:
+                  - proof
+                type: object
+          description: API key possession proof
   /api/daemon/shutdown:
     post:
       operationId: shutdownDaemon
@@ -23229,7 +23284,7 @@ paths:
       summary: Resolve exact current live document search authority
   /api/v1/push/source:
     get:
-      description: Uses push name plus relative source path. Unknown identities return known=false; mapped trash is an error. The last accepted source hash is independent of the node's current version.
+      description: Uses push name plus relative source path. Unknown identities return known=false; mapped trash is an error. The last accepted source hash is independent of the node's current version. A push name that matches a configured daemon watch is refused with push_name_in_use.
       operationId: getPushSource
       parameters:
         - explode: false
@@ -23262,16 +23317,9 @@ paths:
       summary: Read the last accepted bytes for one push source
   /api/v1/push/uploads:
     post:
-      description: Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities follow their node and version changed source bytes. Duplicate policy applies only to new identities.
+      description: Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities keep their node and version changed source bytes; parent_path and name place only new nodes. Duplicate policy applies only to new identities and only links to nodes this push name already owns.
       operationId: uploadPushFile
       parameters:
-        - description: Stable destination directory node ID
-          in: query
-          name: parent_id
-          required: true
-          schema:
-            format: int64
-            type: integer
         - description: Virtual filename; must equal the multipart filename
           in: query
           name: name
@@ -23294,6 +23342,13 @@ paths:
             format: int64
             minimum: 0
             type: integer
+        - description: Absolute virtual directory for a new source; missing directories are created with its node
+          in: query
+          name: parent_path
+          required: true
+          schema:
+            maxLength: 4096
+            type: string
         - description: Portable push identity; lowercase letters, digits, -, _, .
           in: query
           name: push_name
@@ -23342,13 +23397,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UploadReceipt"
-          description: Idempotent retry converged on the existing node
+                $ref: "#/components/schemas/PushUploadReceipt"
+          description: Existing source updated, linked, skipped, or duplicate-skipped
         "201":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UploadReceipt"
+                $ref: "#/components/schemas/PushUploadReceipt"
           description: New file node created
         default:
           content:

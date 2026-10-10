@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -25,40 +27,21 @@ func newPushCmd() *cobra.Command {
 		Short: "Push a local folder to a keyed daemon, preserving source identity",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			parsed, err := url.Parse(target)
-			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-				return errors.New("--to must be an http(s) daemon origin without credentials, path, query, or fragment")
-			}
-			key := os.Getenv("DOCBANK_API_KEY")
-			if keyFile != "" {
-				value, err := os.ReadFile(keyFile) // #nosec G304 -- Explicit operator-selected credential file.
-				if err != nil {
-					return fmt.Errorf("reading API key file: %w", err)
-				}
-				key = strings.TrimSpace(string(value))
-			}
-			if key == "" || strings.ContainsAny(key, "\r\n") {
-				return errors.New("set DOCBANK_API_KEY or --api-key-file to a nonempty API key")
-			}
-			connection, err := daemonconn.NewPushConnection(strings.TrimRight(target, "/"), key)
+			key, err := readPushKey(keyFile)
 			if err != nil {
 				return err
 			}
-			report, runErr := push.Run(cmd.Context(), connection, push.Options{
-				Folder:     config.WatchConfig{Name: name, Source: args[0], Destination: dest, SettleTime: config.Duration(settle), MinimumAge: config.Duration(age), ScanInterval: config.Duration(interval), Exclude: excludes},
-				Duplicates: duplicates, Watch: watch,
-				Progress: func(ref, outcome string) error {
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", outcome, strconv.QuoteToASCII(ref)); err != nil {
-						return fmt.Errorf("writing push progress: %w", err)
-					}
-					return nil
-				},
-			})
-			_, outputErr := fmt.Fprintf(cmd.OutOrStdout(), "added %d, updated %d, linked %d, unchanged %d, duplicate-skipped %d\n", report.Added, report.Updated, report.Linked, report.Skipped, report.DuplicateSkipped)
-			if outputErr != nil {
-				outputErr = fmt.Errorf("writing push summary: %w", outputErr)
+			connection, err := daemonconn.NewPushConnection(target, key)
+			if err != nil {
+				return fmt.Errorf("--to: %w", err)
 			}
-			return errors.Join(runErr, outputErr)
+			return runPush(cmd, connection, push.Options{
+				Folder: config.WatchConfig{
+					Name: name, Source: args[0], Destination: dest, SettleTime: config.Duration(settle),
+					MinimumAge: config.Duration(age), ScanInterval: config.Duration(interval), Exclude: excludes,
+				},
+				Duplicates: duplicates, Watch: watch,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&target, "to", "", "daemon URL")
@@ -77,6 +60,55 @@ func newPushCmd() *cobra.Command {
 		}
 	}
 	return cmd
+}
+
+func readPushKey(keyFile string) (string, error) {
+	key := os.Getenv("DOCBANK_API_KEY")
+	if keyFile != "" {
+		value, err := os.ReadFile(keyFile) // #nosec G304 -- Explicit operator-selected credential file.
+		if err != nil {
+			return "", fmt.Errorf("reading API key file: %w", err)
+		}
+		key = strings.TrimSpace(string(value))
+	}
+	if key == "" || strings.ContainsAny(key, "\r\n") {
+		return "", errors.New("set DOCBANK_API_KEY or --api-key-file to a nonempty API key")
+	}
+	return key, nil
+}
+
+// runPush prints each outcome and a final summary. An interrupt stops the run
+// cleanly: the summary still prints, and stopping a watch is not an error.
+func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	opts.Progress = func(ref, outcome string) error {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", outcome, strconv.QuoteToASCII(ref)); err != nil {
+			return fmt.Errorf("writing push progress: %w", err)
+		}
+		return nil
+	}
+	opts.Failure = func(ref string, err error) error {
+		if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "failed %s: %v\n", strconv.QuoteToASCII(ref), err); writeErr != nil {
+			return fmt.Errorf("writing push failure: %w", writeErr)
+		}
+		return nil
+	}
+	report, runErr := push.Run(ctx, connection, opts)
+	interrupted := ctx.Err() != nil && cmd.Context().Err() == nil
+	if interrupted && opts.Watch && errors.Is(runErr, context.Canceled) {
+		runErr = nil
+		if report.Failed > 0 {
+			runErr = fmt.Errorf("%w: %d failed", push.ErrFilesFailed, report.Failed)
+		}
+	}
+	_, outputErr := fmt.Fprintf(cmd.OutOrStdout(),
+		"added %d, updated %d, linked %d, unchanged %d, duplicate-skipped %d, failed %d\n",
+		report.Added, report.Updated, report.Linked, report.Skipped, report.DuplicateSkipped, report.Failed)
+	if outputErr != nil {
+		outputErr = fmt.Errorf("writing push summary: %w", outputErr)
+	}
+	return errors.Join(runErr, outputErr)
 }
 
 func init() { rootCmd.AddCommand(newPushCmd()) }

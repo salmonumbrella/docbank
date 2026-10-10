@@ -108,6 +108,51 @@ func (c *Client) ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRe
 	return responseParser(ctx, resp)
 }
 
+func (c *Client) ChallengeAPIKey(ctx context.Context, options *ChallengeAPIKeyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeAPIKeyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/key-challenge",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ChallengeAPIKeyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ChallengeAPIKeyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ChallengeAPIKeyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/key-challenge")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -13029,6 +13074,37 @@ func (o *ChallengeDaemonRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ChallengeAPIKeyRequestOptions is the options needed to make a request to ChallengeAPIKey.
+type ChallengeAPIKeyRequestOptions struct {
+	Query *ChallengeAPIKeyQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ChallengeAPIKeyRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ChallengeAPIKeyRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ChallengeAPIKeyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ChallengeAPIKeyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ShutdownDaemonRequestOptions is the options needed to make a request to ShutdownDaemon.
 type ShutdownDaemonRequestOptions struct {
 	Header *ShutdownDaemonHeaders
@@ -22590,6 +22666,10 @@ type ChallengeDaemonQuery struct {
 	Nonce string `json:"nonce"`
 }
 
+type ChallengeAPIKeyQuery struct {
+	Nonce string `json:"nonce"`
+}
+
 type CancelWebDownloadQuery struct {
 	Ticket string `json:"ticket"`
 }
@@ -22828,11 +22908,11 @@ type GetPushSourceQuery struct {
 }
 
 type UploadPushFileQuery struct {
-	// ParentID Stable destination directory node ID
-	ParentID int64 `json:"parent_id"`
-
 	// Name Virtual filename; must equal the multipart filename
 	Name string `json:"name"`
+
+	// ParentPath Absolute virtual directory for a new source; missing directories are created with its node
+	ParentPath string `json:"parent_path"`
 
 	// PushName Portable push identity; lowercase letters, digits, -, _, .
 	PushName string `json:"push_name"`
@@ -22922,6 +23002,10 @@ type UploadFileQuery struct {
 }
 
 type ChallengeDaemonResponse struct {
+	Proof string `json:"proof"`
+}
+
+type ChallengeAPIKeyResponse struct {
 	Proof string `json:"proof"`
 }
 
@@ -23808,9 +23892,9 @@ type GetPushSourceResponse = api.PushSourceState
 
 type GetPushSourceErrorResponse = Error
 
-type UploadPushFileResponse = api.UploadReceipt
+type UploadPushFileResponse = api.PushUploadReceipt
 
-type UploadPushFileResponseJSON = api.UploadReceipt
+type UploadPushFileResponseJSON = api.PushUploadReceipt
 
 type UploadPushFileErrorResponse = Error
 
@@ -25000,6 +25084,8 @@ type ProviderDescriptorV1 = document.ProviderDescriptorV1
 type PublicationSelection = bundle.PublicationSelection
 
 type PushSourceState = api.PushSourceState
+
+type PushUploadReceipt = api.PushUploadReceipt
 
 type PutExportChunkRequest struct {
 	// Schema A URL to the JSON Schema for this object.

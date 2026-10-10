@@ -674,7 +674,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		// so preserve the drain budget. A completed HTTP rejection proves this
 		// request did not initiate shutdown and uses the process-signal fallback.
 		shutdownErr := c.Shutdown(ctx, token)
-		if _, rejected := responseStatus(shutdownErr); rejected {
+		if _, rejected := ResponseStatus(shutdownErr); rejected {
 			return signalStopRecord(ctx, rec)
 		}
 		dead, err := waitDead(ctx, rec, daemon.GracefulExitTimeout)

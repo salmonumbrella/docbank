@@ -725,10 +725,9 @@ so pruning a version can release its bytes without losing the source cursor.
 Each new push provenance fact is initially bound to the node version that was
 current at acceptance; pruning may later remove that binding.
 
-The cursor is included in metadata JSONL v1 as a `push_source` record. An older
-v1 snapshot without those records can rebuild cursors from each source's latest
-remaining bound version. Import fails when that source digest cannot be
-reconstructed. The hot resume lookup uses the cursor's composite primary key.
+The cursor is included in metadata JSONL v1 as a `push_source` record from
+storage schema 30, the first layout with push. The hot resume lookup uses the
+cursor's composite primary key.
 When no push observation exists, lookup falls back to `watch_sources` for the
 same name and relative path. Its last accepted hash and size become the starting
 cursor, independently of the current node head. This supports a stopped watch
@@ -736,8 +735,11 @@ handing its identities to a push client with zero uploads for unchanged files.
 The first changed push observation records an independent cursor and takes
 precedence over the old watch cursor.
 
-Push does not add or rewrite `watch_sources` rows. Their one-source-per-node
-constraint is incompatible with intentional duplicate linking. New push
+Duplicate linking only selects nodes the same push name already owns through
+`push_sources`, or through `watch_sources` of the watch it took over. A push
+therefore never versions a node that another source created. Push does not add
+or rewrite `watch_sources` rows. Their one-source-per-node constraint is
+incompatible with intentional duplicate linking. New push
 identities and subsequent observations use operational push provenance instead.
 
 Acceptance allocates a strictly increasing per-source ingest timestamp inside

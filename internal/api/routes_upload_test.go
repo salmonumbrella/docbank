@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -31,6 +32,7 @@ type uploadRequest struct {
 	pushName     string
 	sourceRef    string
 	duplicates   string
+	parentPath   string
 }
 
 func sendUpload(
@@ -58,6 +60,11 @@ func sendUpload(
 	route := "/api/v1/uploads"
 	if in.pushName != "" {
 		route = "/api/v1/push/uploads"
+		query.Del("parent_id")
+		query.Set("parent_path", in.parentPath)
+		if in.parentPath == "" {
+			query.Set("parent_path", "/")
+		}
 		query.Set("push_name", in.pushName)
 		query.Set("source_ref", in.sourceRef)
 		query.Set("duplicates", in.duplicates)
@@ -237,11 +244,11 @@ func TestPushUploadIdentityVersionsAndIdempotence(t *testing.T) {
 	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
 	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	var first api.UploadReceipt
+	var first api.PushUploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
 	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var repeated api.UploadReceipt
+	var repeated api.PushUploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &repeated))
 	assert.Equal(t, first.Node.ID, repeated.Node.ID)
 	assert.Equal(t, first.Node.Revision, repeated.Node.Revision)
@@ -249,7 +256,7 @@ func TestPushUploadIdentityVersionsAndIdempotence(t *testing.T) {
 	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
 	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var changed api.UploadReceipt
+	var changed api.PushUploadReceipt
 	require.NoError(t, json.Unmarshal([]byte(body), &changed))
 	assert.Equal(t, "updated", changed.Status)
 	assert.Equal(t, first.Node.ID, changed.Node.ID)
@@ -265,11 +272,11 @@ func TestPushUploadDuplicatePolicies(t *testing.T) {
 			in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
 			resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
 			require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-			var first api.UploadReceipt
+			var first api.PushUploadReceipt
 			require.NoError(t, json.Unmarshal([]byte(body), &first))
 			in.name, in.sourceRef = "second.txt", "second.txt"
 			resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
-			var second api.UploadReceipt
+			var second api.PushUploadReceipt
 			require.NoError(t, json.Unmarshal([]byte(body), &second))
 			if policy == "create" {
 				require.Equal(t, http.StatusCreated, resp.StatusCode, body)
@@ -301,6 +308,63 @@ func TestPushUploadMismatchGrantsNoSourceAuthority(t *testing.T) {
 	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, "digest_mismatch")
+	blobs, err := s.AllBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, blobs)
+}
+
+func TestPushUploadCreatesItsDestinationOnlyForANewNode(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	in := uploadRequest{name: "notes.txt", pushName: "laptop", sourceRef: "a/notes.txt", duplicates: "link", parentPath: "/archive/a", content: []byte("first")}
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body := sendUpload(t, ts.URL, ts.Client(), 0, in)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	created, err := s.NodeByPath(t.Context(), "/archive/a/notes.txt")
+	require.NoError(t, err)
+
+	moved, err := s.MkdirAll(t.Context(), "/moved")
+	require.NoError(t, err)
+	_, _, err = s.Move(t.Context(), created.ID, moved.ID, "notes.txt", store.UnconditionalRev)
+	require.NoError(t, err)
+	archive, err := s.NodeByPath(t.Context(), "/archive")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), archive.ID, archive.Revision)
+	require.NoError(t, err)
+	in.content = []byte("second")
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), 0, in)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var receipt api.PushUploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, "updated", receipt.Status)
+	assert.Equal(t, created.ID, receipt.Node.ID)
+	_, err = s.NodeByPath(t.Context(), "/archive")
+	require.ErrorIs(t, err, store.ErrNotFound, "a stale destination is neither required nor recreated")
+
+	in.parentPath = "relative"
+	in.sourceRef = "other.txt"
+	in.name = "other.txt"
+	resp, body = sendUpload(t, ts.URL, ts.Client(), 0, in)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, "absolute virtual path")
+}
+
+func TestPushRoutesRefuseTheNameOfAConfiguredWatch(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Watches = []config.WatchConfig{{Name: "laptop", Source: t.TempDir(), Destination: "/watched"}}
+	})
+	resp, body := get(t, ts, "/api/v1/push/source?push_name=laptop&source_ref=notes.txt", nil)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, "push_name_in_use")
+	in := uploadRequest{name: "notes.txt", pushName: "laptop", sourceRef: "notes.txt", duplicates: "link", content: []byte("bytes")}
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), 0, in)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, "push_name_in_use")
+	resp, body = get(t, ts, "/api/v1/push/source?push_name=desktop&source_ref=notes.txt", nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	blobs, err := s.AllBlobs(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, blobs)

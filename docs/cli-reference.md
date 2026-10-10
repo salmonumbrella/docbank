@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-10
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -389,8 +389,10 @@ docbank push <local-dir> --to <daemon-url> --name <push-name> --dest <virtual-di
 
 Archives a local folder through the selected daemon. Reads the API key from
 `DOCBANK_API_KEY`, or from `--api-key-file` when supplied. Prints acknowledged
-outcomes and a final count; a failed run returns a nonzero exit code with its
-partial count. Repeat the command to resume from the daemon's accepted hashes.
+outcomes, each file the daemon rejected, and a final count. Rejected files do
+not stop the run, but make the exit code nonzero. Ctrl+C stops the run and
+still prints the count; stopping `--watch` this way is not an error. Repeat the
+command to resume from the daemon's accepted hashes.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -398,7 +400,7 @@ partial count. Repeat the command to resume from the daemon's accepted hashes.
 | `--name` | required | Stable source name: 1–64 lowercase letters, digits, `-`, `_`, or `.` |
 | `--dest` | required | Absolute virtual directory for new source identities |
 | `--api-key-file` | none | Read the key from this file instead of the environment |
-| `--duplicates` | `link` | Link a new identity to matching current content, skip it, or create another node |
+| `--duplicates` | `link` | Link a new identity to a matching document this push name already owns, skip it, or create another node |
 | `--watch` | false | Keep scanning until interrupted |
 | `--exclude` | none | Literal basename or source-relative path; repeatable |
 | `--settle-time` | `30s` | Unchanged window before uploading in watch mode |

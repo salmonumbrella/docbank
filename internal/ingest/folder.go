@@ -14,6 +14,10 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+// ErrRetryLater asks a folder scan to observe a file again on a later scan,
+// after a fresh settle window. A one-shot scan stops with it instead.
+var ErrRetryLater = errors.New("folder file was not processed")
+
 // FolderFile is a confined regular source opened after its settle window.
 // The callback may read and seek it, but must not modify it or retain it.
 type FolderFile struct {
@@ -32,7 +36,7 @@ func NewFolderScanner(cfg config.WatchConfig, process func(context.Context, Fold
 	if process == nil {
 		return nil, errors.New("folder scanner requires a file processor")
 	}
-	if err := store.ValidatePushSource(store.PushSource{Name: cfg.Name, Ref: "file", Duplicates: "link"}); err != nil {
+	if err := store.ValidatePushName(cfg.Name); err != nil {
 		return nil, err
 	}
 	if err := validateVirtualDestination(cfg.Destination); err != nil {

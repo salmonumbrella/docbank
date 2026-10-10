@@ -208,8 +208,8 @@ source bytes never replace an independently edited or reverted node head.
 Its `(push_name, source_ref)` key survives pruning the content version that was
 current when the source was accepted. The cursor stores a digest and size, not
 physical-byte authority, so it does not prevent pruning or add old bytes to a
-backup. Push identities may link to the same node; the watch cursor's unique
-node ownership rule remains unchanged.
+backup. Identities of one push name may link to a node that name already owns;
+the watch cursor's unique node ownership rule remains unchanged.
 
 The schema and metadata-v1 codec can persist one complete first audit
 enrollment: topology and attached-metadata genesis, a shared baseline, sticky

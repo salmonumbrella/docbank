@@ -23,16 +23,41 @@ type PushSource struct {
 	Duplicates string
 }
 
-// ValidatePushSource checks the identity and new-source duplicate policy.
-func ValidatePushSource(source PushSource) error {
-	if source.Name == "" || len(source.Name) > 64 {
+// ValidatePushName checks a portable push name.
+func ValidatePushName(name string) error {
+	if name == "" || len(name) > 64 {
 		return errors.New("push name must contain 1-64 characters")
 	}
-	for _, char := range source.Name {
+	for _, char := range name {
 		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || strings.ContainsRune("-_.", char) {
 			continue
 		}
 		return errors.New("push name permits lowercase letters, digits, hyphens, underscores, and dots")
+	}
+	return nil
+}
+
+// ValidatePushDuplicates checks the new-source duplicate policy.
+func ValidatePushDuplicates(policy string) error {
+	switch policy {
+	case "link", "skip", "create":
+		return nil
+	default:
+		return errors.New("push duplicates must be link, skip, or create")
+	}
+}
+
+// ValidatePushDestination checks the absolute virtual directory that receives
+// a new source's node.
+func ValidatePushDestination(parentPath string) error {
+	_, err := pushParentSegments(parentPath)
+	return err
+}
+
+// ValidatePushSource checks the identity and new-source duplicate policy.
+func ValidatePushSource(source PushSource) error {
+	if err := ValidatePushName(source.Name); err != nil {
+		return err
 	}
 	if !utf8.ValidString(source.Ref) || len(source.Ref) > 4096 || source.Ref == "" || source.Ref == "." || path.IsAbs(source.Ref) || source.Ref == ".." || strings.HasPrefix(source.Ref, "../") || path.Clean(source.Ref) != source.Ref {
 		return errors.New("push source reference must be a canonical relative slash path of at most 4096 bytes")
@@ -50,12 +75,7 @@ func ValidatePushSource(source PushSource) error {
 			return err
 		}
 	}
-	switch source.Duplicates {
-	case "link", "skip", "create":
-	default:
-		return errors.New("push duplicates must be link, skip, or create")
-	}
-	return nil
+	return ValidatePushDuplicates(source.Duplicates)
 }
 
 // PushState reports the last accepted source bytes, independently of the
@@ -118,10 +138,28 @@ func (s *Store) PushSourceState(ctx context.Context, source PushSource) (PushSta
 	return state, nil
 }
 
-// AcceptPush records verified bytes and their source atomically. Duplicate
-// linking shares a node, including its future versions, with the other sources.
-func (s *Store) AcceptPush(ctx context.Context, source PushSource, parentID int64, name, hash string, size int64, mimeType string, physical ...BlobPhysical) (Node, string, error) {
+// PushContent is one verified upload for a push source. ParentPath and Name
+// place a newly created node; an existing source keeps its node wherever it is.
+type PushContent struct {
+	ParentPath string
+	Name       string
+	Hash       string
+	Size       int64
+	MIMEType   string
+}
+
+// AcceptPush records verified bytes and their source atomically. A new source
+// may link to a node this push name already owns; linked sources share that
+// node, including its future versions. Missing destination directories are
+// created in the same transaction, and only when a new node is created.
+func (s *Store) AcceptPush(
+	ctx context.Context, source PushSource, content PushContent, physical ...BlobPhysical,
+) (Node, string, error) {
 	if err := ValidatePushSource(source); err != nil {
+		return Node{}, "", err
+	}
+	segments, err := pushParentSegments(content.ParentPath)
+	if err != nil {
 		return Node{}, "", err
 	}
 	run, err := s.BeginIngest(ctx, "push", source.Name)
@@ -129,95 +167,144 @@ func (s *Store) AcceptPush(ctx context.Context, source PushSource, parentID int6
 		return Node{}, "", err
 	}
 	var node Node
-	outcome := "added"
+	var outcome string
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		state, stateErr := pushStateTx(ctx, tx, source.Name, source.Ref)
 		switch {
 		case stateErr == nil:
-			if state.Hash == hash && state.Size == size {
+			if state.Hash == content.Hash && state.Size == content.Size {
 				node, outcome = state.Node, "skipped"
 				return nil
 			}
-			// Per-source observation order survives a wall-clock rollback and portable
-			// metadata restore. Allocate the timestamp while holding the write transaction.
-			if state.AcceptedAt != "" {
-				previous, parseErr := time.Parse(time.RFC3339Nano, state.AcceptedAt)
-				if parseErr != nil {
-					return fmt.Errorf("reading push observation time: %w", parseErr)
-				}
-				current, parseErr := time.Parse(time.RFC3339Nano, run.record.StartedAt)
-				if parseErr != nil {
-					return fmt.Errorf("reading current push time: %w", parseErr)
-				}
-				if !current.After(previous) {
-					run.record.StartedAt = previous.Add(time.Nanosecond).UTC().Format(timestampLayout)
-				}
+			if err := advancePushObservationTime(&run, state.AcceptedAt); err != nil {
+				return err
 			}
-			node = state.Node
-			if node.BlobHash != hash || node.Size != size {
-				node, _, err = s.replaceContentTx(ctx, tx, node, UnconditionalRev, hash, size, mimeType, physical...)
+			node, outcome = state.Node, "skipped"
+			if node.BlobHash != content.Hash || node.Size != content.Size {
+				node, _, err = s.replaceContentTx(ctx, tx, node, UnconditionalRev,
+					content.Hash, content.Size, content.MIMEType, physical...)
 				if err != nil {
 					return err
 				}
 				outcome = "updated"
-			} else {
-				outcome = "skipped"
 			}
 		case !errors.Is(stateErr, ErrNotFound):
 			return stateErr
 		default:
-			if source.Duplicates != "create" {
-				duplicate, findErr := scanNode(tx.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.blob_hash=? ORDER BY n.id LIMIT 1`, hash))
-				switch {
-				case findErr == nil:
-					if duplicate.Size != size {
-						return errors.New("duplicate size does not match verified bytes")
-					}
-					if err := s.EnsureBlobTx(tx, hash, size, physical...); err != nil {
-						return err
-					}
-					node = duplicate
-					if source.Duplicates == "skip" {
-						outcome = "duplicate_skipped"
-						return nil
-					}
-					outcome = "linked"
-				case !errors.Is(findErr, ErrNotFound):
-					return findErr
-				}
+			duplicate, found, findErr := s.pushDuplicateTx(ctx, tx, source, content, physical...)
+			if findErr != nil {
+				return findErr
 			}
-			if node.ID == 0 {
-				receipt, _, _, createErr := s.ingestFileTx(ctx, tx, run, parentID, name, hash, size, mimeType, source.Ref, source.ModifiedAt, ingestFileOptions{exact: true}, physical...)
-				node = receipt.Node
-				if createErr != nil {
-					return createErr
-				}
+			if !found {
+				plan := IngestDirectoryPlan{anchorID: s.rootID, segments: segments}
+				receipt, _, _, createErr := s.ingestFileTx(ctx, tx, run, 0, content.Name,
+					content.Hash, content.Size, content.MIMEType, source.Ref, source.ModifiedAt,
+					ingestFileOptions{exact: true, directoryPlan: &plan}, physical...)
+				node, outcome = receipt.Node, "added"
+				return createErr
+			}
+			node = duplicate
+			if source.Duplicates == "skip" {
+				outcome = "duplicate_skipped"
 				return nil
 			}
+			outcome = "linked"
 		}
-		ingestAdded, err := s.ensureIngestRunForMutationTx(ctx, tx, run)
-		if err != nil {
-			return err
-		}
-		fact := metadataProvenance{Type: metadataProvenanceType, NodeID: node.ID, IngestID: run.ID(), OriginalPath: source.Ref}
-		if source.ModifiedAt != "" {
-			fact.OriginalMTime = &source.ModifiedAt
-		}
-		fact.Identity, err = provenanceIdentity(fact)
-		if err != nil {
-			return err
-		}
-		node, err = s.observeOperationalIngestTx(ctx, tx, run, node, fact, ingestAdded)
-		if err != nil {
-			return err
-		}
-		return insertPushSourceTx(ctx, tx, source, node.ID, fact.Identity,
-			hash, size, run.record.StartedAt)
+		node, err = s.recordPushObservationTx(ctx, tx, run, source, node, content)
+		return err
 	})
 	if err != nil {
 		return Node{}, "", fmt.Errorf("accepting push source %q/%q: %w", source.Name, source.Ref, err)
 	}
 	return node, outcome, nil
+}
+
+func pushParentSegments(parentPath string) ([]string, error) {
+	if !strings.HasPrefix(parentPath, "/") {
+		return nil, fmt.Errorf("push destination %q must be an absolute virtual path", parentPath)
+	}
+	return normalizeIngestDirectorySegments(parentPath, splitPath(parentPath))
+}
+
+// advancePushObservationTime keeps per-source observation order across a
+// wall-clock rollback and portable metadata restore. The caller holds the
+// write transaction.
+func advancePushObservationTime(run *IngestRun, previousAcceptedAt string) error {
+	if previousAcceptedAt == "" {
+		return nil
+	}
+	previous, err := time.Parse(time.RFC3339Nano, previousAcceptedAt)
+	if err != nil {
+		return fmt.Errorf("reading push observation time: %w", err)
+	}
+	current, err := time.Parse(time.RFC3339Nano, run.record.StartedAt)
+	if err != nil {
+		return fmt.Errorf("reading current push time: %w", err)
+	}
+	if !current.After(previous) {
+		run.record.StartedAt = previous.Add(time.Nanosecond).UTC().Format(timestampLayout)
+	}
+	return nil
+}
+
+// pushDuplicateTx finds a live node with the same current bytes among the
+// nodes this push name already owns, including nodes adopted from a watch of
+// the same name. Unrelated vault documents are never duplicate targets, so a
+// push cannot version a document that another source created.
+func (s *Store) pushDuplicateTx(
+	ctx context.Context, tx *sql.Tx, source PushSource, content PushContent,
+	physical ...BlobPhysical,
+) (Node, bool, error) {
+	if source.Duplicates == "create" {
+		return Node{}, false, nil
+	}
+	duplicate, err := scanNode(tx.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+`
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.blob_hash=?
+		  AND n.id IN (
+			SELECT node_id FROM push_sources WHERE push_name=?
+			UNION SELECT node_id FROM watch_sources WHERE watch_name=?
+		  )
+		ORDER BY n.id LIMIT 1`, content.Hash, source.Name, source.Name))
+	if errors.Is(err, ErrNotFound) {
+		return Node{}, false, nil
+	}
+	if err != nil {
+		return Node{}, false, err
+	}
+	if duplicate.Size != content.Size {
+		return Node{}, false, errors.New("duplicate size does not match verified bytes")
+	}
+	if err := s.EnsureBlobTx(tx, content.Hash, content.Size, physical...); err != nil {
+		return Node{}, false, err
+	}
+	return duplicate, true, nil
+}
+
+func (s *Store) recordPushObservationTx(
+	ctx context.Context, tx *sql.Tx, run IngestRun, source PushSource, node Node,
+	content PushContent,
+) (Node, error) {
+	ingestAdded, err := s.ensureIngestRunForMutationTx(ctx, tx, run)
+	if err != nil {
+		return Node{}, err
+	}
+	fact := metadataProvenance{
+		Type: metadataProvenanceType, NodeID: node.ID, IngestID: run.ID(), OriginalPath: source.Ref,
+	}
+	if source.ModifiedAt != "" {
+		fact.OriginalMTime = &source.ModifiedAt
+	}
+	fact.Identity, err = provenanceIdentity(fact)
+	if err != nil {
+		return Node{}, err
+	}
+	node, err = s.observeOperationalIngestTx(ctx, tx, run, node, fact, ingestAdded)
+	if err != nil {
+		return Node{}, err
+	}
+	err = insertPushSourceTx(ctx, tx, source, node.ID, fact.Identity,
+		content.Hash, content.Size, run.record.StartedAt)
+	return node, err
 }
 
 func insertPushSourceTx(
@@ -244,42 +331,6 @@ func insertPushSourceTx(
 		record.PushName, record.SourceRef, record.NodeID, record.ProvenanceIdentity,
 		record.BlobHash, record.Size, record.AcceptedAt); err != nil {
 		return fmt.Errorf("recording pushed source %q/%q: %w", source.Name, source.Ref, err)
-	}
-	return nil
-}
-
-// backfillLegacyPushSourceCursors imports older format-v1 metadata snapshots.
-// Before independent cursors existed, the newest push binding was the only
-// available source digest. A pruned latest binding cannot be reconstructed.
-func backfillLegacyPushSourceCursors(ctx context.Context, tx *sql.Tx) error {
-	var cursors int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM push_sources`).Scan(&cursors); err != nil {
-		return fmt.Errorf("counting imported push source cursors: %w", err)
-	}
-	if cursors != 0 {
-		return nil
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO push_sources(
-		push_name,source_ref,node_id,provenance_identity,blob_hash,size,accepted_at
-	)
-	SELECT latest.source_desc,latest.original_path,latest.node_id,latest.identity,
-	       cv.blob_hash,cv.size,latest.started_at
-	FROM (
-		SELECT i.source_desc,i.started_at,i.id,p.original_path,p.node_id,p.identity
-		FROM ingests i JOIN provenance p ON p.ingest_id=i.id
-		WHERE i.source_kind='push'
-		AND NOT EXISTS (
-			SELECT 1 FROM ingests newer_i JOIN provenance newer_p ON newer_p.ingest_id=newer_i.id
-			WHERE newer_i.source_kind='push' AND newer_i.source_desc=i.source_desc
-			  AND newer_p.original_path=p.original_path
-			  AND (newer_i.started_at>i.started_at OR
-			       (newer_i.started_at=i.started_at AND newer_i.id>i.id))
-		)
-	) latest
-	JOIN provenance_version_bindings b ON b.provenance_identity=latest.identity
-	JOIN content_versions cv ON cv.version_id=b.content_version_id`)
-	if err != nil {
-		return fmt.Errorf("backfilling legacy push source cursors: %w", err)
 	}
 	return nil
 }

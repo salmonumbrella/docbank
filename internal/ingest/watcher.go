@@ -897,7 +897,8 @@ func (w *Watcher) scanDirectory(
 				})
 			})
 		}
-		if errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err) {
+		if errors.Is(err, ErrSourceChanged) || errors.Is(err, ErrRetryLater) ||
+			transientWatchObservationError(err) {
 			if w.immediate {
 				return err
 			}

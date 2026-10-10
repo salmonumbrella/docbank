@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/push"
@@ -35,9 +37,17 @@ type fixture struct {
 	vaultRoot  string
 	uploads    atomic.Int64
 	drop       atomic.Bool
+	// unavailable answers that many upcoming push uploads with 503.
+	unavailable atomic.Int64
+	// impostor makes the endpoint behave like a listener that captured the
+	// port: it cannot prove the key and records what it receives.
+	impostor     atomic.Bool
+	stolenKeys   atomic.Int64
+	stolenBodies atomic.Int64
+	server       *httptest.Server
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T, configure ...func(*config.Config)) *fixture {
 	t.Helper()
 	dir := t.TempDir()
 	s, err := store.Open(filepath.Join(dir, "vault.db"))
@@ -50,12 +60,24 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-key"
+	for _, apply := range configure {
+		apply(&cfg)
+	}
 	server := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
 	t.Cleanup(server.Close)
 	f := &fixture{store: s, blobs: blobs, vaultRoot: dir}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.impostor.Load() {
+			f.serveImpostor(w, r)
+			return
+		}
 		if r.URL.Path == "/api/v1/push/uploads" {
 			f.uploads.Add(1)
+			if f.unavailable.Load() > 0 {
+				f.unavailable.Add(-1)
+				http.Error(w, "synthetic outage", http.StatusServiceUnavailable)
+				return
+			}
 			if f.drop.Swap(false) {
 				recorded := httptest.NewRecorder()
 				server.Handler().ServeHTTP(recorded, r)
@@ -74,10 +96,45 @@ func newFixture(t *testing.T) *fixture {
 		server.Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(ts.Close)
+	f.server = ts
 	f.baseURL = ts.URL
 	f.connection, err = daemonconn.NewPushConnection(ts.URL, "synthetic-key")
 	require.NoError(t, err)
 	return f
+}
+
+func (f *fixture) serveImpostor(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Api-Key") != "" {
+		f.stolenKeys.Add(1)
+	}
+	if n, _ := io.Copy(io.Discard, r.Body); n > 0 {
+		f.stolenBodies.Add(1)
+	}
+	if r.URL.Path == daemonauth.KeyChallengePath {
+		nonce, _ := hex.DecodeString(r.URL.Query().Get("nonce"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof("guessed-key", nonce)})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// keyChallenge answers the daemon's API key challenge for key and passes every
+// other request to next.
+func keyChallenge(key string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != daemonauth.KeyChallengePath {
+			next.ServeHTTP(w, r)
+			return
+		}
+		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.KeyProof(key, nonce)})
+	})
 }
 
 func options(dir, policy string) push.Options {
@@ -192,22 +249,25 @@ func TestPushRejectsMalformedSuccessAndDigestMismatch(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	sum := sha256.Sum256([]byte("expected"))
-	_, err := f.connection.PushUpload(t.Context(), f.store.RootID(), "bad.txt", "text/plain", hex.EncodeToString(sum[:]), 8, strings.NewReader("different"), store.PushSource{Name: "laptop", Ref: "bad.txt", Duplicates: "link"})
+	source := store.PushSource{Name: "laptop", Ref: "bad.txt", Duplicates: "link"}
+	content := store.PushContent{ParentPath: "/", Name: "bad.txt", Hash: hex.EncodeToString(sum[:]), Size: 8, MIMEType: "text/plain"}
+	_, err := f.connection.PushUpload(t.Context(), source, content, strings.NewReader("different"))
 	require.Error(t, err)
 	_, err = f.store.PushSourceState(t.Context(), store.PushSource{Name: "laptop", Ref: "bad.txt", Duplicates: "link"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 	for _, body := range []string{`{}`, `{"status":"added","node":{"id":1,"kind":"file","revision":1},"computed_hash":"wrong","computed_size":8}`} {
 		t.Run(body, func(t *testing.T) {
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ts := httptest.NewServer(keyChallenge("synthetic-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(body))
-			}))
+			})))
 			t.Cleanup(ts.Close)
 			c, err := daemonconn.NewPushConnection(ts.URL, "synthetic-key")
 			require.NoError(t, err)
-			_, err = c.PushUpload(t.Context(), 1, "bad.txt", "text/plain", hex.EncodeToString(sum[:]), 8, strings.NewReader("expected"), store.PushSource{Name: "laptop", Ref: "bad.txt", Duplicates: "link"})
+			_, err = c.PushUpload(t.Context(), source, content, strings.NewReader("expected"))
 			require.Error(t, err)
+			assert.True(t, daemonconn.IsResponseDecodeError(err), "a malformed receipt is an unknown outcome")
 		})
 	}
 }
@@ -257,13 +317,13 @@ func TestPushRefusesMalformedKnownSourceInsteadOfSkipping(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), content, 0600))
 	sum := sha256.Sum256(content)
 	uploaded := false
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(keyChallenge("synthetic-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			uploaded = true
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"known":true,"hash":%q,"size":9,"node":{"id":1,"kind":"file"}}`, hex.EncodeToString(sum[:]))
-	}))
+	})))
 	t.Cleanup(ts.Close)
 	c, err := daemonconn.NewPushConnection(ts.URL, "synthetic-key")
 	require.NoError(t, err)
@@ -342,4 +402,130 @@ func TestPushTakesOverDaemonWatchWithZeroUploads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Skipped)
 	assert.EqualValues(t, 1, f.uploads.Load(), "push's accepted hash must replace the old watch cursor for resume")
+}
+
+func TestPushNeverSendsKeyOrBytesToUnprovenEndpoint(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file.txt")
+	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
+	report, err := push.Run(t.Context(), f.connection, options(dir, "link"))
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Added)
+
+	// The forwarded port is captured after the tunnel exits: pooled sockets are
+	// gone and the replacement listener cannot prove the key.
+	f.impostor.Store(true)
+	f.server.CloseClientConnections()
+	require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
+	report, err = push.Run(t.Context(), f.connection, options(dir, "link"))
+	require.Error(t, err)
+	assert.True(t, daemonconn.IsKeyProofError(err), "unexpected error: %v", err)
+	assert.Zero(t, report.Updated)
+	assert.Zero(t, f.stolenKeys.Load(), "the replacement listener must not receive the API key")
+	assert.Zero(t, f.stolenBodies.Load(), "the replacement listener must not receive document bytes")
+	assert.EqualValues(t, 1, f.uploads.Load())
+}
+
+func TestPushContinuesPastARejectedFile(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	archive, err := f.store.MkdirAll(t.Context(), "/archive")
+	require.NoError(t, err)
+	run, err := f.store.BeginIngest(t.Context(), "cli", "unrelated import")
+	require.NoError(t, err)
+	_, err = f.store.IngestFileExact(t.Context(), run, archive.ID, "b.txt", strings.Repeat("ab", 32), 3, "text/plain", "b.txt", "")
+	require.NoError(t, err)
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("local "+name), 0600))
+	}
+	opts := options(dir, "create")
+	var failed []string
+	opts.Failure = func(ref string, err error) error {
+		failed = append(failed, ref)
+		assert.ErrorIs(t, err, store.ErrExists)
+		return nil
+	}
+	report, err := push.Run(t.Context(), f.connection, opts)
+	require.ErrorIs(t, err, push.ErrFilesFailed)
+	assert.Equal(t, 2, report.Added, "files after the rejected one are still pushed")
+	assert.Equal(t, 1, report.Failed)
+	assert.Equal(t, []string{"b.txt"}, failed)
+}
+
+func TestPushWatchRetriesAfterTheDaemonIsUnavailable(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.unavailable.Store(1)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("first"), 0600))
+	opts := options(dir, "link")
+	opts.Watch = true
+	opts.Folder.SettleTime = config.Duration(200 * time.Millisecond)
+	opts.Folder.ScanInterval = config.Duration(50 * time.Millisecond)
+	events := make(chan string, 4)
+	opts.Progress = func(_ string, outcome string) error { events <- outcome; return nil }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := push.Run(ctx, f.connection, opts); done <- err }()
+	require.Eventually(t, func() bool { return len(events) > 0 }, 30*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "added", <-events)
+	assert.EqualValues(t, 2, f.uploads.Load(), "the refused upload is retried")
+	assert.Empty(t, done, "an unavailable daemon does not end watch mode")
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+}
+
+func TestPushRefusesTheNameOfAConfiguredDaemonWatch(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, func(cfg *config.Config) {
+		cfg.Watches = []config.WatchConfig{{Name: "laptop", Source: t.TempDir(), Destination: "/watched"}}
+	})
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("synthetic"), 0600))
+	for _, watch := range []bool{false, true} {
+		opts := options(dir, "link")
+		opts.Watch = watch
+		opts.Folder.SettleTime = config.Duration(100 * time.Millisecond)
+		opts.Folder.ScanInterval = config.Duration(20 * time.Millisecond)
+		_, err := push.Run(t.Context(), f.connection, opts)
+		code, ok := daemonconn.ProblemCode(err)
+		require.True(t, ok, "unexpected error: %v", err)
+		assert.Equal(t, "push_name_in_use", code)
+	}
+	assert.Zero(t, f.uploads.Load())
+}
+
+func TestPushUpdatesAMovedDocumentAfterItsOldFolderIsTrashed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0700))
+	file := filepath.Join(dir, "nested", "notes.txt")
+	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
+	_, err := push.Run(t.Context(), f.connection, options(dir, "link"))
+	require.NoError(t, err)
+	node, err := f.store.NodeByPath(t.Context(), "/archive/nested/notes.txt")
+	require.NoError(t, err)
+	organized, err := f.store.MkdirAll(t.Context(), "/organized")
+	require.NoError(t, err)
+	_, _, err = f.store.Move(t.Context(), node.ID, organized.ID, "notes.txt", store.UnconditionalRev)
+	require.NoError(t, err)
+	archive, err := f.store.NodeByPath(t.Context(), "/archive")
+	require.NoError(t, err)
+	_, _, err = f.store.Trash(t.Context(), archive.ID, archive.Revision)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(file, []byte("second"), 0600))
+	report, err := push.Run(t.Context(), f.connection, options(dir, "link"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Updated)
+	changed, err := f.store.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, organized.ID, *changed.ParentID)
+	_, err = f.store.NodeByPath(t.Context(), "/archive")
+	require.ErrorIs(t, err, store.ErrNotFound, "an existing source does not recreate its old destination")
 }

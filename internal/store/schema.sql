@@ -1121,9 +1121,6 @@ CREATE TABLE IF NOT EXISTS provenance (
 );
 
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
--- Provenance consumers look up source-relative references without adding a
--- logical storage constraint.
-CREATE INDEX IF NOT EXISTS provenance_source_reference ON provenance(original_path, ingest_id);
 CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
     ON provenance(supersedes) WHERE supersedes IS NOT NULL;
 

@@ -2090,8 +2090,7 @@ func TestPushCursorSurvivesBackupWithoutRetainingPrunedSourceBytes(t *testing.T)
 		if err != nil {
 			return err
 		}
-		pushed, _, err = fixture.metadata.AcceptPush(t.Context(), source, fixture.metadata.RootID(),
-			"pushed.txt", first.Hash, first.Size, "text/plain", firstPhysical)
+		pushed, _, err = fixture.metadata.AcceptPush(t.Context(), source, store.PushContent{ParentPath: "/", Name: "pushed.txt", Hash: first.Hash, Size: first.Size, MIMEType: "text/plain"}, firstPhysical)
 		if err != nil {
 			return err
 		}
@@ -2099,8 +2098,7 @@ func TestPushCursorSurvivesBackupWithoutRetainingPrunedSourceBytes(t *testing.T)
 		if err != nil {
 			return err
 		}
-		pushed, _, err = fixture.metadata.AcceptPush(t.Context(), source, fixture.metadata.RootID(),
-			"pushed.txt", accepted.Hash, accepted.Size, "text/plain", acceptedPhysical)
+		pushed, _, err = fixture.metadata.AcceptPush(t.Context(), source, store.PushContent{ParentPath: "/", Name: "pushed.txt", Hash: accepted.Hash, Size: accepted.Size, MIMEType: "text/plain"}, acceptedPhysical)
 		if err != nil {
 			return err
 		}
@@ -2153,8 +2151,7 @@ func TestPushCursorSurvivesBackupWithoutRetainingPrunedSourceBytes(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, acceptedHash, state.Hash)
 	assert.Equal(t, replaced.BlobHash, state.Node.BlobHash)
-	unchanged, outcome, err := restored.AcceptPush(t.Context(), source, restored.RootID(),
-		"pushed.txt", acceptedHash, acceptedSize, "text/plain")
+	unchanged, outcome, err := restored.AcceptPush(t.Context(), source, store.PushContent{ParentPath: "/", Name: "pushed.txt", Hash: acceptedHash, Size: acceptedSize, MIMEType: "text/plain"})
 	require.NoError(t, err)
 	assert.Equal(t, "skipped", outcome)
 	assert.Equal(t, replaced.BlobHash, unchanged.BlobHash,
