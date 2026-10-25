@@ -238,7 +238,7 @@ func openWatchFile(root *os.Root, ref string) (*os.File, error) {
 	return f, nil
 }
 
-func (source watchSource) observe() (watchFingerprint, watchMount, error) {
+func (source watchSource) observe(withChange bool) (watchFingerprint, watchMount, error) {
 	var noMount watchMount
 	f, err := source.open()
 	if err != nil {
@@ -253,7 +253,11 @@ func (source watchSource) observe() (watchFingerprint, watchMount, error) {
 	if err != nil {
 		return watchFingerprint{}, noMount, err
 	}
-	return fingerprintFileInfo(info), mount, nil
+	fingerprint, err := fingerprintOpenedFile(f, info, withChange)
+	if err != nil {
+		return watchFingerprint{}, noMount, fmt.Errorf("observing source change time: %w", err)
+	}
+	return fingerprint, mount, nil
 }
 
 func watchMountForRoot(root *os.Root) (watchMount, error) {
@@ -1018,7 +1022,7 @@ func (w *Watcher) scanDirectory(
 		if w.beforeObserve != nil {
 			w.beforeObserve(rel)
 		}
-		fingerprint, sourceMount, err := source.observe()
+		fingerprint, sourceMount, err := source.observe(w.process == nil)
 		if err != nil {
 			if errors.Is(err, ErrSourceChanged) {
 				if w.immediate && w.sourceChanged != nil {

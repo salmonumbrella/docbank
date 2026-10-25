@@ -441,19 +441,38 @@ pack_interval = "1h"
 pack_max_bytes = 268435456
 ```
 
-The daemon observes a file's filesystem identity, size, and modification time
-for a full settle window before reading it. `minimum_age = "168h"` additionally
-requires seven days since the source's last modification, which is useful when
-an append-heavy session may pause for minutes or hours without being closed.
+The daemon observes a file's filesystem identity, size, modification time, and
+native change timestamp for a full settle window before reading it.
+`minimum_age = "168h"` additionally requires seven days since the source's last
+modification, which is useful when an append-heavy session may pause for minutes or hours without being closed.
 The minimum-age gate survives restart. The settle observation does not, so
 after a restart every file must again stay unchanged for a full settle window.
 Set `minimum_age = "0s"` or omit it for ordinary inboxes that need only the
 settle window.
 
-Docbank then verifies that the confined source path still names the same
-unchanged object. It never follows entries that are symlinks and never changes
-or deletes source data. A time window cannot prove that a producer formally
-closed a file, so use a conservative age or point the watch at a completed-file
+Native change timestamps detect ordinary writes that preserve size and restore
+modification time. Unchanged accepted files receive metadata-only polling.
+A metadata-only change can restart settling; if the bytes remain unchanged,
+Docbank adds no content version and preserves any later Docbank edit.
+
+Linux and macOS use change time from the opened file's stat result. Windows
+queries `FILE_BASIC_INFO.ChangeTime` on that same handle. A failed native query
+is a source-observation error. A missing file or a Windows sharing or lock
+violation is retried. A permanent failure, including zero or unusable Windows
+`ChangeTime`, fails the named `watch:<name>` job. Filesystems or providers that
+do not supply usable change time cannot be used for that daemon watch. Check
+`docbank jobs` for the cause, correct the source, then restart the daemon.
+Docbank never treats missing change evidence as unchanged or falls back to
+full-content polling.
+Native observation is supported on Linux, macOS, and Windows. Timestamp
+resolution, filesystem caching, and writers that suppress or restore native
+change signals can hide edits. Polling also cannot recover saves overwritten
+between observations.
+
+Docbank checks the same native change evidence before and after reading, then
+verifies that the confined source path still names the same unchanged object.
+It never follows entries that are symlinks and never changes or deletes source
+data. A time window cannot prove that a producer formally closed a file, so use a conservative age or point the watch at a completed-file
 handoff directory when one is available.
 
 The watch name and slash-separated relative source path form a stable, portable

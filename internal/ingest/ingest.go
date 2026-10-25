@@ -1036,6 +1036,7 @@ type localFileContent struct {
 }
 
 type localFileFingerprint struct {
+	change  fileChangeStamp
 	size    int64
 	modTime int64
 	info    fs.FileInfo
@@ -1060,6 +1061,10 @@ func observeLocalFileFingerprint(path string) (localFileFingerprint, error) {
 type localFileOpener func() (*os.File, error)
 
 func observeLocalFileFingerprintWith(open localFileOpener) (localFileFingerprint, error) {
+	return observeLocalFileFingerprintWithChange(open, false)
+}
+
+func observeLocalFileFingerprintWithChange(open localFileOpener, withChange bool) (localFileFingerprint, error) {
 	f, err := open()
 	if err != nil {
 		return localFileFingerprint{}, err
@@ -1072,11 +1077,13 @@ func observeLocalFileFingerprintWith(open localFileOpener) (localFileFingerprint
 	if !info.Mode().IsRegular() {
 		return localFileFingerprint{}, errors.New("not a regular file")
 	}
-	return fingerprintFileInfo(info), nil
+	return fingerprintOpenedFile(f, info, withChange)
 }
 
 func (fingerprint localFileFingerprint) matches(other localFileFingerprint) bool {
-	return fingerprint.size == other.size &&
+	return fingerprint.change.present == other.change.present &&
+		(!fingerprint.change.present || fingerprint.change == other.change) &&
+		fingerprint.size == other.size &&
 		fingerprint.modTime == other.modTime &&
 		os.SameFile(fingerprint.info, other.info)
 }
@@ -1127,9 +1134,13 @@ func (ing *Ingester) prepareLocalFileWith(
 	if !info.Mode().IsRegular() {
 		return result, fmt.Errorf("%s: not a regular file", sourcePath)
 	}
-	initialFingerprint := fingerprintFileInfo(info)
+	withChange := expected != nil && expected.change.present
+	initialFingerprint, err := fingerprintOpenedFile(f, info, withChange)
+	if err != nil {
+		return result, fmt.Errorf("checking source change time of %s: %w", sourcePath, err)
+	}
 	if expected != nil && !initialFingerprint.matches(*expected) {
-		return result, fmt.Errorf("%s: observed file was replaced before opening: %w",
+		return result, fmt.Errorf("%s: observed file changed before opening: %w",
 			sourcePath, ErrSourceChanged)
 	}
 
@@ -1166,18 +1177,22 @@ func (ing *Ingester) prepareLocalFileWith(
 	if err != nil {
 		return result, fmt.Errorf("rechecking %s: %w", sourcePath, err)
 	}
-	if result.size != info.Size() || !fingerprintFileInfo(after).matches(initialFingerprint) {
+	afterFingerprint, err := fingerprintOpenedFile(f, after, withChange)
+	if err != nil {
+		return result, fmt.Errorf("rechecking source change time of %s: %w", sourcePath, err)
+	}
+	if result.size != info.Size() || !afterFingerprint.matches(initialFingerprint) {
 		return result, fmt.Errorf("%s: %w", sourcePath, ErrSourceChanged)
 	}
 	if expected != nil {
-		currentFingerprint, pathErr := observeLocalFileFingerprintWith(open)
+		currentFingerprint, pathErr := observeLocalFileFingerprintWithChange(open, withChange)
 		if pathErr != nil {
 			return result, fmt.Errorf("%s: rechecking watched path: %w",
-				sourcePath, errors.Join(ErrSourceChanged, pathErr))
+				sourcePath, pathErr)
 		}
 		if !currentFingerprint.matches(initialFingerprint) ||
 			!currentFingerprint.matches(*expected) {
-			return result, fmt.Errorf("%s: watched path was replaced while reading: %w",
+			return result, fmt.Errorf("%s: watched source changed while reading: %w",
 				sourcePath, ErrSourceChanged)
 		}
 	}
