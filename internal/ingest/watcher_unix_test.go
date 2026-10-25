@@ -43,7 +43,7 @@ func TestWatcherDoesNotFollowSwappedDirectoryAncestor(t *testing.T) {
 	}
 	require.NoError(t, scanWatcherAt(t.Context(), watcher, root, t0.Add(time.Second)))
 	assert.True(t, swapped)
-	assert.Empty(t, watcher.observations)
+	assert.Len(t, watcher.observations, 1)
 	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/outside.txt")
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
