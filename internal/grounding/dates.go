@@ -12,8 +12,8 @@ import (
 var datePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^([0-9]{4})([-/])([0-9]{2})([-/])([0-9]{2})`),
 	regexp.MustCompile(`^([0-9]{2})([/.])([0-9]{2})([/.])([0-9]{4})`),
-	regexp.MustCompile(`(?i)^([A-Za-z]+\.?)[ \t]+(?:([0-9]{1,2}),?[ \t]+)?([0-9]{4})`),
-	regexp.MustCompile(`(?i)^([0-9]{1,2})[ \t]+([A-Za-z]+\.?)[ \t]+([0-9]{4})`),
+	regexp.MustCompile(`(?i)^([A-Za-z]+\.?)[ \t\x{00a0}\x{202f}]+(?:([0-9]{1,2}),?[ \t\x{00a0}\x{202f}]+)?([0-9]{4})`),
+	regexp.MustCompile(`(?i)^([0-9]{1,2})[ \t\x{00a0}\x{202f}]+([A-Za-z]+\.?)[ \t\x{00a0}\x{202f}]+([0-9]{4})`),
 	regexp.MustCompile(`^([0-9]{4})-([0-9]{2})`),
 }
 

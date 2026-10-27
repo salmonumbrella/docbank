@@ -39,6 +39,22 @@ func TestDateNormalization(t *testing.T) {
 	}
 }
 
+func TestNonbreakingDateSpacesGroundAnswer(t *testing.T) {
+	for _, tc := range []struct{ name, space string }{{"nbsp", "\u00a0"}, {"narrow-nbsp", "\u202f"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "March" + tc.space + "15," + tc.space + "2026"
+			r := Check("March 15, 2026 [1]", []Citation{{Index: 1, Text: source}})
+			if r.Status != "grounded" || len(r.Claims) != 1 || len(r.Claims[0].Figures) != 1 {
+				t.Fatalf("%+v", r)
+			}
+			figure := r.Claims[0].Figures[0]
+			if figure.Kind != "date" || !reflect.DeepEqual(figure.Values, []string{"2026-03-15"}) || !reflect.DeepEqual(figure.FoundIn, []int{1}) {
+				t.Fatalf("%+v", figure)
+			}
+		})
+	}
+}
+
 func TestISO8601TimestampDateGroundsAnswer(t *testing.T) {
 	r := Check("Released 2026-03-15 [1]", []Citation{{Index: 1, Text: "released_at: 2026-03-15T10:00:00Z"}})
 	if r.Status != "grounded" || len(r.Claims) != 1 || len(r.Claims[0].Figures) != 1 {
