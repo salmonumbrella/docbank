@@ -98,7 +98,7 @@ func amountAt(rs []rune, start int) (int, []string) {
 		prefixEnd = i
 	}
 	numberStart := i
-	if i >= len(rs) || (!digit(rs[i]) && !(rs[i] == '.' && i+1 < len(rs) && digit(rs[i+1]))) {
+	if i >= len(rs) || !(digit(rs[i]) || (rs[i] == '.' && i+1 < len(rs) && digit(rs[i+1]))) {
 		return failed()
 	}
 	for i < len(rs) && (digit(rs[i]) || separator(rs[i])) {
@@ -142,7 +142,7 @@ func amountAt(rs []rune, start int) (int, []string) {
 		return failed()
 	}
 	code := amountCurrencyClass(classes)
-	if !figureBoundary(rs, i) && !(power > 0 && i < len(rs) && rs[i] == ',' && i+1 < len(rs) && digit(rs[i+1])) {
+	if !(figureBoundary(rs, i) || (power > 0 && i < len(rs) && rs[i] == ',' && i+1 < len(rs) && digit(rs[i+1]))) {
 		return failed()
 	}
 	values := numberValues(string(rs[numberStart:numberEnd]))
