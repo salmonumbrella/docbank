@@ -183,6 +183,30 @@ func extractWithEscapes(s string, escapes []bool) []Figure {
 		out = append(out, Figure{Kind: kind, Start: start, End: end, Text: string(original[start:end]), Values: values, FoundIn: []int{}})
 	}
 	for i := 0; i < len(rs); {
+		if end, values := dateAt(rs, i); end > i {
+			if len(values) > 0 {
+				add("date", i, end, values)
+			} else {
+				for j := i; j < end; {
+					if !digit(rs[j]) {
+						j++
+						continue
+					}
+					start := j
+					for j < end && digit(rs[j]) {
+						j++
+					}
+					add("number", start, j, numberValues(string(rs[start:j])))
+				}
+			}
+			i = end
+			continue
+		}
+		if end, values := amountAt(rs, i); end > i {
+			add("amount", i, end, values)
+			i = end
+			continue
+		}
 		signEnd := i
 		if rs[i] == '-' && (i == 0 || !digit(rs[i-1])) {
 			j := i + 1

@@ -9,7 +9,7 @@ import (
 )
 
 func FuzzExtract(f *testing.F) {
-	seeds := []string{"INV-2026-0042 1,200", `\$20`, "１２.５", "x [1]"}
+	seeds := []string{"INV-2026-0042 1,200", `\$20`, "１２.５", "x [1]", "Mar. 15, 2026 USD -1.2M", "03/04/2026 €500", "$+20 USD 10 EUR", "$20\u00a0total", "USD-A2 USD/20/A2"}
 	for _, s := range seeds {
 		f.Add(s)
 	}
@@ -34,7 +34,7 @@ func FuzzExtract(f *testing.F) {
 	})
 }
 func FuzzSelfGrounded(f *testing.F) {
-	figureSeeds := []string{"42 K5", "[1] 20", "2. [1] Next 30", "`[42]`", "```\n[42]\n```", "    [42]"}
+	figureSeeds := []string{"42 K5", "[1] 20", "2. [1] Next 30", "`[42]`", "```\n[42]\n```", "    [42]", "March 15, 2026 $1.2M", "2026-02-30 CAD -50", "USD $10 EUR $+20", "$20\u202ftotal", "USD-A2 USD-20-A2"}
 	seeds := append(append([]string(nil), figureSeeds...), strings.Repeat("[1", 8000), strings.Repeat("1.", 8000), strings.Repeat("A ", 8000), strings.Repeat("-", 15999)+"1")
 	for _, s := range seeds {
 		f.Add(s)

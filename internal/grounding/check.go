@@ -284,6 +284,7 @@ func defaultScope(citations []Citation, markers []marker) []int {
 func Check(answer string, citations []Citation) Report {
 	report := Report{Status: "grounded", Citations: []CitationResult{}, Claims: []Claim{}}
 	source := map[int]map[string]bool{}
+	amounts := map[int]map[string][]string{}
 	failed := false
 	for _, c := range citations {
 		status := "resolved"
@@ -292,14 +293,41 @@ func Check(answer string, citations []Citation) Report {
 			failed = true
 		} else {
 			source[c.Index] = map[string]bool{}
+			amounts[c.Index] = map[string][]string{}
 			markdown := analyzeMarkdown(c.Text)
 			figures := maskedFigures(markdown, nil)
+			projected := markdown.project(markdown.structural)
+			escapes := projected.escapePolicy(markdown.literal)
 			for _, span := range markdown.ordinals {
 				figures = append(figures, extract(string([]byte(c.Text)[span.Start:span.Stop]))...)
 			}
 			for _, f := range figures {
 				for _, v := range f.Values {
 					source[c.Index][f.Kind+"\x00"+v] = true
+					if f.Kind == "amount" {
+						code, number := amountParts(v)
+						source[c.Index]["number\x00"+number] = true
+						amounts[c.Index][number] = append(amounts[c.Index][number], code)
+					}
+				}
+				if f.Kind == "date" {
+					start, end := projected.prefix[f.Start], projected.prefix[f.End]
+					rs := normalize(string(projected.runes[start:end]), escapes[start:end]).runes
+					for i := 0; i < len(rs); {
+						if !digit(rs[i]) {
+							i++
+							continue
+						}
+						start := i
+						for i < len(rs) && digit(rs[i]) {
+							i++
+						}
+						component := string(rs[start:i])
+						for _, v := range numberValues(component) {
+							source[c.Index]["number\x00"+v] = true
+						}
+						source[c.Index]["number\x00"+canonical(component, "", false)] = true
+					}
 				}
 				if f.identity != "" {
 					source[c.Index]["digit\x00"+f.identity] = true
@@ -345,6 +373,7 @@ func Check(answer string, citations []Citation) Report {
 			}
 			f.Status = "missing"
 			unavailable := !hasMarkers && len(ms) > 0
+			valueOnly := false
 			for _, cit := range citations {
 				if !hasMarkers && len(ms) > 0 {
 					continue
@@ -360,7 +389,17 @@ func Check(answer string, citations []Citation) Report {
 				for _, v := range f.Values {
 					if source[cit.Index][f.Kind+"\x00"+v] {
 						match = true
-						break
+					}
+					if f.Kind == "amount" {
+						code, number := amountParts(v)
+						if source[cit.Index]["number\x00"+number] {
+							valueOnly = true
+						}
+						for _, other := range amounts[cit.Index][number] {
+							if compatibleCurrency(code, other) {
+								match = true
+							}
+						}
 					}
 				}
 				if match {
@@ -369,6 +408,8 @@ func Check(answer string, citations []Citation) Report {
 			}
 			if len(f.FoundIn) > 0 {
 				f.Status = "found"
+			} else if valueOnly {
+				f.Status = "value_only"
 			} else if unavailable {
 				f.Status = "unverifiable"
 			}
@@ -382,7 +423,7 @@ func Check(answer string, citations []Citation) Report {
 			if f.Status == "unverifiable" && c.Verdict != "ungrounded" {
 				c.Verdict = "unverifiable"
 			}
-			if f.Status == "missing" {
+			if f.Status == "missing" || f.Status == "value_only" {
 				c.Verdict = "ungrounded"
 			}
 		}

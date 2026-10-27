@@ -189,7 +189,7 @@ for how to operate stores and what each one is trusted with.
 - Resolve a saved citation to the exact text it cited, through HTTP or Go. A
   reference that is unavailable or no longer matches fails. Docbank does not
   substitute newer text.
-- Check whether numbers and identifiers in an answer appear in its saved
+- Check whether numbers, identifiers, dates and amounts in an answer appear in its saved
   citations through MCP. A match does not prove the answer is true.
 - Create, rename, retire, merge, and split people through the CLI or API, and
   read person records through MCP.

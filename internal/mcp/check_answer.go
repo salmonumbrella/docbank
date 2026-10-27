@@ -10,7 +10,7 @@ import (
 
 var checkAnswerTool = toolDefinition{
 	name: "check_answer", title: "Check answer figures",
-	description: "Resolve citations and check whether answer numbers and identifiers occur in their cited text. This does not prove the figures refer to the right subject or that other claims are true. An answer permits at most 256 claims, 512 figure occurrences, and 512 marker references; marker indexes must fit the server's integer range.",
+	description: "Resolve citations and check whether answer numbers, identifiers, dates and amounts occur in their cited text. This does not prove the figures refer to the right subject or that other claims are true. An answer permits at most 256 claims, 512 figure occurrences, and 512 marker references; marker indexes must fit the server's integer range.",
 	schemas:     checkAnswerSchemas, idempotent: true,
 }
 

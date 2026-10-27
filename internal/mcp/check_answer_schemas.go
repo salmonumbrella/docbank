@@ -2,6 +2,10 @@ package mcp
 
 import "math"
 
+// Canonical currency combinations add separators; amount scales add up to
+// nine digits. Original answer spans still use maxRenditionChars.
+const maxNormalizedFigureChars = 2*maxRenditionChars + 16
+
 func checkAnswerSchemas() (schema, schema) {
 	citationProperties, citationRequired := textCitationProperties()
 	citations := arraySchema(objectSchema(citationProperties, citationRequired...), 8)
@@ -11,9 +15,9 @@ func checkAnswerSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{"answer": answer, "citations": citations}, "answer", "citations")
 	indexes := arraySchema(integerSchema(1, math.MaxInt64), 512)
 	figure := objectSchema(schema{
-		"kind": enumSchema("number", "identifier"), "start": integerSchema(0, maxRenditionChars), "end": integerSchema(1, maxRenditionChars),
-		"text": stringSchema(maxRenditionChars), "values": arraySchema(stringSchema(maxRenditionChars+1), 512),
-		"status": enumSchema("found", "missing", "unverifiable"), "found_in": indexes,
+		"kind": enumSchema("number", "identifier", "date", "amount"), "start": integerSchema(0, maxRenditionChars), "end": integerSchema(1, maxRenditionChars),
+		"text": stringSchema(maxRenditionChars), "values": arraySchema(stringSchema(maxNormalizedFigureChars), 512),
+		"status": enumSchema("found", "missing", "unverifiable", "value_only"), "found_in": indexes,
 	}, "kind", "start", "end", "text", "values", "status", "found_in")
 	claim := objectSchema(schema{
 		"start": integerSchema(0, maxRenditionChars), "end": integerSchema(1, maxRenditionChars),

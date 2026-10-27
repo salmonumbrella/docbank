@@ -15,11 +15,11 @@ func TestFiguresMatchWholeNormalizedValues(t *testing.T) {
 		{"1,5", "1.5", "grounded"}, {"1.200", "1.2", "grounded"}, {"0042", "42", "ungrounded"},
 		{"K5", "K50", "ungrounded"}, {"ZQ 3S", "zq3s", "grounded"},
 		{"INV-2026-0042", "inv/2026/0042", "grounded"}, {"INV-2026-0042", "INV 2026 0042", "ungrounded"},
-		{`\$20`, "20", "grounded"}, {"-12", "12", "ungrounded"}, {"-12", "-12", "grounded"},
+		{`\$20`, "20", "ungrounded"}, {"-12", "12", "ungrounded"}, {"-12", "-12", "grounded"},
 		{"12345678901234567890.123456789", "12345678901234567890.123456788", "ungrounded"},
 		{"2026-03-15", "2026-03-15", "grounded"}, {"4K", "4", "grounded"},
 		{"ZQ 3S", "ZQ 3S-4", "ungrounded"}, {"A 1", "A 1.5", "ungrounded"},
-		{"USD 1,200", "1200", "grounded"}, {"1\u202f234.50", "1234.5", "grounded"},
+		{"USD 1,200", "1200", "ungrounded"}, {"1\u202f234.50", "1234.5", "grounded"},
 		{"12-34", "12 and 34", "grounded"},
 		{"ZQ 3S", "ZQ 3S--4", "ungrounded"}, {"A 1", "A 1..5", "ungrounded"}, {"A 1", "A 1\u202f234", "ungrounded"},
 		{"30,000", "30,000abc-def", "ungrounded"}, {"1.5mg", "1.5", "grounded"},
@@ -27,7 +27,7 @@ func TestFiguresMatchWholeNormalizedValues(t *testing.T) {
 		{"ZQ3S [1]", "ZQ 3Sα", "ungrounded"}, {"ZQ3S [1]", "ZQ 3Sβ", "ungrounded"},
 		{"ZQ3S [1]", "ZQ 3Ś", "ungrounded"}, {"ZQ3S [1]", "ZQ 3S-α", "ungrounded"}, {"ZQ3S [1]", "ZQ 3S/́4", "ungrounded"},
 		{"Fee 20", "20", "grounded"}, {"fee 20", "20", "grounded"},
-		{"USD 20", "20", "grounded"}, {"usd 20", "20", "grounded"},
+		{"USD 20", "20", "ungrounded"}, {"usd 20", "20", "grounded"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.answer+"/"+tc.source, func(t *testing.T) {
@@ -140,8 +140,8 @@ func TestCompactCurrencyNegativeSign(t *testing.T) {
 		{"Balance -USD20 [1]", "Balance USD20", "ungrounded", "-USD20"},
 		{"Balance -USD20k [1]", "Balance USD20k", "ungrounded", "-USD20k"},
 		{"USD20k [1]", "-USD20k", "ungrounded", "USD20k"},
-		{"-USD20k [1]", "-20", "grounded", "-USD20k"},
-		{"-20 [1]", "-USD20k", "grounded", "-20"},
+		{"-USD20k [1]", "-20", "ungrounded", "-USD20k"},
+		{"-20 [1]", "-USD20k", "ungrounded", "-20"},
 		{"-USD20k [1]", "-USD 20k", "grounded", "-USD20k"},
 		{"-USD20k [1]", "-$20k", "grounded", "-USD20k"},
 		{"-USD20k [1]", "-20000", "ungrounded", "-USD20k"},
@@ -152,16 +152,16 @@ func TestCompactCurrencyNegativeSign(t *testing.T) {
 		{"-USD20kα [1]", "USD20kα", "grounded", "USD20kα"},
 		{"-USD20k-4 [1]", "USD20k-4", "grounded", "USD20k-4"},
 		{"USD20 [1]", "-USD20", "ungrounded", "USD20"},
-		{"é −USD20 [1]", "-20", "grounded", "−USD20"},
+		{"é −USD20 [1]", "-20", "ungrounded", "−USD20"},
 		{"-20 [1]", "-USD20", "grounded", "-20"},
-		{"-USD1,200 [1]", "-1200", "grounded", "-USD1,200"},
-		{"-USD1.5 [1]", "-1.5", "grounded", "-USD1.5"},
-		{"Balance - USD20\u00a0balance [1]", "-20", "grounded", "- USD20"},
-		{"-USD1\u202f200 [1]", "-1200", "grounded", "-USD1\u202f200"},
+		{"-USD1,200 [1]", "-1200", "ungrounded", "-USD1,200"},
+		{"-USD1.5 [1]", "-1.5", "ungrounded", "-USD1.5"},
+		{"Balance - USD20\u00a0balance [1]", "-20", "ungrounded", "- USD20"},
+		{"-USD1\u202f200 [1]", "-1200", "ungrounded", "-USD1\u202f200"},
 		{"-USD1..2 [1]", "-1..2", "grounded", "-USD1..2"},
 		{"-USD20A2 [1]", "USD20A2", "grounded", "USD20A2"},
 		{"-USD20A2", "20A2", "ungrounded", "USD20A2"},
-		{"-USD20", "USD20", "ungrounded", "-USD20"}, {"-USD 20", "-20", "grounded", "-USD 20"},
+		{"-USD20", "USD20", "ungrounded", "-USD20"}, {"-USD 20", "-20", "ungrounded", "-USD 20"},
 		{"-USD20-4 [1]", "USD20-4", "grounded", "USD20-4"},
 		{"-USD20--A [1]", "USD20--A", "grounded", "USD20--A"},
 		{"-ABC20 [1]", "ABC20", "grounded", "ABC20"},
@@ -180,19 +180,15 @@ func TestCompactCurrencyNegativeSign(t *testing.T) {
 }
 
 func TestCurrencyHorizontalWhitespacePreservesNumericSigns(t *testing.T) {
-	answers := []string{"-$20", "-US$20", "-C$20", "-A$20", "-NZ$20", "-HK$20", "-SG$ 20", "-nz$20", "Balance - $20", "-$ 20"}
 	for _, space := range []string{" ", "\t", "\u00a0", "\u202f"} {
 		for _, currency := range []string{"$", "US$", "USD"} {
-			answers = append(answers, "Balance -"+space+currency+space+"20")
-		}
-	}
-	for _, answer := range answers {
-		for _, tc := range []struct{ source, status string }{{"20", "ungrounded"}, {"$20", "ungrounded"}, {"-20", "grounded"}} {
-			t.Run(answer+"/"+tc.source, func(t *testing.T) {
-				if got := Check(answer, []Citation{{Index: 1, Text: tc.source}}); got.Status != tc.status {
-					t.Fatalf("%+v", got)
-				}
-			})
+			answer := "Balance -" + space + currency + space + "20"
+			if got := Check(answer, []Citation{{Index: 1, Text: currency + " 20"}}); got.Status != "ungrounded" {
+				t.Fatalf("%q lost its sign: %+v", answer, got)
+			}
+			if got := Check(answer, []Citation{{Index: 1, Text: currency + " -20"}}); got.Status != "grounded" || len(got.Claims[0].Figures) != 1 || got.Claims[0].Figures[0].Kind != "amount" {
+				t.Fatalf("%q did not match its signed value: %+v", answer, got)
+			}
 		}
 	}
 }
@@ -258,12 +254,12 @@ func TestMalformedNumberNotGuessed(t *testing.T) {
 }
 
 func TestEscapedFiguresRetainOriginalOffsets(t *testing.T) {
-	r := Check(`a \$1\.5 b`, []Citation{{Index: 1, Text: "1.5"}})
+	r := Check(`a \$1\.5 b`, []Citation{{Index: 1, Text: "$1.5"}})
 	if len(r.Claims) != 1 || len(r.Claims[0].Figures) != 1 {
 		t.Fatalf("%+v", r)
 	}
 	f := r.Claims[0].Figures[0]
-	if f.Start != 4 || f.End != 8 || f.Text != `1\.5` || f.Status != "found" {
+	if f.Start != 2 || f.End != 8 || f.Text != `\$1\.5` || f.Status != "found" {
 		t.Fatalf("%+v", f)
 	}
 }
@@ -344,7 +340,7 @@ func TestMarkdownBulletsDoNotNegateFigures(t *testing.T) {
 	for _, bullet := range []string{"- ", "  -\t", "* ", "+ "} {
 		for _, token := range []string{"20", "$20", "NZ$20"} {
 			for _, tc := range []struct{ answer, source, status string }{
-				{bullet + token + " invoices [1].", "20 invoices", "grounded"},
+				{bullet + token + " invoices [1].", token + " invoices", "grounded"},
 				{bullet + token + " invoices [1].", "-20 invoices", "ungrounded"},
 				{"20 invoices [1].", bullet + token + " invoices", "grounded"},
 				{"-20 invoices [1].", bullet + token + " invoices", "ungrounded"},
@@ -358,7 +354,14 @@ func TestMarkdownBulletsDoNotNegateFigures(t *testing.T) {
 		}
 	}
 	for _, answer := range []string{"-20", "−20", "Balance - 20", "Balance - $20", "Balance - USD 20", "- -20", "\\- 20"} {
-		for _, tc := range []struct{ source, status string }{{"20", "ungrounded"}, {"-20", "grounded"}} {
+		source := "-20"
+		if strings.Contains(answer, "$20") {
+			source = "$-20"
+		}
+		if strings.Contains(answer, "USD 20") {
+			source = "USD -20"
+		}
+		for _, tc := range []struct{ source, status string }{{"20", "ungrounded"}, {source, "grounded"}} {
 			t.Run(answer+"/"+tc.source, func(t *testing.T) {
 				if r := Check(answer, []Citation{{Index: 1, Text: tc.source}}); r.Status != tc.status {
 					t.Fatalf("%+v", r)
@@ -1101,6 +1104,108 @@ func TestBareSpacedLettersAndNumbersAreNotModels(t *testing.T) {
 		r := Check(tc.answer, []Citation{{Index: 1, Text: tc.source}})
 		if r.Status != "grounded" || len(r.Claims) != 1 || len(r.Claims[0].Figures) != 1 || r.Claims[0].Figures[0].Kind != "number" || r.Claims[0].Figures[0].Text != "24" {
 			t.Fatalf("%+v", r)
+		}
+	}
+}
+
+func TestEmptyOrderedListMarkersAreNotFigures(t *testing.T) {
+	// Pinned Goldmark needs a space after an empty CRLF list marker; otherwise its ordinal is displayed text.
+	for _, tc := range []struct {
+		answer  string
+		figures int
+	}{
+		{"2.", 0}, {"2)", 0}, {"2) Nothing numeric here", 0}, {"Text.\n2.\n", 1}, {"Text.\n\n2.\n", 0},
+		{"  2.\r\n", 1}, {"  2. \r\n", 0}, {"Text\r2.", 1}, {"Text\r\r2.", 0}, {"Text.\r\n2.\r\n", 1},
+	} {
+		r := Check(tc.answer, []Citation{{Index: 1, Text: "Text"}})
+		count := 0
+		for _, claim := range r.Claims {
+			count += len(claim.Figures)
+		}
+		if count != tc.figures {
+			t.Fatalf("%q: got %d figures: %+v", tc.answer, count, r)
+		}
+	}
+}
+
+func TestDecimalUnitTokenMatchesItsNumber(t *testing.T) {
+	r := Check("1.5mg", []Citation{{Index: 1, Text: "1.5"}})
+	if r.Status != "grounded" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestReviewerFigureBoundaries(t *testing.T) {
+	for _, tc := range []struct{ answer, source, verdict string }{
+		{"ZQ 3S", "ZQ 3S-4", "ungrounded"}, {"A 1", "A 1.5", "ungrounded"},
+		{"USD 1,200", "1200", "ungrounded"}, {"1\u202f234.50", "1234.5", "grounded"},
+		{"-$20", "$20", "ungrounded"}, {"-$20", "-20", "ungrounded"},
+		{"12-34", "12 and 34", "grounded"},
+	} {
+		t.Run(tc.answer+"/"+tc.source, func(t *testing.T) {
+			r := Check(tc.answer, []Citation{{Index: 1, Text: tc.source}})
+			if r.Status != tc.verdict {
+				t.Fatalf("%+v", r)
+			}
+		})
+	}
+}
+
+func TestAdversarialBoundedInputs(t *testing.T) {
+	for _, s := range []string{strings.Repeat("[1", 8000), strings.Repeat("1.", 8000), strings.Repeat("A ", 8000), strings.Repeat("-", 15999) + "1"} {
+		if err := Preflight(s); err == nil {
+			_ = Check(s, []Citation{{Index: 1, Text: s}})
+		}
+	}
+}
+
+func TestMalformedSeparatorsDoNotExposeSuffix(t *testing.T) {
+	for _, source := range []string{"1,,200", "1''200"} {
+		if r := Check("200", []Citation{{Index: 1, Text: source}}); r.Status != "ungrounded" {
+			t.Fatalf("%s: %+v", source, r)
+		}
+	}
+}
+
+func TestAdditionalMaximalTokenBoundaries(t *testing.T) {
+	for _, tc := range []struct{ answer, source, verdict string }{
+		{"ZQ 3S", "ZQ 3S--4", "ungrounded"}, {"A 1", "A 1..5", "ungrounded"}, {"A 1", "A 1\u202f234", "ungrounded"},
+		{"30,000", "30,000abc-def", "ungrounded"}, {"-$ 20", "$20", "ungrounded"}, {"-USD 20", "20", "ungrounded"},
+		{"-$ 20", "-$20", "grounded"}, {"-USD 20", "USD -20", "grounded"},
+	} {
+		t.Run(tc.answer+"/"+tc.source, func(t *testing.T) {
+			r := Check(tc.answer, []Citation{{Index: 1, Text: tc.source}})
+			if r.Status != tc.verdict {
+				t.Fatalf("%+v", r)
+			}
+		})
+	}
+}
+
+func TestCurrencyPrefixesKeepNegativeSign(t *testing.T) {
+	for _, answer := range []string{"-US$20", "-C$20", "-A$20", "Balance - $20"} {
+		t.Run(answer, func(t *testing.T) {
+			if r := Check(answer, []Citation{{Index: 1, Text: "20"}}); r.Status != "ungrounded" {
+				t.Fatalf("positive: %+v", r)
+			}
+			if r := Check(answer, []Citation{{Index: 1, Text: "$-20"}}); r.Status != "grounded" {
+				t.Fatalf("negative: %+v", r)
+			}
+		})
+	}
+}
+
+func TestTrailingRepeatedSeparatorsDoNotNormalize(t *testing.T) {
+	if r := Check("1200", []Citation{{Index: 1, Text: "1,200,,"}}); r.Status != "ungrounded" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestMalformedFractionMatchesOnlyItself(t *testing.T) {
+	for _, tc := range []struct{ source, verdict string }{{"1,234.50'0", "grounded"}, {"1,234.50'00", "ungrounded"}} {
+		r := Check("1,234.50'0", []Citation{{Index: 1, Text: tc.source}})
+		if r.Status != tc.verdict {
+			t.Fatalf("%q: %+v", tc.source, r)
 		}
 	}
 }

@@ -390,7 +390,7 @@ Unicode code points; supply 1–8 citations. The tool also limits an answer to 2
 claims, 512 figure occurrences, and 512 marker references. It rejects invalid
 inputs before reading the vault.
 
-The tool resolves each distinct citation and checks numbers and identifiers in
+The tool resolves each distinct citation and checks numbers, identifiers, dates and amounts in
 the answer against the cited text. Use literal, unescaped ASCII markers such as
 `[1]` or `[1, 2]` to scope a claim to those citation positions. Character
 references that display brackets or digits are data, not markers. For example,
@@ -418,16 +418,49 @@ resolution status and, when resolved, a text digest. Each claim reports its
 figures and verdict; cited text is not returned. Use `resolve_text_citation` to
 read it. The result has private cache scope and zero TTL.
 
-An `ungrounded` result identifies missing figures or unknown markers. An
-`incomplete` result means a citation failed or a claim could not be verified;
-inspect the citation status before relying on the answer. A `grounded` result
+An `ungrounded` result identifies missing figures, currency mismatches or unknown
+markers. An `incomplete` result means a citation failed or a claim could not be
+verified; inspect the citation status before relying on the answer. A `grounded` result
 means the figures appear in the scoped text, not that they refer to the right
 subject or that the rest of the answer is true. This check does not perform
-arithmetic or unit conversion. Amounts are compared as numbers, and ISO dates
-are compared as identifiers; alternative date formats can produce false misses.
-A negative compact currency code such as `-USD20` is compared as `-20`. An
-unsigned compact form such as `USD20` is an identifier and can miss an equivalent
-spaced amount such as `USD 20`.
+arithmetic or unit conversion beyond the amount scales below.
+
+Dates accept `YYYY-MM-DD`, `YYYY/MM/DD`, `DD.MM.YYYY`, `MM/DD/YYYY`,
+`DD/MM/YYYY`, `March 15, 2026`, `15 March 2026`, and their English three-letter
+month abbreviations (with an optional period, such as `Mar. 15, 2026`). Month
+precision accepts `March 2026`, `Mar. 2026`, and `YYYY-MM`. Impossible dates fall
+back to their component numbers. Slash and dot dates valid in both day-first
+and month-first order list both candidates. Day and month precision do not
+match each other. A plain number in the answer can match a numeric component
+written in a source date. Times, time zones, weekdays and two-digit years are
+not date figures.
+
+Amounts accept a Unicode currency symbol or ISO 4217 code before or after the
+number, plus `US$`, `C$`, and `A$`. ISO codes use uppercase letters to distinguish them
+from ordinary words. Signs are retained. Optional `thousand`,
+`million`, `billion`, `k`, `m`, and `bn` scales are case-insensitive; for example,
+`$1.2M` matches `$1,200,000`. Decimal scaling uses exact digits.
+
+| Currency marker | Compatible classes |
+| --- | --- |
+| ISO code | That exact code |
+| `$` | AUD, BBD, BMD, BND, BSD, BZD, CAD, FJD, GYD, HKD, JMD, KYD, LRD, NAD, NZD, SBD, SGD, SRD, TTD, TWD, USD, XCD, ZWD, ZWL |
+| `US$`, `C$`, `A$` | USD, CAD, AUD respectively; each also matches `$` |
+| `¥` | JPY, CNY |
+| `£` | GBP |
+| `€` | EUR |
+| Other Unicode currency symbols | The same symbol |
+
+Compatibility does not pass through a shared symbol: `USD 40` and `CAD 40`
+remain different. Multiple adjacent markers are consumed together. Compatible
+symbol and ISO markers narrow to the explicit code (`USD $10` is `USD 10`).
+Conflicting markers retain a sorted combined class (`USD 10 EUR` is
+`EUR+USD 10`); they cannot match either single currency. The same combined class
+can match itself. An amount has status `value_only` when a scoped source has
+its number without a compatible currency; that makes the claim `ungrounded`.
+For example, `€500` checked against `$500` reports `value_only`. `found_in`
+lists citations containing compatible amounts. A plain number in the answer
+can match the numeric value of a source amount.
 
 Numbers normalize full-width digits, Markdown punctuation escapes, decimal marks
 and digit grouping. Backslashes in literal code remain literal. Recognized Markdown character references in displayed text
