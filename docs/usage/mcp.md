@@ -432,8 +432,9 @@ precision accepts `March 2026`, `Mar. 2026`, and `YYYY-MM`. Impossible dates fal
 back to their component numbers. Slash and dot dates valid in both day-first
 and month-first order list both candidates. Day and month precision do not
 match each other. A plain number in the answer can match a numeric component
-written in a source date. Times, time zones, weekdays and two-digit years are
-not date figures.
+written in a source date. An ISO-8601 timestamp such as
+`2026-03-15T10:00:00Z` exposes its date as a date figure; its time and zone,
+weekdays and two-digit years are not date figures.
 
 Amounts accept a Unicode currency symbol or ISO 4217 code before or after the
 number, plus `US$`, `C$`, and `A$`. ISO codes use uppercase letters to distinguish them

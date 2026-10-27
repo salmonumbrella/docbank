@@ -41,6 +41,13 @@ func figureBoundary(rs []rune, end int) bool {
 	return true
 }
 
+func iso8601TimeContinuation(rs []rune, start int) bool {
+	if start+5 >= len(rs) || (rs[start] != 'T' && rs[start] != 't') {
+		return false
+	}
+	return digit(rs[start+1]) && digit(rs[start+2]) && rs[start+3] == ':' && digit(rs[start+4]) && digit(rs[start+5])
+}
+
 func dateAt(rs []rune, start int) (int, []string) {
 	if start > 0 && (wordRune(rs[start-1]) || strings.ContainsRune("-/_", rs[start-1])) {
 		return 0, nil
@@ -52,7 +59,7 @@ func dateAt(rs []rune, start int) (int, []string) {
 			continue
 		}
 		end := start + len([]rune(m[0]))
-		if !figureBoundary(rs, end) {
+		if !figureBoundary(rs, end) && !iso8601TimeContinuation(rs, end) {
 			continue
 		}
 		values := []string{}

@@ -39,6 +39,17 @@ func TestDateNormalization(t *testing.T) {
 	}
 }
 
+func TestISO8601TimestampDateGroundsAnswer(t *testing.T) {
+	r := Check("Released 2026-03-15 [1]", []Citation{{Index: 1, Text: "released_at: 2026-03-15T10:00:00Z"}})
+	if r.Status != "grounded" || len(r.Claims) != 1 || len(r.Claims[0].Figures) != 1 {
+		t.Fatalf("%+v", r)
+	}
+	figure := r.Claims[0].Figures[0]
+	if figure.Kind != "date" || figure.Text != "2026-03-15" || !reflect.DeepEqual(figure.Values, []string{"2026-03-15"}) || !reflect.DeepEqual(figure.FoundIn, []int{1}) {
+		t.Fatalf("%+v", figure)
+	}
+}
+
 func TestInvalidDatesFallThroughToNumbers(t *testing.T) {
 	for _, text := range []string{"2026-02-30", "31.02.2026", "13/14/2026", "0000-03-15", "2026-03-00", "00.03.2026"} {
 		fs := extract(text)
