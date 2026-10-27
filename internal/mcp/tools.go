@@ -13,6 +13,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -74,7 +75,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
+	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage and document validity. Use as_of (YYYY-MM-DD) to evaluate which documents were in force; superseded defaults to demote, or keep_order preserves retrieval order.", schemas: searchDocumentsSchemas},
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
@@ -311,6 +312,12 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		return stringBytesWithin(arguments, "path_prefix", maxPathBytes) &&
 			stringBytesWithin(arguments, "cursor", maxCursorBytes)
 	case "search_documents":
+		if value, present := arguments["as_of"]; present {
+			date, ok := value.(string)
+			if !ok || date == "" || document.ValidateDate(date) != nil {
+				return false
+			}
+		}
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil

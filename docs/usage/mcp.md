@@ -198,7 +198,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
+| `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. `as_of` accepts `YYYY-MM-DD`; `superseded` is `demote` (default) or `keep_order`. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
@@ -268,6 +268,25 @@ reasons, and truncation state. It returns at most 100 hits. Each excerpt is
 capped at 512 characters and each hit has at most 64 evidence identities of at
 most 1,024 characters each. A result contains at most 64 skipped-reason codes
 of at most 64 characters each.
+
+Search also reports [document validity](search.md#search-documents-in-force-on-a-date).
+`as_of` evaluates declarations on that inclusive calendar date; omission uses
+the daemon host's local date, echoed in `validity.as_of` even for an empty
+source fence. Search always reads current content versions. By default,
+documents in force come first; `superseded: "keep_order"` preserves retrieval
+order with the same validity reasons. Scores stay unchanged; use `rank` for
+order.
+
+The report's `validity.status` is `current`, `outdated_only`, `future_only`, or
+`empty`. These describe the returned page. An `outdated_only` result tells an
+agent to read the named successors before answering. Each declared hit includes
+`validity.state`, `undated`, `superseded_by`, and any effective dates;
+undeclared hits omit that object. `validity.successors` names at most 16
+terminal documents in force, with their current versions, paths,
+`effective_from` when set, `in_fence: true`, and `undated`.
+Only current live versions inside the source fence may affect validity or
+appear as successors. Successors attach rendition resource links like hits;
+each link appears once, including when a successor is also a hit.
 
 Document summaries use paths of at most 16,384 characters, names and MIME types
 of at most 255 characters, and at most 64 active rendition identities.
