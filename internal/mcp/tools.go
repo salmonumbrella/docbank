@@ -61,7 +61,7 @@ type toolDefinition struct {
 
 var readToolDefinitions = []toolDefinition{
 	originalContentTool,
-	textCitationTool, textOutlineTool, textSectionTool,
+	textCitationTool, checkAnswerTool, textOutlineTool, textSectionTool,
 	exportPlanTool, exportProblemsTool,
 	reportSummaryTool, reportDatesTool,
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
