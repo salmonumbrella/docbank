@@ -40,6 +40,7 @@ Each figure retains the extraction-accepted date spans as byte offsets in its
 normalized clause for same-package consumers. Consumers use these decisions
 instead of recognizing dates again, so rejected dates do not silently become
 accepted period evidence or text removed from a subject.
+Subject preparation retains rejected date-shaped words and years as discriminators.
 
 ## Prefer omission to an ambiguous value
 
@@ -53,7 +54,8 @@ Currency symbols and ISO codes remain distinct, so a dollar symbol does not
 imply USD. A clause with a combined code and symbol, such as `CAD $5`, is
 omitted rather than assigning it a currency. Partial snippet clauses are marked for callers to exclude.
 Both Unicode ellipses and ASCII runs of three or more dots mark adjacent
-fragments as partial. Negation detection recognizes `no`, `without`, `cannot`
+fragments as partial. Negation detection shares one predicate with the report's
+skip reason and recognizes `no`, `without`, `cannot`
 and ASCII and typographic apostrophes in contractions. `no more than` and
 `no less than` remain bounds, and `No.` remains an identifier label.
 `less than or equal to` and `greater than or equal to` are inclusive bounds,
@@ -92,7 +94,8 @@ An independently typed figure after `and`, such as `$7 and 2 devices`, remains
 separate. Identifiers and dates take precedence over embedded money fragments. A bare identifier label followed by a recognized numeric amount or quantity yields the numeric figure; an explicit `number`, `no.` or `ID` label retains identifier precedence.
 Rejected identifiers retain that precedence: a mask or unsupported continuation
 does not turn embedded currency or date text into another figure.
-Compound clock durations such as `7 days and 3 hours` retain both components.
+Compound clock durations such as `7 days and 3 hours` retain both components;
+comparison skips them under the multiple-figure rule below.
 An approximation attached to coordinated figures of the same kind omits the
 affected group.
 A duration followed by `excluding` or `except` is omitted, including joined
@@ -112,3 +115,42 @@ Passages over 4,096 bytes are skipped in full. Numeric tokens over 128 character
 are rejected. These limits bound work and avoid extracting a misleading prefix.
 Normalized values may exceed that source-token limit after unit conversion.
 The tests cover original offsets and normalization with Go's native fuzzing.
+
+## Compare figures across documents
+
+`Find` compares eligible figures from different caller-supplied document
+identities. Comparable kinds, units, qualifiers and range shapes must match.
+Shared query terms, subject overlap and preserved discriminators restrict
+alignment. Named variants, years, free versus paid entitlements and different
+units remain separate. Clauses with multiple independent figures are skipped instead of assigning
+figures to subjects by position. Numeric rate denominators do not count as
+independent figures. When partial or ambiguous
+figures leave no eligible figure, `Skipped` reports `partial` or `ambiguous`.
+An eligible clause keeps its passage available for comparison.
+
+Rates also require matching denominators. The bounded grammar recognizes
+`per`, `each`, `/`, `a` and `an` immediately after a figure, followed by an optional
+number or range, an optional time/count modifier (`business`, `working`,
+`calendar`, `free`, `paid`, `additional`, `extra`), and one noun. The denominator
+is retained separately from the subject's word set, so shared nouns elsewhere
+cannot hide its role. Accepted rate spans are removed from the subject, so
+`$5 per month`, `$5/month` and `$5 a month` agree. Numeric denominator figures
+are excluded from independent comparison. Thus `$5 per month` and `$60 per year`
+are not comparable; rate conversion is outside this package's scope. Ordinary duration conversions such
+as `24 hours` and `1 day` still agree, and differing numerators with the same
+denominator can conflict.
+Clauses with multiple rates or unbound `per`, `each`, `every` or `/` markers are skipped.
+This includes prefix rates such as "Per device the fee is $5."
+
+Each reported conflict is an explicit pair with exact source spans. Date
+precision and subject similarity are not transitive, so the package does not
+merge chains of pairwise matches into one claim. Month-precision dates can
+agree with a date in that month without making different days equivalent.
+Stated periods may explain a dated change but never select a winner.
+
+The report distinguishes `CONFLICTING`, `NO_CONFLICT` and `NOT_COMPARABLE`.
+`NO_CONFLICT` covers only aligned figures in a complete comparison. `Find`
+examines at most 20 passages and 10,000 candidate pairs, and retains at most
+100 conflict edges. `Truncated` marks incomplete input, work or output; an
+incomplete comparison without a retained conflict is `NOT_COMPARABLE`.
+Cutoffs follow input rank, so truncated subsets may change when rank changes.
