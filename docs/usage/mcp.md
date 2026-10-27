@@ -179,7 +179,7 @@ resource links, is capped at 1 MiB.
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
-| `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
+| `answer_question` | Searches for evidence with a question and returns passages, leads, coverage, and a receipt. Optional key terms improve lexical matching. Filters narrow the scope; profile, binding, reranking, and output limits can be selected explicitly. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
@@ -245,6 +245,19 @@ indexing, leads, truncated retrieval, or omitted evidence can produce
 `INCOMPLETE_COVERAGE`.
 Passages and resource links are returned in order within the response budget;
 `omitted_passages`, `omitted_leads`, and `omitted_links` report what did not fit.
+
+For a natural-language question, optionally supply `terms`: one to eight strings
+of one to 64 characters each. For example, ask `"what is the renewal date of the
+lease"` with `terms: ["lease", "renewal"]`. Docbank joins the terms with spaces
+and runs a separate lexical search on the same resolved scope and profile,
+without reranking. It interleaves question and terms results, question first,
+deduplicates matching content evidence and identical leads, and keeps at most
+`limit` results in total. Only results from the question's reranked prefix can carry `relevance`.
+The terms search never makes semantic coverage complete; a failure fails the
+call. The receipt records `terms_searched` and, when that search ran,
+`terms_sha256`, the SHA-256 of the executed terms query. It does not echo the
+terms as a separate field. An empty scope validates both queries without
+searching, so `terms_searched` is false and the hash is absent.
 
 The default scope is all live files. A scope above 4,096 versions reports
 `scope_too_large` and its observed count; narrow it with filters. The receipt's
