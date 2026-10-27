@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -37,6 +38,7 @@ var errAnswerGateFailed = errors.New("answer gate failed")
 
 type answerInput struct {
 	Question          string                          `json:"question"`
+	Terms             []string                        `json:"terms"`
 	ContentVersionIDs []string                        `json:"content_version_ids"`
 	Filters           *api.DocumentSourceFenceFilters `json:"filters"`
 	Profile           string                          `json:"profile"`
@@ -62,6 +64,8 @@ type answerCitation struct {
 type answerReceipt struct {
 	QuestionSHA256      string                      `json:"question_sha256"`
 	ExecutedQuerySHA256 string                      `json:"executed_query_sha256,omitempty"`
+	TermsSearched       bool                        `json:"terms_searched"`
+	TermsSHA256         string                      `json:"terms_sha256,omitempty"`
 	SearchExecuted      bool                        `json:"search_executed"`
 	ObservedScopeCount  int                         `json:"observed_scope_count"`
 	VaultID             string                      `json:"vault_id,omitempty"`
@@ -98,6 +102,99 @@ type answerProfileLister interface {
 	ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
 }
 
+type answerSearchHit struct {
+	result    api.DocumentSearchResult
+	relevance *float64
+	question  bool
+}
+
+func answerSearchHits(report api.DocumentSearchReport, allowRelevance bool) []answerSearchHit {
+	hits := make([]answerSearchHit, len(report.Results))
+	for i, item := range report.Results {
+		hits[i].result = item
+		hits[i].question = allowRelevance
+		if allowRelevance && report.Reranking != nil && report.Reranking.Outcome == "applied" && item.Rank > 0 && item.Rank <= report.Reranking.CandidateCount {
+			score := item.Score
+			hits[i].relevance = &score
+		}
+	}
+	return hits
+}
+
+func sameAnswerLead(a, b api.DocumentSearchResult) bool {
+	return !answerContentExcerpt(a) && a.VaultUID == b.VaultUID && a.NodeID == b.NodeID &&
+		a.ContentVersionID == b.ContentVersionID && a.Path == b.Path && reflect.DeepEqual(a.Evidence, b.Evidence)
+}
+
+// Capture relevance before assigning merged ranks: a lexical terms hit has no
+// question relevance, even if it enters the question's former reranked prefix.
+func mergeAnswerSearchResults(question, terms api.DocumentSearchReport, limit int) ([]answerSearchHit, bool) {
+	type contentIdentity struct{ version, kind, build, segment string }
+	seen := map[contentIdentity]int{}
+	hits := []answerSearchHit{}
+	sources := [][]answerSearchHit{answerSearchHits(question, true), answerSearchHits(terms, false)}
+	for i := range max(len(sources[0]), len(sources[1])) {
+		for _, source := range sources {
+			if i >= len(source) {
+				continue
+			}
+			hit := source[i]
+			item := hit.result
+			var identities []contentIdentity
+			if answerContentExcerpt(item) {
+				for _, e := range item.Evidence {
+					if e.Kind == "rendition_segment" || e.Kind == "content_blob" {
+						identities = append(identities, contentIdentity{item.ContentVersionID, e.Kind, e.BuildID, e.SegmentID})
+					}
+				}
+			}
+			duplicateIndex := -1
+			for _, id := range identities {
+				if index, ok := seen[id]; ok {
+					duplicateIndex = index
+					break
+				}
+			}
+			if duplicateIndex >= 0 {
+				prior := &hits[duplicateIndex]
+				if hit.question && !prior.question {
+					hit.result.Rank = prior.result.Rank
+					*prior = hit
+					for _, id := range identities {
+						seen[id] = duplicateIndex
+					}
+				}
+				continue
+			}
+			if len(identities) == 0 {
+				duplicate := false
+				for i := range hits {
+					prior := &hits[i]
+					if sameAnswerLead(prior.result, item) {
+						if prior.relevance == nil {
+							prior.relevance = hit.relevance
+						}
+						duplicate = true
+						break
+					}
+				}
+				if duplicate {
+					continue
+				}
+			}
+			if len(hits) == limit {
+				return hits, true
+			}
+			for _, id := range identities {
+				seen[id] = len(hits)
+			}
+			hit.result.Rank = len(hits) + 1
+			hits = append(hits, hit)
+		}
+	}
+	return hits, false
+}
+
 func answerQuestion(ctx context.Context, session documentReadSession, raw []byte) (answerOutput, []*sdkmcp.ResourceLink, error) {
 	var input answerInput
 	if err := decodeReadArguments(raw, &input); err != nil {
@@ -112,13 +209,16 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 	hash := sha256.Sum256([]byte(input.Question))
 	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, Gates: []answer.GateReceipt{}, CitedVersions: []answerCitation{}}}
 	type response struct {
-		fence     api.DocumentSourceFenceResolution
-		profile   api.ProcessingProfileSummary
-		binding   string
-		report    api.DocumentSearchReport
-		failure   string
-		executed  bool
-		documents []api.DocumentSummary
+		fence         api.DocumentSourceFenceResolution
+		profile       api.ProcessingProfileSummary
+		binding       string
+		report        api.DocumentSearchReport
+		hits          []answerSearchHit
+		truncated     bool
+		termsSearched bool
+		failure       string
+		executed      bool
+		documents     []api.DocumentSummary
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		filters := input.Filters
@@ -184,17 +284,17 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 			}
 			return selected
 		}
-		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
+		run := func(query, profile, binding, mode string, rerank bool) (api.DocumentSearchReport, error) {
 			if len(fence.Fence.ContentVersionIDs) == 0 {
-				err := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true})
+				err := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{Query: query, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: rerank, ContentFirst: true})
 				return api.DocumentSearchReport{RequestedMode: mode, ActualMode: mode, Coverage: api.DocumentSearchCoverage{State: "complete"}, Degradations: []string{}, Results: []api.DocumentSearchResult{}}, err
 			}
-			return c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
+			return c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
 		}
 		var report api.DocumentSearchReport
 		var binding, failure string
 		for _, candidate := range candidates {
-			report, err = run(candidate.Profile, candidate.Binding, "hybrid")
+			report, err = run(input.Question, candidate.Profile, candidate.Binding, "hybrid", input.Rerank)
 			if err == nil {
 				selected = findProfile(candidate.Profile)
 				binding = candidate.Binding
@@ -217,14 +317,32 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 			}
 		}
 		if binding == "" {
-			report, err = run(selected.Name, "", "lexical")
+			report, err = run(input.Question, selected.Name, "", "lexical", input.Rerank)
 			if err != nil {
 				return response{}, err
 			}
 		}
-		identities := make([]api.DocumentIdentity, len(report.Results))
-		for i, r := range report.Results {
-			identities[i] = api.DocumentIdentity{NodeID: r.NodeID, ContentVersionID: r.ContentVersionID, Path: r.Path}
+		var termsReport api.DocumentSearchReport
+		if len(input.Terms) > 0 {
+			termsReport, err = run(strings.TrimSpace(strings.Join(input.Terms, " ")), selected.Name, "", "lexical", false)
+			if err != nil {
+				return response{}, err
+			}
+		}
+		hits := answerSearchHits(report, true)
+		var truncated bool
+		if len(input.Terms) > 0 {
+			hits, truncated = mergeAnswerSearchResults(report, termsReport, input.Limit)
+		}
+		identities := make([]api.DocumentIdentity, 0, len(hits))
+		seenIdentities := map[api.DocumentIdentity]bool{}
+		for _, hit := range hits {
+			r := hit.result
+			identity := api.DocumentIdentity{NodeID: r.NodeID, ContentVersionID: r.ContentVersionID, Path: r.Path}
+			if !seenIdentities[identity] {
+				identities = append(identities, identity)
+				seenIdentities[identity] = true
+			}
 		}
 		var docs []api.DocumentSummary
 		if len(identities) > 0 {
@@ -233,7 +351,7 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 				return response{}, err
 			}
 		}
-		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs}, nil
+		return response{fence: fence, profile: selected, binding: binding, report: report, hits: hits, truncated: truncated || report.Truncated || termsReport.Truncated, termsSearched: len(input.Terms) > 0 && len(fence.Fence.ContentVersionIDs) > 0, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs}, nil
 	})
 	if err != nil {
 		if code, count := stableDomainError(err); code == "scope_too_large" {
@@ -251,6 +369,11 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 	out.Receipt.Profile = &answerProfile{Name: result.profile.Name, Fingerprint: result.profile.Fingerprint}
 	out.Receipt.BindingID = result.binding
 	out.Receipt.SearchExecuted = result.executed
+	out.Receipt.TermsSearched = result.termsSearched
+	if result.termsSearched {
+		termsHash := sha256.Sum256([]byte(strings.TrimSpace(strings.Join(input.Terms, " "))))
+		out.Receipt.TermsSHA256 = hex.EncodeToString(termsHash[:])
+	}
 	if result.executed {
 		executedHash := sha256.Sum256([]byte(strings.TrimSpace(input.Question)))
 		out.Receipt.ExecutedQuerySHA256 = hex.EncodeToString(executedHash[:])
@@ -287,23 +410,19 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 	if coverage.State != "complete" || coverage.CompleteDocuments != coverage.ScopedDocuments {
 		out.CoverageReasons = append(out.CoverageReasons, "embeddings_incomplete")
 	}
-	if result.report.Truncated {
+	if result.truncated {
 		out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
 	}
-	for _, item := range result.report.Results {
+	for _, hit := range result.hits {
+		item := hit.result
 		ids, err := encodeSearchEvidenceIDs(item.Evidence)
 		if err != nil {
 			return answerOutput{}, nil, err
 		}
-		var relevance *float64
-		if result.report.Reranking != nil && result.report.Reranking.Outcome == "applied" && item.Rank <= result.report.Reranking.CandidateCount {
-			score := item.Score
-			relevance = &score
-		}
 		if answerContentExcerpt(item) {
-			out.Passages = append(out.Passages, answer.Passage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: relevance})
+			out.Passages = append(out.Passages, answer.Passage{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, Text: item.Excerpt, TextBytes: len(item.Excerpt), EvidenceIDs: ids, Relevance: hit.relevance})
 		} else {
-			out.Leads = append(out.Leads, answer.Lead{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, EvidenceIDs: ids, Relevance: relevance})
+			out.Leads = append(out.Leads, answer.Lead{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path, Rank: item.Rank, EvidenceIDs: ids, Relevance: hit.relevance})
 		}
 	}
 	evidence, gates, err := answer.ApplyGates(ctx, answer.Question{Text: input.Question}, answer.Evidence{Passages: out.Passages, Leads: out.Leads}, nil)
@@ -329,8 +448,10 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 		}
 		docs := make([]api.DocumentSummary, 0, len(keep))
 		for _, d := range result.documents {
-			if keep[answerCitation{d.NodeID, d.ContentVersionID}] {
+			identity := answerCitation{d.NodeID, d.ContentVersionID}
+			if keep[identity] {
 				docs = append(docs, d)
+				delete(keep, identity)
 			}
 		}
 		return documentResourceLinks(result.fence.Fence.VaultUID, docs)
@@ -383,7 +504,7 @@ func answerQuestion(ctx context.Context, session documentReadSession, raw []byte
 			}
 			return cmp.Compare(a.ContentVersionID, b.ContentVersionID)
 		})
-		omitted := out.OmittedPassages > 0 || out.OmittedLeads > 0 || result.report.Truncated
+		omitted := out.OmittedPassages > 0 || out.OmittedLeads > 0 || result.truncated
 		out.Status = answer.Classify(answer.Evidence{Passages: out.Passages, Leads: out.Leads}, out.CoverageComplete, omitted)
 		links := linksFor()
 		if linkLimit < 0 {
