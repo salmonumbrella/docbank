@@ -158,7 +158,9 @@ Validity uses only current live versions inside the request's source fence.
 An excluded or trashed successor cannot demote a hit or appear in its metadata.
 For media-source searches, selectors constrain searched evidence; replacement
 authority can use any current live version already in the request fence.
-The web and MCP request `keep_order` while they do not present validity reasons.
+The web requests `keep_order` while it does not present validity reasons.
+[MCP search](mcp.md#tool-catalog) exposes the same validity metadata and accepts
+`as_of` and `superseded: "demote"` (default) or `"keep_order"`.
 
 ## Rerank search results
 
