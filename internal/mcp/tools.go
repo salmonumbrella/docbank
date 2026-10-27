@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/answercard"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
@@ -60,6 +61,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
+	answerCardsTool,
 	originalContentTool,
 	textCitationTool, textOutlineTool, textSectionTool,
 	exportPlanTool, exportProblemsTool,
@@ -397,6 +399,8 @@ func stableDomainError(err error) (string, int) {
 	}
 	var scope *daemonconn.SourceFenceScopeTooLargeError
 	switch {
+	case errors.Is(err, answercard.ErrCardLimit):
+		return "card_limit", 0
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
 	case errors.Is(err, store.ErrNotFound):
@@ -513,6 +517,8 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "card_limit":
+		return "Answer card discovery or response exceeds its limit; narrow the card root."
 	case "invalid_text_navigation":
 		return "Fetch the outline for this rendition and correct the section bounds or offset."
 	case "text_navigation_limit":
