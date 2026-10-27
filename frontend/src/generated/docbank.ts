@@ -2042,6 +2042,7 @@ export interface DocumentSearchRerankingReceipt {
   candidate_count: number;
   cause?: string;
   outcome: string;
+  profile_id?: string;
 }
 
 export interface DocumentSearchResult {

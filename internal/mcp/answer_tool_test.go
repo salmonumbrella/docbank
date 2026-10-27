@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -389,5 +390,79 @@ func TestAnswerQuestionAutomaticRerankingProfiles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Reranker identity belongs to applied scores, not merely a configured provider.
+func TestAnswerQuestionRerankerIdentity(t *testing.T) {
+	for _, outcome := range []string{"applied", "skipped", "degraded", "not_requested", "not_reported"} {
+		t.Run(outcome, func(t *testing.T) {
+			checkAnswerRerankerIdentity(t, "synthetic-reranker/模型:v2", outcome)
+		})
+	}
+}
+
+func FuzzAnswerQuestionRerankerIdentity(f *testing.F) {
+	f.Add("synthetic-reranker", uint8(0))
+	f.Add("模型/ reranker:v2\n", uint8(0))
+	f.Add(strings.Repeat("r", 4097), uint8(0))
+	f.Add("", uint8(0))
+	f.Fuzz(func(t *testing.T, profileID string, choice uint8) {
+		// Bound materialized payloads; retain generated cases as valid wire text.
+		if len(profileID) > 16384 {
+			profileID = profileID[:16384]
+		}
+		profileID = strings.ToValidUTF8(profileID, "�")
+		outcomes := []string{"applied", "skipped", "degraded", "not_requested", "not_reported"}
+		checkAnswerRerankerIdentity(t, profileID, outcomes[int(choice)%len(outcomes)])
+	})
+}
+
+func checkAnswerRerankerIdentity(t *testing.T, profileID, outcome string) {
+	t.Helper()
+	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
+	// Decode daemon wire data so this test checks the complete API-to-MCP path.
+	if outcome != "not_requested" && outcome != "not_reported" {
+		data, err := json.Marshal(map[string]any{"outcome": outcome, "candidate_count": 1, "profile_id": profileID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &f.report.Reranking); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+	args := []byte(`{"question":"example","rerank":true}`)
+	if outcome == "not_requested" {
+		args = []byte(`{"question":"example"}`)
+	}
+	out, _, err := answerQuestion(context.Background(), session, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := structuredMap(t, out)
+	reranking := schemaMap(t, schemaMap(t, output["receipt"])["reranking"])
+	id, present := reranking["reranker_id"]
+	if outcome == "applied" && profileID != "" {
+		if !present || id != profileID {
+			t.Fatalf("reranker identity = %v (present %v), want %q", id, present, profileID)
+		}
+	} else if present {
+		t.Fatalf("unexpected reranker identity for %s: %v", outcome, id)
+	}
+	_, outputSchema := answerQuestionSchemas()
+	receiptSchema := schemaMap(t, schemaMap(t, outputSchema["properties"])["receipt"])
+	rerankingSchema := schemaMap(t, receiptSchema["properties"])["reranking"]
+	assertSchemaAccepts(t, rerankingSchema, reranking)
+}
+
+func TestAnswerQuestionOversizedRerankerReceipt(t *testing.T) {
+	f := &answerFakeClient{report: api.DocumentSearchReport{Reranking: &api.DocumentSearchRerankingReceipt{
+		Outcome: "applied", ProfileID: strings.Repeat("r", maxToolResponseBytes), CandidateCount: 1,
+	}}}
+	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
+	_, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","rerank":true}`))
+	if !errors.Is(err, errToolResultTooLarge) {
+		t.Fatalf("oversized identity error = %v", err)
 	}
 }
