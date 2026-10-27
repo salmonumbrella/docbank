@@ -41,12 +41,6 @@ func currencyAt(rs []rune, start int) (int, string) {
 	}
 	return start, ""
 }
-func amountSpace(rs []rune, i int) int {
-	for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t' || rs[i] == '\u00a0' || rs[i] == '\u202f') {
-		i++
-	}
-	return i
-}
 func amountAt(rs []rune, start int) (int, []string) {
 	if start > 0 && (wordRune(rs[start-1]) || strings.ContainsRune("-/_", rs[start-1])) {
 		return 0, nil
@@ -77,7 +71,7 @@ func amountAt(rs []rune, start int) (int, []string) {
 			}
 			negative, signed = rs[i] == '-', true
 			signStart = i
-			i = amountSpace(rs, i+1)
+			i = skipHorizontalSpace(rs, i+1)
 			if len(classes) > 0 {
 				prefixEnd = i
 			}
@@ -94,7 +88,7 @@ func amountAt(rs []rune, start int) (int, []string) {
 			identifierStart = i
 		}
 		classes = append(classes, code)
-		i = amountSpace(rs, end)
+		i = skipHorizontalSpace(rs, end)
 		prefixEnd = i
 	}
 	numberStart := i
@@ -112,7 +106,7 @@ func amountAt(rs []rune, start int) (int, []string) {
 		i--
 	}
 	numberEnd := i
-	scaleStart := amountSpace(rs, i)
+	scaleStart := skipHorizontalSpace(rs, i)
 	scaleEnd := scaleStart
 	for scaleEnd < len(rs) && isASCIIAlpha(rs[scaleEnd]) {
 		scaleEnd++
@@ -122,15 +116,15 @@ func amountAt(rs []rune, start int) (int, []string) {
 		i = scaleEnd
 	}
 	for {
-		start := amountSpace(rs, i)
+		start := skipHorizontalSpace(rs, i)
 		end, code := currencyAt(rs, start)
-		if code == "" || (end-start == 3 && isASCIIAlpha(rs[end-1]) && string(rs[start:end]) != strings.ToUpper(string(rs[start:end]))) {
+		if code == "" {
 			break
 		}
 		// A marker followed by another numeric value starts the next amount.
-		next := amountSpace(rs, end)
+		next := skipHorizontalSpace(rs, end)
 		if next < len(rs) && (rs[next] == '+' || rs[next] == '-') {
-			next = amountSpace(rs, next+1)
+			next = skipHorizontalSpace(rs, next+1)
 		}
 		if next < len(rs) && (digit(rs[next]) || rs[next] == '.' && next+1 < len(rs) && digit(rs[next+1])) {
 			break

@@ -59,6 +59,12 @@ func separator(r rune) bool {
 func horizontalSpace(r rune) bool {
 	return r == ' ' || r == '\t' || r == '\u00a0' || r == '\u202f'
 }
+func skipHorizontalSpace(rs []rune, i int) int {
+	for i < len(rs) && horizontalSpace(rs[i]) {
+		i++
+	}
+	return i
+}
 func ellipsisFigure(rs []rune, start, end int) bool {
 	if end <= start {
 		return false
