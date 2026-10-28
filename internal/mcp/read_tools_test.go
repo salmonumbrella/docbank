@@ -392,7 +392,7 @@ func TestSearchReadRejectsResultsOutsideResolvedFence(t *testing.T) {
 				VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}},
 				FenceFingerprint: testFenceFingerprint, ObservedScopeCount: 1})
 		case "/api/v1/search":
-			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+			writeDaemonJSON(t, response, api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{{
 					VaultUID: testVaultID, NodeID: 7, ContentVersionID: otherVersion,
@@ -454,7 +454,7 @@ func TestSearchReadValidatesEmptyFenceWithoutCallingSearch(t *testing.T) {
 						})
 						return
 					}
-					writeDaemonJSON(t, response, api.DocumentSearchValidation{Valid: true})
+					writeDaemonJSON(t, response, api.DocumentSearchValidation{Valid: true, AsOf: "2025-01-01"})
 				case "/api/v1/search":
 					searchCalls++
 					http.Error(response, "search must not run for an empty fence", http.StatusInternalServerError)
@@ -500,7 +500,7 @@ func TestSearchReadWithNonEmptyFenceAndNoHitsSkipsDocumentResolution(t *testing.
 		case "/api/v1/search":
 			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
-				Degradations: []string{}, Results: []api.DocumentSearchResult{}})
+				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "empty", Successors: []api.DocumentValiditySuccessor{}}})
 		case "/api/v1/documents/resolve":
 			resolveCalls++
 			t.Fatal("zero-hit search must not resolve document summaries")
@@ -563,7 +563,7 @@ func TestSearchReadResolvesOneBoundedBatchOfCurrentDocumentsForResourceLinks(t *
 				VaultUID: testVaultID, ContentVersionIDs: versions}, FenceFingerprint: fingerprint,
 				ObservedScopeCount: resultCount})
 		case "/api/v1/search":
-			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+			writeDaemonJSON(t, response, api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage: api.DocumentSearchCoverage{ScopedDocuments: resultCount, CompleteDocuments: resultCount,
 					State: "complete"}, Degradations: []string{}, Results: results})
 		case "/api/v1/documents/resolve":
@@ -672,7 +672,8 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			}
 			assert.Equal(t, api.DocumentSourceFence{VaultUID: testVaultID,
 				ContentVersionIDs: []string{testVersionID}}, input.Fence)
-			writeDaemonJSON(t, response, api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+			assert.Equal(t, "keep_order", input.Superseded)
+			writeDaemonJSON(t, response, api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{"embedding_unavailable"}, Results: []api.DocumentSearchResult{{
 					VaultUID: testVaultID, NodeID: 7, ContentVersionID: testVersionID,

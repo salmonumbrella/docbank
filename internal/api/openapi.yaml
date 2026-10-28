@@ -4328,6 +4328,39 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentResultValidity:
+      additionalProperties: false
+      properties:
+        effective_from:
+          format: date
+          type: string
+        effective_to:
+          format: date
+          type: string
+        state:
+          enum:
+            - current
+            - superseded
+            - expired
+            - not_yet_effective
+          type: string
+        superseded_by:
+          items:
+            format: int64
+            type: integer
+          maxItems: 16
+          type: array
+        undated:
+          type: boolean
+      required:
+        - state
+        - undated
+        - superseded_by
+      type: object
+      x-go-type: api.DocumentResultValidity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentSearchCoverage:
       additionalProperties: false
       properties:
@@ -4392,7 +4425,10 @@ components:
           type: array
         truncated:
           type: boolean
+        validity:
+          $ref: "#/components/schemas/DocumentSearchValidity"
       required:
+        - validity
         - requested_mode
         - actual_mode
         - coverage
@@ -4414,6 +4450,10 @@ components:
             - https://example.com/schemas/DocumentSearchRequest.json
           format: uri
           readOnly: true
+          type: string
+        as_of:
+          format: date
+          maxLength: 10
           type: string
         binding_id:
           maxLength: 128
@@ -4453,6 +4493,11 @@ components:
           type: string
         rerank:
           type: boolean
+        superseded:
+          enum:
+            - demote
+            - keep_order
+          type: string
       required:
         - query
         - mode
@@ -4518,6 +4563,8 @@ components:
         semantic_rank:
           format: int64
           type: integer
+        validity:
+          $ref: "#/components/schemas/DocumentResultValidity"
         vault_uid:
           format: uuid
           type: string
@@ -4561,9 +4608,13 @@ components:
           format: uri
           readOnly: true
           type: string
+        as_of:
+          format: date
+          type: string
         valid:
           type: boolean
       required:
+        - as_of
         - valid
       type: object
       x-go-type: api.DocumentSearchValidation
@@ -4579,6 +4630,10 @@ components:
             - https://example.com/schemas/DocumentSearchValidationRequest.json
           format: uri
           readOnly: true
+          type: string
+        as_of:
+          format: date
+          maxLength: 10
           type: string
         binding_id:
           maxLength: 128
@@ -4610,12 +4665,50 @@ components:
           type: string
         rerank:
           type: boolean
+        superseded:
+          enum:
+            - demote
+            - keep_order
+          type: string
       required:
         - query
         - mode
         - profile
       type: object
       x-go-type: api.DocumentSearchValidationRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentSearchValidity:
+      additionalProperties: false
+      properties:
+        as_of:
+          format: date
+          type: string
+        declared_results:
+          format: int64
+          maximum: 100
+          minimum: 0
+          type: integer
+        status:
+          enum:
+            - current
+            - outdated_only
+            - future_only
+            - empty
+          type: string
+        successors:
+          items:
+            $ref: "#/components/schemas/DocumentValiditySuccessor"
+          maxItems: 16
+          type: array
+      required:
+        - as_of
+        - status
+        - declared_results
+        - successors
+      type: object
+      x-go-type: api.DocumentSearchValidity
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -4940,6 +5033,39 @@ components:
         - items
       type: object
       x-go-type: api.DocumentSummaryResolveResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentValiditySuccessor:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        effective_from:
+          format: date
+          type: string
+        in_fence:
+          type: boolean
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        path:
+          maxLength: 16384
+          minLength: 2
+          pattern: ^/
+          type: string
+        undated:
+          type: boolean
+      required:
+        - node_id
+        - content_version_id
+        - path
+        - in_fence
+        - undated
+      type: object
+      x-go-type: api.DocumentValiditySuccessor
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api

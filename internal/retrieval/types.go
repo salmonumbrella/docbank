@@ -97,7 +97,27 @@ type Contribution struct {
 	Contribution float64
 }
 
+type ResultValidity struct {
+	State                      document.ValidityState
+	Undated                    bool
+	SupersededBy               []int64
+	EffectiveFrom, EffectiveTo string
+}
+
+type ValiditySuccessor struct {
+	NodeID                                int64
+	ContentVersionID, Path, EffectiveFrom string
+	InFence, Undated                      bool
+}
+
+type SearchValidity struct {
+	AsOf, Status    string
+	DeclaredResults int
+	Successors      []ValiditySuccessor
+}
+
 type Result struct {
+	Validity      *ResultValidity
 	Document      DocumentIdentity
 	Rank          int
 	Score         float64
@@ -153,6 +173,7 @@ type MediaSelection struct {
 }
 
 type Report struct {
+	Validity             SearchValidity
 	MediaSelections      []MediaSelection
 	MediaSourceSelection bool
 	RequestedMode        Mode

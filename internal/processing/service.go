@@ -367,6 +367,7 @@ type Coverage struct {
 }
 
 type SearchRequest struct {
+	AsOf, Superseded                string
 	MediaSources                    []retrieval.MediaSourceSelector
 	Query, Mode, Profile, BindingID string
 	Limit                           int
@@ -1511,6 +1512,10 @@ func (service *Service) ResolveSourceFence(
 }
 
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
+	asOf, err := normalizeSearchValidity(request)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
 	profile, ids, err := service.profileFence(request.Profile, request.Fence)
 	if err != nil {
 		return retrieval.Report{}, err
@@ -1520,7 +1525,11 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return retrieval.Report{}, err
 	}
 	if request.MediaSources != nil {
-		return service.searchMediaSources(ctx, request, ids, prepared)
+		report, err := service.searchMediaSources(ctx, request, ids, prepared)
+		if err != nil {
+			return retrieval.Report{}, err
+		}
+		return service.applySearchValidity(ctx, report, ids, asOf, request.Superseded)
 	}
 	if len(profile.portable.Embeddings) != 0 && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
 		binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
@@ -1540,16 +1549,23 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 			prepared.rerankingAuthorizer.queryFenceHeld = true
 		}
 	}
-	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
+	report, err := prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
 		Limit: prepared.limit, Scope: store.SearchOptions{ContentVersionIDs: ids}, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	return service.applySearchValidity(ctx, report, ids, asOf, request.Superseded)
 }
 
 // ValidateSearch applies the same profile, query, mode, limit, and binding
 // semantics as Search without executing or widening a source-fenced search.
 func (service *Service) ValidateSearch(ctx context.Context, request SearchRequest) error {
+	if _, err := normalizeSearchValidity(request); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

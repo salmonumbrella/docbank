@@ -439,7 +439,7 @@ func searchDocuments(
 			return response{}, callErr
 		}
 		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+			_, callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
 				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
 				BindingID: input.BindingID, Explain: input.Explain,
 			})
@@ -452,7 +452,8 @@ func searchDocuments(
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
 			}}, nil
 		}
-		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query,
+		// Preserve retrieval order while MCP output lacks validity reasons.
+		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query, Superseded: "keep_order",
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
 			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
 				ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}})

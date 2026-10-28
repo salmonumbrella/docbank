@@ -74,11 +74,13 @@ func writeSearchAgentHeader(cmd *cobra.Command, header searchAgentHeader) error 
 // searchAgentHit is one result line. Ranked hits come from processing search
 // and carry its score and excerpt; ordinary lexical hits have neither.
 type searchAgentHit struct {
-	nodeID      int64
-	match, path string
-	ranked      bool
-	score       float64
-	excerpt     string
+	validity       *api.DocumentResultValidity
+	validityReason string
+	nodeID         int64
+	match, path    string
+	ranked         bool
+	score          float64
+	excerpt        string
 }
 
 func writeSearchAgentHit(cmd *cobra.Command, hit searchAgentHit) error {
@@ -89,6 +91,15 @@ func writeSearchAgentHit(cmd *cobra.Command, hit searchAgentHit) error {
 	line += " path=" + searchAgentValue(hit.path)
 	if hit.ranked {
 		line += " excerpt=" + searchAgentValue(searchAgentExcerpt(hit.excerpt))
+	}
+	if hit.validity != nil {
+		line += " validity=" + searchAgentValue(hit.validity.State)
+		if hit.validity.Undated {
+			line += " validity_undated=true"
+		}
+		if hit.validityReason != "" {
+			line += " validity_reason=" + searchAgentValue(strings.TrimSpace(hit.validityReason))
+		}
 	}
 	if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 		return fmt.Errorf("writing search agent hit: %w", err)
@@ -132,6 +143,16 @@ func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.Docum
 ) error {
 	header := searchAgentHeader{query: query, mode: report.ActualMode, degraded: strings.Join(report.Degradations, ","),
 		count: len(report.Results) + len(folders), truncated: report.Truncated, coverage: &report.Coverage}
+	if report.Validity.DeclaredResults > 0 {
+		header.details = append(header.details, "validity="+searchAgentValue(report.Validity.Status), "as_of="+searchAgentValue(report.Validity.AsOf))
+		paths := []string{}
+		for _, next := range report.Validity.Successors {
+			paths = append(paths, next.Path)
+		}
+		if len(paths) > 0 {
+			header.details = append(header.details, "in_force="+searchAgentValue(strings.Join(paths, ", ")))
+		}
+	}
 	if len(report.Trace) > 0 {
 		stages := make([]string, len(report.Trace))
 		for i, event := range report.Trace {
@@ -158,7 +179,7 @@ func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.Docum
 			}
 		}
 		if err := writeSearchAgentHit(cmd, searchAgentHit{nodeID: hit.NodeID, match: match, path: hit.Path,
-			ranked: true, score: hit.Score, excerpt: hit.Excerpt}); err != nil {
+			ranked: true, score: hit.Score, excerpt: hit.Excerpt, validity: hit.Validity, validityReason: documentValidityReason(hit, report)}); err != nil {
 			return err
 		}
 	}
