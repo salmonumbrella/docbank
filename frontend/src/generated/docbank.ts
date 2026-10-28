@@ -2220,6 +2220,25 @@ export interface DocumentPage {
   source_present?: boolean;
 }
 
+export type DocumentResultValidityState = typeof DocumentResultValidityState[keyof typeof DocumentResultValidityState];
+
+
+export const DocumentResultValidityState = {
+  current: 'current',
+  superseded: 'superseded',
+  expired: 'expired',
+  not_yet_effective: 'not_yet_effective',
+} as const;
+
+export interface DocumentResultValidity {
+  effective_from?: string;
+  effective_to?: string;
+  state: DocumentResultValidityState;
+  /** @maxItems 16 */
+  superseded_by: number[];
+  undated: boolean;
+}
+
 export interface DocumentSearchCoverage {
   binding_required: boolean;
   /** @minimum 0 */
@@ -2257,6 +2276,7 @@ export interface DocumentSearchResult {
   rank: number;
   score: number;
   semantic_rank?: number;
+  validity?: DocumentResultValidity;
   vault_uid: string;
 }
 
@@ -2264,6 +2284,43 @@ export interface DocumentSearchTrace {
   code: string;
   /** @minimum 0 */
   count: number;
+}
+
+export type DocumentSearchValidityStatus = typeof DocumentSearchValidityStatus[keyof typeof DocumentSearchValidityStatus];
+
+
+export const DocumentSearchValidityStatus = {
+  current: 'current',
+  outdated_only: 'outdated_only',
+  future_only: 'future_only',
+  empty: 'empty',
+} as const;
+
+export interface DocumentValiditySuccessor {
+  content_version_id: string;
+  effective_from?: string;
+  in_fence: boolean;
+  /** @minimum 1 */
+  node_id: number;
+  /**
+     * @minLength 2
+     * @maxLength 16384
+     * @pattern ^/
+     */
+  path: string;
+  undated: boolean;
+}
+
+export interface DocumentSearchValidity {
+  as_of: string;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  declared_results: number;
+  status: DocumentSearchValidityStatus;
+  /** @maxItems 16 */
+  successors: DocumentValiditySuccessor[];
 }
 
 export interface DocumentSearchReport {
@@ -2280,6 +2337,7 @@ export interface DocumentSearchReport {
   results: DocumentSearchResult[];
   trace: DocumentSearchTrace[];
   truncated: boolean;
+  validity: DocumentSearchValidity;
 }
 
 export type DocumentSearchRequestMode = typeof DocumentSearchRequestMode[keyof typeof DocumentSearchRequestMode];
@@ -2290,6 +2348,14 @@ export const DocumentSearchRequestMode = {
   lexical: 'lexical',
   semantic: 'semantic',
   hybrid: 'hybrid',
+} as const;
+
+export type DocumentSearchRequestSuperseded = typeof DocumentSearchRequestSuperseded[keyof typeof DocumentSearchRequestSuperseded];
+
+
+export const DocumentSearchRequestSuperseded = {
+  demote: 'demote',
+  keep_order: 'keep_order',
 } as const;
 
 export interface DocumentSourceFence {
@@ -2304,6 +2370,8 @@ export interface DocumentSourceFence {
 export interface DocumentSearchRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxLength 10 */
+  as_of?: string;
   /** @maxLength 128 */
   binding_id?: string;
   content_first?: boolean;
@@ -2332,11 +2400,13 @@ export interface DocumentSearchRequest {
      */
   query: string;
   rerank?: boolean;
+  superseded?: DocumentSearchRequestSuperseded;
 }
 
 export interface DocumentSearchValidation {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  as_of: string;
   valid: boolean;
 }
 
@@ -2350,9 +2420,19 @@ export const DocumentSearchValidationRequestMode = {
   hybrid: 'hybrid',
 } as const;
 
+export type DocumentSearchValidationRequestSuperseded = typeof DocumentSearchValidationRequestSuperseded[keyof typeof DocumentSearchValidationRequestSuperseded];
+
+
+export const DocumentSearchValidationRequestSuperseded = {
+  demote: 'demote',
+  keep_order: 'keep_order',
+} as const;
+
 export interface DocumentSearchValidationRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxLength 10 */
+  as_of?: string;
   /** @maxLength 128 */
   binding_id?: string;
   content_first?: boolean;
@@ -2375,6 +2455,7 @@ export interface DocumentSearchValidationRequest {
      */
   query: string;
   rerank?: boolean;
+  superseded?: DocumentSearchValidationRequestSuperseded;
 }
 
 export type DocumentSimilarReportState = typeof DocumentSimilarReportState[keyof typeof DocumentSimilarReportState];
