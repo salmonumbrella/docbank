@@ -694,8 +694,22 @@ func (s *Store) AcquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	return s.acquireSemanticSearchAuthority(ctx, profileFingerprint, bindingID, owner, at, duration, opts, nil)
 }
 
+// AcquireSemanticSearchAuthorityHead retains the per-query authority checks
+// and reader lease, while leaving generation decoding to the caller.
+func (s *Store) AcquireSemanticSearchAuthorityHead(ctx context.Context, profileFingerprint,
+	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions,
+) (SemanticSearchAuthority, error) {
+	return s.acquireSemanticSearchAuthorityWithGeneration(ctx, profileFingerprint, bindingID, owner, at, duration, opts, nil, true)
+}
+
 func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFingerprint,
 	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions, similar *similarSourceCapture,
+) (SemanticSearchAuthority, error) {
+	return s.acquireSemanticSearchAuthorityWithGeneration(ctx, profileFingerprint, bindingID, owner, at, duration, opts, similar, false)
+}
+
+func (s *Store) acquireSemanticSearchAuthorityWithGeneration(ctx context.Context, profileFingerprint,
+	bindingID, owner string, at time.Time, duration time.Duration, opts SearchOptions, similar *similarSourceCapture, metadataOnly bool,
 ) (SemanticSearchAuthority, error) {
 	normalized, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
@@ -733,7 +747,7 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		space.QueryFormatter != binding.QueryFormatter || space.ModelInputFingerprint != binding.ModelInput.Fingerprint {
 		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
 	}
-	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+	lease, err := s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, metadataOnly)
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}

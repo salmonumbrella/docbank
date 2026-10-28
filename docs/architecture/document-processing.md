@@ -212,6 +212,32 @@ and membership. The vector-index worker builds disposable generations from
 those retained sets and publishes only against the source membership it read.
 Reader leases keep a selected generation available during a query.
 
+Each processing service reuses one decoded vector generation per active vector
+space across searches. A query first leases and validates the current head's
+metadata without reading its serialized bytes. A cache miss loads and opens
+that exact leased generation; concurrent misses share the load. The service
+retains decoded vectors, never the serialized blob. Observing a replacement
+head evicts the prior retained generation. Searches already using it may finish
+with their own immutable pointer and reader lease. Generation identity follows
+its content, so reclaiming and rebuilding identical data can reuse the same ID
+with a new build timestamp. Each lease still validates the stored timestamp.
+
+An idle timer releases each retained generation after five minutes without a
+lookup, even if no later search arrives. Service stop and embedded vault close
+stop those timers and clear retained references immediately. While admitted
+reads drain, a stopped service loads and decodes their exact leased generation
+without retaining it or starting timers. The owner keeps storage open until
+those reads finish. Loaders run within their searches, and timer callbacks
+never access storage. This bounds retention to one generation per space,
+rather than imposing a fixed memory cap across arbitrary spaces.
+
+Every search still acquires and releases its own reader lease, checks current
+source membership and vector compatibility, and reads fresh filters, coverage,
+and candidate authority. A warm cache cannot serve a stale or incompatible
+head. Final report revalidation, ranking, source-fence limits, and similar
+search behavior remain unchanged. Retrieval callers without a generation
+source continue to open their leased bytes for each query.
+
 Every source manifest check reloads the current members, input generations,
 vector manifests, and live attachment authority. Within that transaction, the
 store decodes each immutable vector space descriptor once. The reuse ends with

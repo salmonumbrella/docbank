@@ -50,6 +50,7 @@ type VectorIndexGenerationRecord struct {
 	SourceManifestChecksum string
 	IndexManifestChecksum  string
 	Bytes                  []byte
+	ByteSize               int // Declared serialized size, populated on reads; writes derive it from Bytes.
 	RowCount               int
 	BuiltAt                string
 }
@@ -349,6 +350,10 @@ func requireVectorIndexBuildClaimTx(ctx context.Context, tx *sql.Tx, claim Vecto
 }
 
 func validateVectorIndexGenerationRecord(record VectorIndexGenerationRecord) error {
+	return validateVectorIndexGenerationMetadata(record, len(record.Bytes))
+}
+
+func validateVectorIndexGenerationMetadata(record VectorIndexGenerationRecord, byteSize int) error {
 	for value, subject := range map[string]string{record.ID: "vector index generation ID",
 		record.VectorSpaceID:          "vector index generation vector-space ID",
 		record.SourceManifestChecksum: "vector index source manifest",
@@ -357,7 +362,7 @@ func validateVectorIndexGenerationRecord(record VectorIndexGenerationRecord) err
 			return err
 		}
 	}
-	if len(record.Bytes) < 1 || len(record.Bytes) > 512<<20 || record.RowCount < 1 || record.RowCount > 1_000_000 {
+	if byteSize < 1 || byteSize > 512<<20 || record.RowCount < 1 || record.RowCount > 1_000_000 {
 		return errors.New("vector index generation shape exceeds bounds")
 	}
 	return validateMetadataTime("vector index built_at", record.BuiltAt)
@@ -444,23 +449,35 @@ func (s *Store) PublishVectorIndexGeneration(ctx context.Context, claim VectorIn
 }
 
 func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, generationID string) (VectorIndexGenerationRecord, error) {
+	return loadVectorIndexGenerationRecordTx(ctx, query, generationID, false)
+}
+
+// The metadata path deliberately does not select generation_bytes. Both paths
+// share shape, identity and publication validation.
+func loadVectorIndexGenerationRecordTx(ctx context.Context, query metadataQuerier, generationID string, metadataOnly bool) (VectorIndexGenerationRecord, error) {
 	var record VectorIndexGenerationRecord
-	var size int
-	err := query.QueryRowContext(ctx, `SELECT generation_id,vector_space_id,source_manifest_checksum,
-		index_manifest_checksum,generation_bytes,byte_size,row_count,built_at
-		FROM vector_index_generations WHERE generation_id=?`, generationID).Scan(&record.ID,
-		&record.VectorSpaceID, &record.SourceManifestChecksum, &record.IndexManifestChecksum,
-		&record.Bytes, &size, &record.RowCount, &record.BuiltAt)
+	columns := "generation_id,vector_space_id,source_manifest_checksum,index_manifest_checksum,"
+	destinations := []any{&record.ID, &record.VectorSpaceID, &record.SourceManifestChecksum, &record.IndexManifestChecksum}
+	if !metadataOnly {
+		columns += "generation_bytes,"
+		destinations = append(destinations, &record.Bytes)
+	}
+	columns += "byte_size,row_count,built_at"
+	destinations = append(destinations, &record.ByteSize, &record.RowCount, &record.BuiltAt)
+	err := query.QueryRowContext(ctx, "SELECT "+columns+" FROM vector_index_generations WHERE generation_id=?", generationID).Scan(destinations...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return record, ErrNotFound
 	}
 	if err != nil {
 		return record, err
 	}
-	if size != len(record.Bytes) {
+	if record.ID != generationID {
+		return VectorIndexGenerationRecord{}, errors.New("vector index generation identity is corrupt")
+	}
+	if !metadataOnly && record.ByteSize != len(record.Bytes) {
 		return VectorIndexGenerationRecord{}, errors.New("vector index generation byte size is corrupt")
 	}
-	return record, validateVectorIndexGenerationRecord(record)
+	return record, validateVectorIndexGenerationMetadata(record, record.ByteSize)
 }
 
 // VectorIndexHead is the publication metadata needed by an idle worker scan.
@@ -526,6 +543,23 @@ func (s *Store) ReadVectorIndexVectorSet(ctx context.Context, reader RenditionBl
 func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
 	at time.Time, duration time.Duration,
 ) (VectorIndexReaderLease, error) {
+	return s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, false)
+}
+
+// AcquireVectorIndexGenerationHead leases the current generation and validates
+// its metadata and live source membership without reading its serialized bytes.
+func (s *Store) AcquireVectorIndexGenerationHead(ctx context.Context, vectorSpaceID, owner string,
+	at time.Time, duration time.Duration,
+) (VectorIndexReaderLease, error) {
+	return s.acquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration, true)
+}
+
+func (s *Store) acquireVectorIndexGeneration(ctx context.Context, vectorSpaceID, owner string,
+	at time.Time, duration time.Duration, metadataOnly bool,
+) (VectorIndexReaderLease, error) {
+	if err := validateCatalogSHA256(vectorSpaceID, "vector index vector-space ID"); err != nil {
+		return VectorIndexReaderLease{}, err
+	}
 	if err := validateEmbeddingCatalogText(owner, "vector index reader owner"); err != nil {
 		return VectorIndexReaderLease{}, err
 	}
@@ -538,17 +572,23 @@ func (s *Store) AcquireVectorIndexGeneration(ctx context.Context, vectorSpaceID,
 	}
 	lease := VectorIndexReaderLease{ID: leaseID, FencingToken: 1, ExpiresAt: at.UTC().Add(duration)}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var generationID string
-		if err := tx.QueryRowContext(ctx, `SELECT generation_id FROM vector_index_heads
-			WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID); errors.Is(err, sql.ErrNoRows) {
+		var generationID, headSource string
+		if err := tx.QueryRowContext(ctx, `SELECT generation_id,source_manifest_checksum FROM vector_index_heads
+			WHERE vector_space_id=?`, vectorSpaceID).Scan(&generationID, &headSource); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
 		}
 		var err error
-		lease.Generation, err = loadVectorIndexGenerationTx(ctx, tx, generationID)
+		lease.Generation, err = loadVectorIndexGenerationRecordTx(ctx, tx, generationID, metadataOnly)
 		if err != nil {
 			return err
+		}
+		if lease.Generation.VectorSpaceID != vectorSpaceID {
+			return errors.New("vector index head does not match generation")
+		}
+		if lease.Generation.SourceManifestChecksum != headSource {
+			return ErrVectorIndexSourceStale
 		}
 		current, err := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
 		if err != nil {
