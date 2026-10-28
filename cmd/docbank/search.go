@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
@@ -20,36 +21,40 @@ const (
 )
 
 var (
-	searchLimit          int
-	searchJSON           bool
-	searchAgent          bool
-	searchFuzzy          bool
-	searchSourcePresent  bool
-	searchTag            string
-	searchMIME           string
-	searchUnder          string
-	searchSince          string
-	searchBefore         string
-	searchMode           string
-	searchProfile        string
-	searchBinding        string
-	searchSourceVersions []string
-	searchExplain        bool
-	searchSimilarTo      string
-	searchVersion        string
-	searchRerank         bool
+	searchLimit               int
+	searchJSON                bool
+	searchAgent               bool
+	searchFuzzy               bool
+	searchSourcePresent       bool
+	searchTag                 string
+	searchMIME                string
+	searchUnder               string
+	searchSince               string
+	searchBefore              string
+	searchMode                string
+	searchProfile             string
+	searchBinding             string
+	searchSourceVersions      []string
+	searchExplain             bool
+	searchSimilarTo           string
+	searchVersion             string
+	searchRerank              bool
+	searchAsOf                string
+	searchKeepSupersededOrder bool
 )
 
 type documentSearchCLIOptions struct {
-	Mode              string
-	Profile           string
-	BindingID         string
-	ContentVersionIDs []string
-	Limit             int
-	Explain           bool
-	Rerank            bool
-	JSON              bool
-	Agent             bool
+	AsOf                string
+	KeepSupersededOrder bool
+	Mode                string
+	Profile             string
+	BindingID           string
+	ContentVersionIDs   []string
+	Limit               int
+	Explain             bool
+	Rerank              bool
+	JSON                bool
+	Agent               bool
 }
 
 var searchCmd = &cobra.Command{
@@ -78,7 +83,7 @@ See docs/usage/search.md.`,
 		}
 		if searchFuzzy {
 			for _, flag := range []string{
-				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to",
+				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to", "as-of", "keep-superseded-order",
 			} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--fuzzy cannot be combined with --%s", flag))
@@ -92,7 +97,7 @@ See docs/usage/search.md.`,
 			if len(args) != 0 {
 				return usageError(errors.New("--similar-to does not accept query text"))
 			}
-			for _, flag := range []string{"mode", "explain", "rerank", "tag", "mime-type", "under", "modified-since", "modified-before", "source-present"} {
+			for _, flag := range []string{"mode", "explain", "rerank", "as-of", "keep-superseded-order", "tag", "mime-type", "under", "modified-since", "modified-before", "source-present"} {
 				if cmd.Flags().Changed(flag) {
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
@@ -120,6 +125,9 @@ See docs/usage/search.md.`,
 		if cmd.Flags().Changed("version") {
 			return usageError(errors.New("--version requires --similar-to"))
 		}
+		if (cmd.Flags().Changed("as-of") || cmd.Flags().Changed("keep-superseded-order")) && !documentSearchFlagsChanged(cmd) {
+			return usageError(errors.New("validity flags require explicit processing search with --mode, --profile, and --source-version; lexical fallback cannot honor them"))
+		}
 		if documentSearchFlagsChanged(cmd) {
 			if cmd.Flags().Changed("source-present") {
 				return usageError(errors.New("--mode search cannot be combined with --source-present"))
@@ -128,6 +136,7 @@ See docs/usage/search.md.`,
 				return usageError(errors.New("--mode search cannot be combined with tag, MIME, directory, or time filters"))
 			}
 			options := documentSearchCLIOptions{
+				AsOf: searchAsOf, KeepSupersededOrder: searchKeepSupersededOrder,
 				Mode: searchMode, Profile: searchProfile, BindingID: searchBinding,
 				ContentVersionIDs: searchSourceVersions, Limit: searchLimit,
 				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON, Agent: searchAgent,
@@ -415,6 +424,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
+		AsOf: options.AsOf, Superseded: searchSupersededPolicy(options.KeepSupersededOrder),
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
 		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs},
@@ -433,10 +443,13 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if options.Agent {
 		return writeDocumentSearchAgent(cmd, query, report, nil)
 	}
-	return writeDocumentSearchReport(cmd, report, options.Explain, nil)
+	return writeDocumentSearchReport(cmd, report, options.Explain, nil, false)
 }
 
 func validateDocumentSearchOptions(query string, options documentSearchCLIOptions) error {
+	if err := document.ValidateDate(options.AsOf); err != nil {
+		return usageError(err)
+	}
 	if !validDocumentSearchMode(options.Mode) {
 		if options.Mode == "" {
 			return usageError(errors.New("--mode is required with processing search options"))
@@ -514,13 +527,33 @@ func selectDocumentSearchBinding(mode, requested string, bindings []string) (str
 	return "", nil
 }
 
+func searchSupersededPolicy(keepOrder bool) string {
+	if keepOrder {
+		return "keep_order"
+	}
+	return "demote"
+}
+
 // writeDocumentSearchReport prints a processing report. Automatic search
 // passes the folder name hits it adds; explicit processing search passes nil.
 func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain bool,
-	folders []api.SearchHit,
+	folders []api.SearchHit, suppressedSuccessors ...bool,
 ) error {
 	writeDocumentSearchHeader(cmd, report)
 	out := cmd.OutOrStdout()
+	if report.Validity.Status == "outdated_only" {
+		paths := []string{}
+		for _, next := range report.Validity.Successors {
+			paths = append(paths, next.Path)
+		}
+		if len(paths) > 0 {
+			_, _ = fmt.Fprintf(out, "Only outdated documents matched; in force: %s\n", strings.Join(paths, ", "))
+		} else if len(suppressedSuccessors) > 0 && suppressedSuccessors[0] {
+			_, _ = fmt.Fprintln(out, "Only outdated documents matched; successor guidance omitted for the displayed page")
+		} else {
+			_, _ = fmt.Fprintln(out, "Only outdated documents matched; no in-force successor inside the source fence")
+		}
+	}
 	if len(report.Results) == 0 && len(folders) == 0 {
 		if _, err := fmt.Fprintln(out, "no matches inside the source fence"); err != nil {
 			return fmt.Errorf("writing empty document search result: %w", err)
@@ -531,7 +564,7 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 		_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tPATH\tEXCERPT")
 		for _, result := range report.Results {
 			_, _ = fmt.Fprintf(w, "%d\t%.6g\t%s\t%s\t%s\t%s\n", result.Rank, result.Score,
-				formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path, result.Excerpt)
+				formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path+documentValidityReason(result, report), result.Excerpt)
 		}
 		if err := w.Flush(); err != nil {
 			return fmt.Errorf("writing document search results: %w", err)
@@ -549,6 +582,36 @@ func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchRepo
 		_, _ = fmt.Fprintln(out, "results truncated at the requested limit")
 	}
 	return nil
+}
+
+func documentValidityReason(result api.DocumentSearchResult, report api.DocumentSearchReport) string {
+	if result.Validity == nil {
+		return ""
+	}
+	switch result.Validity.State {
+	case "expired":
+		return " (expired)"
+	case "not_yet_effective":
+		return " (not yet effective)"
+	case "superseded":
+		paths := map[int64]string{}
+		for _, item := range report.Results {
+			paths[item.NodeID] = item.Path
+		}
+		for _, item := range report.Validity.Successors {
+			paths[item.NodeID] = item.Path
+		}
+		names := []string{}
+		for _, id := range result.Validity.SupersededBy {
+			path := paths[id]
+			if path == "" {
+				path = formatNodeSelector(id)
+			}
+			names = append(names, path)
+		}
+		return " (superseded by " + strings.Join(names, ", ") + ")"
+	}
+	return ""
 }
 
 func writeDocumentSearchHeader(cmd *cobra.Command, report api.DocumentSearchReport) {
@@ -591,6 +654,8 @@ func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate
 
 func init() {
 	searchCmd.Flags().BoolVar(&searchSourcePresent, "source-present", false, "exclude documents whose watched source is known to be gone")
+	searchCmd.Flags().StringVar(&searchAsOf, "as-of", "", "evaluate processing-search validity on YYYY-MM-DD")
+	searchCmd.Flags().BoolVar(&searchKeepSupersededOrder, "keep-superseded-order", false, "preserve processing-search order while reporting validity")
 	searchCmd.Flags().StringVar(&searchSimilarTo, "similar-to", "", "find similar files using the stored embedding of id:N or /path")
 	searchCmd.Flags().StringVar(&searchVersion, "version", "", "exact current source version for --similar-to")
 	searchCmd.Flags().IntVar(&searchLimit, "limit", defaultSearchLimit,

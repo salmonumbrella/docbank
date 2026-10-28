@@ -499,27 +499,30 @@ func validateDocumentSimilarReport(request api.DocumentSimilarRequest, report ap
 		converted.Results = append(converted.Results, api.DocumentSearchResult{VaultUID: result.VaultUID, NodeID: result.NodeID,
 			ContentVersionID: result.ContentVersionID, Rank: result.Rank, SemanticRank: result.Rank, Score: result.Score, Path: result.Path, Evidence: result.Evidence})
 	}
-	return validateDocumentSearchReport(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: request.Fence}, converted)
+	return validateDocumentSearchResults(api.DocumentSearchRequest{Mode: "semantic", Limit: request.Limit, Fence: request.Fence}, converted)
 }
 
 // ValidateDocumentSearch asks the daemon to apply ordinary search semantics
 // without executing a search. It is used only for an exact empty source fence.
-func (c *Connection) ValidateDocumentSearch(
-	ctx context.Context, request api.DocumentSearchValidationRequest,
-) error {
-	var result api.DocumentSearchValidation
-	apiResponse, err := c.API().ValidateDocumentSearch(ctx, &apiclient.ValidateDocumentSearchRequestOptions{Body: &request})
+func (c *Connection) ValidateDocumentSearch(ctx context.Context, request api.DocumentSearchValidationRequest) (api.DocumentSearchValidation, error) {
+	result, err := c.API().ValidateDocumentSearch(ctx, &apiclient.ValidateDocumentSearchRequestOptions{Body: &request})
 	if err != nil {
-		return err
+		return api.DocumentSearchValidation{}, err
 	}
-	result = *apiResponse
-	if !result.Valid {
-		return errors.New("search validation response is invalid")
+	if result == nil || !result.Valid || result.AsOf == "" || document.ValidateDate(result.AsOf) != nil || (request.AsOf != "" && result.AsOf != request.AsOf) {
+		return api.DocumentSearchValidation{}, errors.New("search validation response is invalid")
 	}
-	return nil
+	return *result, nil
 }
 
 func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
+	if err := validateDocumentSearchResults(request, report); err != nil {
+		return err
+	}
+	return validateSearchValidity(request, report)
+}
+
+func validateDocumentSearchResults(request api.DocumentSearchRequest, report api.DocumentSearchReport) error {
 	if !validUUIDv4(request.Fence.VaultUID) || len(request.Fence.ContentVersionIDs) < 1 ||
 		len(request.Fence.ContentVersionIDs) > 4096 {
 		return errors.New("request fence identity is invalid")

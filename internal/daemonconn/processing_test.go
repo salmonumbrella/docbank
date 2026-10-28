@@ -419,7 +419,7 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 		Profile: "private", Fence: api.DocumentSourceFence{VaultUID: vaultID,
 			ContentVersionIDs: []string{versionID, otherVersionID}}}
 	validReport := func() api.DocumentSearchReport {
-		return api.DocumentSearchReport{RequestedMode: "semantic", ActualMode: "semantic",
+		return api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "semantic", ActualMode: "semantic",
 			Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 			Degradations: []string{}, Trace: []api.DocumentSearchTrace{}, Results: []api.DocumentSearchResult{{
 				VaultUID: vaultID, NodeID: 7, ContentVersionID: versionID, Rank: 1, SemanticRank: 1,
@@ -537,7 +537,7 @@ func TestProcessingClientAcceptsOneSelectedResultPerBuild(t *testing.T) {
 		{name: "distinct builds without selection", secondBuildID: strings.Repeat("b", 64), wantErr: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+			report := api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "lexical", ActualMode: "lexical",
 				MediaSourceSelection: true, MediaSelections: []api.DocumentMediaSelection{},
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{}, Trace: []api.DocumentSearchTrace{},
@@ -568,7 +568,7 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 	const versionID = "22222222-2222-4222-8222-222222222222"
 	request := api.DocumentSearchRequest{Query: "needle", Mode: "lexical", Limit: 20, Profile: "private",
 		Rerank: true, Fence: api.DocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}}}
-	base := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
+	base := api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "lexical", ActualMode: "lexical",
 		Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 		Degradations: []string{}, Results: []api.DocumentSearchResult{{VaultUID: vaultID, NodeID: 1,
 			ContentVersionID: versionID, Rank: 1, LexicalRank: 1, Score: 1, Path: "/needle.txt",
@@ -631,6 +631,7 @@ func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 		report := base
 		if receipt.Outcome == "skipped" {
 			report.Results = nil
+			report.Validity.Status = "empty"
 		} else {
 			report.Degradations = []string{"reranking_degraded"}
 		}
@@ -887,6 +888,7 @@ func TestProcessingClientRejectsResultRevokedFromConsumerFence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{
+			Validity:      api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}},
 			RequestedMode: "lexical", ActualMode: "lexical", Degradations: []string{}, Trace: []api.DocumentSearchTrace{},
 			Coverage: api.DocumentSearchCoverage{State: "unknown"}, Results: []api.DocumentSearchResult{{
 				VaultUID: vaultID, NodeID: 7, ContentVersionID: "33333333-3333-4333-8333-333333333333",

@@ -27,6 +27,12 @@
     }
   },
   "report": {
+    "validity": {
+      "as_of": "2025-01-01",
+      "status": "current",
+      "declared_results": 0,
+      "successors": []
+    },
     "requested_mode": "semantic",
     "actual_mode": "semantic",
     "coverage": {

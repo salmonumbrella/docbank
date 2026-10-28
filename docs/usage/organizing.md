@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-27
 title: Organizing and tagging
 description: Browse, move, rename, and tag documents in the virtual tree.
 ---
@@ -196,8 +196,9 @@ Dates are inclusive calendar dates. An undated successor takes effect for every
 inspection date, and validity reports that uncertainty. Use `supersede --remove`
 to remove a link. If its successor is trashed, select that successor by
 `id:<positive-decimal>`; paths resolve only live nodes. The predecessor must
-still be live. Use `effective --clear` to clear a window. These declarations do
-not change document content or search order.
+still be live. Use `effective --clear` to clear a window. These declarations
+inform [processing-search validity](search.md#search-documents-in-force-on-a-date).
+They do not change document content or ordinary lexical search.
 Links are retained when a successor is trashed and take effect again on restore.
 Audited vaults reject declaration changes until replayable audit support exists.
 

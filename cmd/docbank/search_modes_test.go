@@ -35,9 +35,12 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 			assert.Equal(t, "hybrid", body.Mode)
 			assert.Equal(t, "multilingual", body.BindingID)
 			assert.True(t, body.Rerank)
+			assert.Equal(t, "2025-01-01", body.AsOf)
+			assert.Equal(t, "keep_order", body.Superseded)
 			assert.Equal(t, vaultID, body.Fence.VaultUID)
 			assert.Equal(t, []string{processingTestVersionID}, body.Fence.ContentVersionIDs)
 			assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{
+				Validity:      api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}},
 				RequestedMode: "hybrid", ActualMode: "hybrid",
 				Coverage: api.DocumentSearchCoverage{BindingRequired: true, ScopedDocuments: 1,
 					CompleteDocuments: 1, State: "complete"},
@@ -64,7 +67,7 @@ func TestSearchModesRequireExplicitBindingWhenProfileIsAmbiguous(t *testing.T) {
 
 	command, output := processingTestCommand()
 	require.NoError(t, runDocumentSearch(command, c, "synthetic", documentSearchCLIOptions{
-		Mode: "hybrid", Profile: "private", BindingID: "multilingual",
+		Mode: "hybrid", Profile: "private", BindingID: "multilingual", AsOf: "2025-01-01", KeepSupersededOrder: true,
 		ContentVersionIDs: []string{processingTestVersionID}, Limit: 10, Explain: true, Rerank: true, JSON: true,
 	}))
 	var report api.DocumentSearchReport

@@ -168,6 +168,10 @@ func searchAgentDocumentReport(results ...api.DocumentSearchResult) api.Document
 				EmbeddingSetID: hash, InputGenerationID: hash, InputID: hit.ContentVersionID, InputKind: "original_file", SourceManifestChecksum: hash})
 		}
 	}
-	return api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Results: results,
+	validityStatus := "current"
+	if len(results) == 0 {
+		validityStatus = "empty"
+	}
+	return api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: validityStatus, Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "hybrid", ActualMode: "hybrid", Results: results,
 		Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: max(1, len(results)), CompleteDocuments: max(1, len(results))}}
 }

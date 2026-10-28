@@ -156,8 +156,11 @@ func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentS
 			folders = append(folders, hit)
 		}
 	}
+	successorsSuppressed := false
 	if keep := searchLimit - len(folders); len(report.Results) > keep {
+		omitted := report.Results[keep:]
 		report.Results = report.Results[:keep]
+		successorsSuppressed = trimSearchValidity(&report, omitted)
 		report.Truncated = true
 	}
 	report.Truncated = report.Truncated || lexical.Truncated
@@ -167,7 +170,40 @@ func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentS
 	if searchAgent {
 		return writeDocumentSearchAgent(cmd, query, report, folders)
 	}
-	return writeDocumentSearchReport(cmd, report, false, folders)
+	return writeDocumentSearchReport(cmd, report, false, folders, successorsSuppressed)
+}
+
+// trimSearchValidity keeps validity scoped to the displayed file page. The
+// terminal summary cannot be attributed to individual omitted hits.
+func trimSearchValidity(report *api.DocumentSearchReport, omitted []api.DocumentSearchResult) bool {
+	suppressed := false
+	for _, r := range omitted {
+		if r.Validity != nil && r.Validity.State != "current" {
+			suppressed = len(report.Validity.Successors) > 0
+			report.Validity.Successors = []api.DocumentValiditySuccessor{}
+			break
+		}
+	}
+	report.Validity.DeclaredResults = 0
+	current, allFuture := false, len(report.Results) > 0
+	for _, r := range report.Results {
+		if r.Validity != nil {
+			report.Validity.DeclaredResults++
+		}
+		current = current || r.Validity == nil || r.Validity.State == "current"
+		allFuture = allFuture && r.Validity != nil && r.Validity.State == "not_yet_effective"
+	}
+	switch {
+	case len(report.Results) == 0:
+		report.Validity.Status = "empty"
+	case current:
+		report.Validity.Status = "current"
+	case allFuture:
+		report.Validity.Status = "future_only"
+	default:
+		report.Validity.Status = "outdated_only"
+	}
+	return suppressed
 }
 
 // writeSearchDegradation reports a failed hybrid attempt on stderr so stdout

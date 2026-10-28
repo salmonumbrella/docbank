@@ -2147,6 +2147,7 @@
       );
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const baseRequest: generated.DocumentSearchRequest = {
+        superseded: "keep_order",
         query,
         mode: mapped.mode,
         limit: 100,
