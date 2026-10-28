@@ -220,7 +220,7 @@ func findPeopleSchemas() (schema, schema) {
 func personSchemaProperties() schema {
 	return schema{
 		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), "origin": stringSchema(64),
-		"state": stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
+		schemaStateField: stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "reached_through_person_id": uuidSchema(),
 	}
 }
@@ -647,6 +647,31 @@ func listDocumentsSchemas() (schema, schema) {
 	return input, output
 }
 
+func calendarDateSchema() schema {
+	return schema{"type": "string", "format": "date", "minLength": 10, "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+}
+
+func searchResultValiditySchema() schema {
+	return objectSchema(schema{
+		"state":          enumSchema("current", "superseded", "expired", "not_yet_effective"),
+		"undated":        booleanSchema(),
+		"superseded_by":  arraySchema(integerSchema(1, 0), 16),
+		"effective_from": calendarDateSchema(), "effective_to": calendarDateSchema(),
+	}, "state", "undated", "superseded_by")
+}
+
+func searchReportValiditySchema() schema {
+	successor := objectSchema(schema{
+		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
+		"path":           schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"},
+		"effective_from": calendarDateSchema(), "in_fence": schema{"type": "boolean", jsonSchemaConst: true}, "undated": booleanSchema(),
+	}, "node_id", "content_version_id", "path", "in_fence", "undated")
+	return objectSchema(schema{
+		"as_of": calendarDateSchema(), "status": enumSchema("current", "outdated_only", "future_only", "empty"),
+		"declared_results": integerSchema(0, 100), "successors": arraySchema(successor, 16),
+	}, "as_of", "status", "declared_results", "successors")
+}
+
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
@@ -655,12 +680,15 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["profile"] = schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"}
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
+	properties["as_of"] = calendarDateSchema()
+	properties["superseded"] = enumSchema("demote", "keep_order")
 	input := rootObjectSchema(properties, "query", "profile")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
 	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
 	input["else"] = schema{"required": []string{"filters"}}
 	result := objectSchema(schema{
+		"validity":           searchResultValiditySchema(),
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
 		"rank":               integerSchema(1, 100),
@@ -670,6 +698,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
+		"validity":             searchReportValiditySchema(),
 		"vault_id":             uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
 		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
@@ -685,7 +714,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"skipped_reasons": arraySchema(stringSchema(64), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
+	}), cacheRequired("validity", "vault_id", "fence", "fence_fingerprint", "observed_scope_count", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	return input, output
 }

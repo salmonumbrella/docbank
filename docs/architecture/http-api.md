@@ -840,8 +840,10 @@ daemon host's local calendar date. Optional `superseded` is `demote` (default)
 or `keep_order`. Evaluation follows retrieval, including media-source search.
 Default ordering stably places current hits before out-of-force hits, renumbers
 `rank`, and preserves `score`, lane ranks, and evidence. `keep_order` returns
-the original order with the same validity metadata. The web and MCP use this
-option while they do not present validity reasons.
+the original order with the same validity metadata. The web uses this option
+until it presents validity reasons. [MCP search](../usage/mcp.md#tool-catalog)
+exposes validity and uses default demotion unless the caller requests
+`superseded: "keep_order"`.
 
 Every processing-search response includes `validity` with `as_of`, `status`,
 `declared_results`, and `successors`. Status is `empty`, `current`,

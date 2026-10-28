@@ -672,7 +672,7 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 			}
 			assert.Equal(t, api.DocumentSourceFence{VaultUID: testVaultID,
 				ContentVersionIDs: []string{testVersionID}}, input.Fence)
-			assert.Equal(t, "keep_order", input.Superseded)
+			assert.Empty(t, input.Superseded)
 			writeDaemonJSON(t, response, api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "lexical", ActualMode: "lexical",
 				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
 				Degradations: []string{"embedding_unavailable"}, Results: []api.DocumentSearchResult{{

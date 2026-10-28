@@ -371,6 +371,8 @@ func listDocuments(
 }
 
 type searchDocumentsInput struct {
+	AsOf              string                          `json:"as_of"`
+	Superseded        string                          `json:"superseded"`
 	Query             string                          `json:"query"`
 	Mode              string                          `json:"mode"`
 	Limit             int                             `json:"limit"`
@@ -382,13 +384,14 @@ type searchDocumentsInput struct {
 }
 
 type searchResultOutput struct {
-	NodeID           int64    `json:"node_id"`
-	ContentVersionID string   `json:"content_version_id"`
-	Rank             int      `json:"rank"`
-	Score            float64  `json:"score"`
-	Path             string   `json:"path"`
-	Excerpt          string   `json:"excerpt,omitempty"`
-	EvidenceIDs      []string `json:"evidence_ids"`
+	Validity         *api.DocumentResultValidity `json:"validity,omitzero"`
+	NodeID           int64                       `json:"node_id"`
+	ContentVersionID string                      `json:"content_version_id"`
+	Rank             int                         `json:"rank"`
+	Score            float64                     `json:"score"`
+	Path             string                      `json:"path"`
+	Excerpt          string                      `json:"excerpt,omitempty"`
+	EvidenceIDs      []string                    `json:"evidence_ids"`
 }
 
 type searchCoverageOutput struct {
@@ -406,16 +409,17 @@ type sourceFenceOutput struct {
 type searchDocumentsOutput struct {
 	privateCache
 
-	VaultID            string               `json:"vault_id"`
-	Fence              sourceFenceOutput    `json:"fence"`
-	FenceFingerprint   string               `json:"fence_fingerprint"`
-	ObservedScopeCount int                  `json:"observed_scope_count"`
-	RequestedMode      string               `json:"requested_mode"`
-	ActualMode         string               `json:"actual_mode"`
-	Coverage           searchCoverageOutput `json:"coverage"`
-	SkippedReasons     []string             `json:"skipped_reasons"`
-	Results            []searchResultOutput `json:"results"`
-	Truncated          bool                 `json:"truncated"`
+	Validity           api.DocumentSearchValidity `json:"validity"`
+	VaultID            string                     `json:"vault_id"`
+	Fence              sourceFenceOutput          `json:"fence"`
+	FenceFingerprint   string                     `json:"fence_fingerprint"`
+	ObservedScopeCount int                        `json:"observed_scope_count"`
+	RequestedMode      string                     `json:"requested_mode"`
+	ActualMode         string                     `json:"actual_mode"`
+	Coverage           searchCoverageOutput       `json:"coverage"`
+	SkippedReasons     []string                   `json:"skipped_reasons"`
+	Results            []searchResultOutput       `json:"results"`
+	Truncated          bool                       `json:"truncated"`
 }
 
 func searchDocuments(
@@ -439,7 +443,8 @@ func searchDocuments(
 			return response{}, callErr
 		}
 		if len(resolution.Fence.ContentVersionIDs) == 0 {
-			_, callErr = c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+			validation, callErr := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+				AsOf: input.AsOf, Superseded: input.Superseded,
 				Query: input.Query, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile,
 				BindingID: input.BindingID, Explain: input.Explain,
 			})
@@ -447,38 +452,37 @@ func searchDocuments(
 				return response{}, callErr
 			}
 			return response{resolution: resolution, report: api.DocumentSearchReport{
+				Validity:      api.DocumentSearchValidity{AsOf: validation.AsOf, Status: "empty", Successors: []api.DocumentValiditySuccessor{}},
 				RequestedMode: effectiveSearchMode(input.Mode), ActualMode: effectiveEmptySearchMode(input.Mode),
 				Coverage:     api.DocumentSearchCoverage{State: "complete"},
 				Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
 			}}, nil
 		}
-		// Preserve retrieval order while MCP output lacks validity reasons.
-		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query, Superseded: "keep_order",
+		report, callErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: input.Query, AsOf: input.AsOf, Superseded: input.Superseded,
 			Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID,
 			Explain: input.Explain, Fence: api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID,
 				ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}})
 		if callErr != nil {
 			return response{}, callErr
 		}
-		if len(report.Results) == 0 {
-			return response{resolution: resolution, report: report, documents: []api.DocumentSummary{}}, nil
-		}
-		identities := make([]api.DocumentIdentity, len(report.Results))
-		for index, item := range report.Results {
-			identities[index] = api.DocumentIdentity{NodeID: item.NodeID,
-				ContentVersionID: item.ContentVersionID, Path: item.Path}
-		}
-		documents, callErr := c.ResolveDocumentSummaries(ctx,
-			api.DocumentSummaryResolveRequest{Identities: identities})
+		batches, callErr := searchSummaryBatches(resolution.Fence, report)
 		if callErr != nil {
 			return response{}, callErr
+		}
+		documents := []api.DocumentSummary{}
+		for _, identities := range batches {
+			resolved, resolveErr := c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{Identities: identities})
+			if resolveErr != nil {
+				return response{}, resolveErr
+			}
+			documents = append(documents, resolved...)
 		}
 		return response{resolution: resolution, report: report, documents: documents}, nil
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{VaultID: result.resolution.Fence.VaultUID,
+	output := searchDocumentsOutput{Validity: result.report.Validity, VaultID: result.resolution.Fence.VaultUID,
 		Fence: sourceFenceOutput{VaultID: result.resolution.Fence.VaultUID,
 			ContentVersionIDs: slices.Clone(result.resolution.Fence.ContentVersionIDs)},
 		FenceFingerprint:   result.resolution.FenceFingerprint,
@@ -499,11 +503,62 @@ func searchDocuments(
 			}
 			evidence[evidenceIndex] = string(encoded)
 		}
-		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
+		output.Results[index] = searchResultOutput{Validity: item.Validity, NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
 	}
 	return output, documentResourceLinks(result.resolution.Fence.VaultUID, result.documents), nil
+}
+
+// searchSummaryBatches admits every identity before any summary read. The
+// combined hit and terminal-successor bounds require at most two batches.
+func searchSummaryBatches(fence api.ResolvedDocumentSourceFence, report api.DocumentSearchReport) ([][]api.DocumentIdentity, error) {
+	if len(report.Results) > 100 || len(report.Validity.Successors) > 16 {
+		return nil, errors.New("search summary identity count exceeds its bound")
+	}
+	type key struct {
+		nodeID  int64
+		version string
+	}
+	seen := make(map[key]string)
+	versions := make(map[string]bool, len(fence.ContentVersionIDs))
+	for _, version := range fence.ContentVersionIDs {
+		versions[version] = true
+	}
+	identities := make([]api.DocumentIdentity, 0, len(report.Results)+len(report.Validity.Successors))
+	add := func(id api.DocumentIdentity) error {
+		if id.NodeID <= 0 || !versions[id.ContentVersionID] {
+			return errors.New("search summary identity escaped the source fence")
+		}
+		k := key{id.NodeID, id.ContentVersionID}
+		if path, exists := seen[k]; exists {
+			if path != id.Path {
+				return errors.New("search summary identity has conflicting paths")
+			}
+			return nil
+		}
+		seen[k] = id.Path
+		identities = append(identities, id)
+		return nil
+	}
+	for _, item := range report.Results {
+		if err := add(api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}); err != nil {
+			return nil, err
+		}
+	}
+	for _, item := range report.Validity.Successors {
+		if !item.InFence {
+			return nil, errors.New("search successor escaped the source fence")
+		}
+		if err := add(api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}); err != nil {
+			return nil, err
+		}
+	}
+	batches := make([][]api.DocumentIdentity, 0, 2)
+	for batch := range slices.Chunk(identities, store.MaxDocumentSummaryResolutions) {
+		batches = append(batches, batch)
+	}
+	return batches, nil
 }
 
 func effectiveSearchMode(mode string) string {
@@ -792,10 +847,15 @@ func getProcessingCoverage(
 
 func documentResourceLinks(vaultID string, documents []api.DocumentSummary) []*sdkmcp.ResourceLink {
 	links := make([]*sdkmcp.ResourceLink, 0)
+	seen := make(map[string]bool)
 	for _, document := range documents {
 		for _, rendition := range document.ActiveRenditions {
 			uri := renditionResourceURI(renditionResourceIdentity{VaultID: vaultID, NodeID: document.NodeID,
 				ContentVersionID: document.ContentVersionID, AttachmentID: rendition.AttachmentID})
+			if seen[uri] {
+				continue
+			}
+			seen[uri] = true
 			links = append(links, &sdkmcp.ResourceLink{URI: uri,
 				Name:  "docbank-rendition-" + rendition.AttachmentID,
 				Title: document.Name + " rendition", MIMEType: "text/markdown"})
