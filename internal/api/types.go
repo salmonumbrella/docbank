@@ -239,6 +239,9 @@ type CoverageReport struct {
 }
 
 type DocumentSearchRequest struct {
+	AsOf       string `json:"as_of,omitzero" format:"date" maxLength:"10"`
+	Superseded string `json:"superseded,omitzero" enum:"demote,keep_order"`
+
 	MediaSources MediaSearchSources  `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
 	Query        string              `json:"query" minLength:"1" maxLength:"8192"`
 	Mode         string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
@@ -302,6 +305,9 @@ type MediaTimeSpan struct {
 // DocumentSearchValidationRequest validates search semantics when an exact
 // resolved source fence is empty and therefore must not be searched.
 type DocumentSearchValidationRequest struct {
+	AsOf       string `json:"as_of,omitzero" format:"date" maxLength:"10"`
+	Superseded string `json:"superseded,omitzero" enum:"demote,keep_order"`
+
 	Query     string `json:"query" minLength:"1" maxLength:"8192"`
 	Mode      string `json:"mode" enum:"auto,lexical,semantic,hybrid"`
 	Limit     int    `json:"limit,omitzero" minimum:"1" maximum:"100"`
@@ -314,7 +320,8 @@ type DocumentSearchValidationRequest struct {
 }
 
 type DocumentSearchValidation struct {
-	Valid bool `json:"valid"`
+	AsOf  string `json:"as_of" format:"date"`
+	Valid bool   `json:"valid"`
 }
 
 type DocumentEvidenceReference struct {
@@ -367,7 +374,32 @@ type DocumentSearchTrace struct {
 	Count int    `json:"count" minimum:"0"`
 }
 
+type DocumentResultValidity struct {
+	State         string  `json:"state" enum:"current,superseded,expired,not_yet_effective"`
+	Undated       bool    `json:"undated"`
+	SupersededBy  []int64 `json:"superseded_by" maxItems:"16"`
+	EffectiveFrom string  `json:"effective_from,omitzero" format:"date"`
+	EffectiveTo   string  `json:"effective_to,omitzero" format:"date"`
+}
+
+type DocumentValiditySuccessor struct {
+	NodeID           int64  `json:"node_id" minimum:"1"`
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+	Path             string `json:"path" minLength:"2" maxLength:"16384" pattern:"^/"`
+	EffectiveFrom    string `json:"effective_from,omitzero" format:"date"`
+	InFence          bool   `json:"in_fence"`
+	Undated          bool   `json:"undated"`
+}
+
+type DocumentSearchValidity struct {
+	AsOf            string                      `json:"as_of" format:"date"`
+	Status          string                      `json:"status" enum:"current,outdated_only,future_only,empty"`
+	DeclaredResults int                         `json:"declared_results" minimum:"0" maximum:"100"`
+	Successors      []DocumentValiditySuccessor `json:"successors" maxItems:"16"`
+}
+
 type DocumentSearchResult struct {
+	Validity         *DocumentResultValidity     `json:"validity,omitzero"`
 	VaultUID         string                      `json:"vault_uid" format:"uuid"`
 	NodeID           int64                       `json:"node_id" minimum:"1"`
 	ContentVersionID string                      `json:"content_version_id" format:"uuid"`
@@ -403,6 +435,7 @@ type DocumentMediaSelection struct {
 }
 
 type DocumentSearchReport struct {
+	Validity             DocumentSearchValidity          `json:"validity"`
 	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
 	RequestedMode        string                          `json:"requested_mode"`

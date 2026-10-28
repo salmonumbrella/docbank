@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-24
+last_edited: 2026-10-27
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -1155,6 +1155,14 @@ Similarity uses stored embeddings locally. It excludes the source node, groups
 identical content, and reports how many other eligible copies each group has.
 Missing source embeddings return `unavailable`. Query text, `--mode`,
 `--explain`, `--rerank`, and lexical filters cannot accompany `--similar-to`.
+
+Processing search also accepts `--as-of YYYY-MM-DD` and
+`--keep-superseded-order`. Both require the explicit processing form with
+`--mode`, `--profile`, and `--source-version`; lexical fallback rejects them.
+Dates evaluate the standing of current document contents. Default ordering
+places documents in force first without changing scores. Text output explains
+out-of-force hits and names available in-force replacements. See
+[date-aware search](usage/search.md#search-documents-in-force-on-a-date).
 
 ## docbank export
 

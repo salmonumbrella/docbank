@@ -416,10 +416,11 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		OperationID: "validateDocumentSearch", Method: http.MethodPost,
 		Path: "/api/v1/search/validate", Summary: "Validate document-search semantics without executing a search",
 	}, func(ctx context.Context, input *searchValidationInput) (*searchValidationOutput, error) {
-		if err := validateDocumentSearch(ctx, d.Processing, input.Body); err != nil {
+		validation, err := validateDocumentSearch(ctx, d.Processing, input.Body)
+		if err != nil {
 			return nil, err
 		}
-		return &searchValidationOutput{Body: DocumentSearchValidation{Valid: true}}, nil
+		return &searchValidationOutput{Body: validation}, nil
 	})
 	huma.Register(api, huma.Operation{
 		OperationID: "searchDocuments", Method: http.MethodPost,
@@ -681,6 +682,10 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments,
 			State: string(report.Coverage.State)}, Truncated: report.Truncated,
 		Results: make([]DocumentSearchResult, len(report.Results)), Degradations: make([]string, len(report.Degradations))}
+	result.Validity = DocumentSearchValidity{AsOf: report.Validity.AsOf, Status: report.Validity.Status, DeclaredResults: report.Validity.DeclaredResults, Successors: make([]DocumentValiditySuccessor, len(report.Validity.Successors))}
+	for i, s := range report.Validity.Successors {
+		result.Validity.Successors[i] = DocumentValiditySuccessor{NodeID: s.NodeID, ContentVersionID: s.ContentVersionID, Path: s.Path, EffectiveFrom: s.EffectiveFrom, InFence: s.InFence, Undated: s.Undated}
+	}
 	if report.MediaSelections != nil {
 		result.MediaSelections = make([]DocumentMediaSelection, len(report.MediaSelections))
 		for i, selection := range report.MediaSelections {
@@ -695,6 +700,9 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			ContentVersionID: item.Document.ContentVersionID, Rank: item.Rank, Score: item.Score,
 			Path: item.Path, Excerpt: item.Excerpt, LexicalRank: item.LexicalRank,
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
+		if v := item.Validity; v != nil {
+			converted.Validity = &DocumentResultValidity{State: string(v.State), Undated: v.Undated, SupersededBy: v.SupersededBy, EffectiveFrom: v.EffectiveFrom, EffectiveTo: v.EffectiveTo}
+		}
 		for evidenceIndex, evidence := range item.Evidence {
 			convertedEvidence := DocumentEvidenceReference{Kind: evidence.Kind,
 				BuildID: evidence.BuildID, SegmentID: evidence.SegmentID,
@@ -818,6 +826,7 @@ func fromProcessingError(err error) error {
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
+		{store.ErrInvalidSupersession, http.StatusUnprocessableEntity, "invalid_supersession", "document validity input or authority is invalid"},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
@@ -871,25 +880,27 @@ func resolveDocumentSourceFence(ctx context.Context, service *processing.Service
 	}, nil
 }
 
-func validateDocumentSearch(ctx context.Context, service *processing.Service, input DocumentSearchValidationRequest) error {
+func validateDocumentSearch(ctx context.Context, service *processing.Service, input DocumentSearchValidationRequest) (DocumentSearchValidation, error) {
 	if service == nil {
-		return processingUnavailable()
+		return DocumentSearchValidation{}, processingUnavailable()
 	}
-	err := service.ValidateSearch(ctx, processing.SearchRequest{Query: input.Query,
-		ContentFirst: input.ContentFirst,
-		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
-		BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank})
+	request := processing.SearchRequest{Query: input.Query, ContentFirst: input.ContentFirst, Mode: input.Mode, Limit: input.Limit, Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, AsOf: input.AsOf, Superseded: input.Superseded}
+	asOf, err := processing.NormalizeSearchAsOf(request)
 	if err != nil {
-		return fromProcessingError(err)
+		return DocumentSearchValidation{}, fromProcessingError(err)
 	}
-	return nil
+	request.AsOf = asOf
+	if err = service.ValidateSearch(ctx, request); err != nil {
+		return DocumentSearchValidation{}, fromProcessingError(err)
+	}
+	return DocumentSearchValidation{Valid: true, AsOf: asOf}, nil
 }
 
 func searchDocuments(ctx context.Context, service *processing.Service, input DocumentSearchRequest) (DocumentSearchReport, error) {
 	if service == nil {
 		return DocumentSearchReport{}, processingUnavailable()
 	}
-	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query,
+	report, err := service.Search(ctx, processing.SearchRequest{Query: input.Query, AsOf: input.AsOf, Superseded: input.Superseded,
 		ContentFirst: input.ContentFirst,
 		Mode:         input.Mode, Limit: input.Limit, Profile: input.Profile,
 		BindingID: input.BindingID, Explain: input.Explain,

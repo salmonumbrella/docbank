@@ -109,3 +109,11 @@ func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessingInvalidSupersessionMapsToUnprocessableEntity(t *testing.T) {
+	t.Parallel()
+	mapped := &Error{}
+	require.ErrorAs(t, fromProcessingError(fmt.Errorf("invalid authority: %w", store.ErrInvalidSupersession)), &mapped)
+	assert.Equal(t, http.StatusUnprocessableEntity, mapped.Status)
+	assert.Equal(t, "invalid_supersession", mapped.Code)
+}

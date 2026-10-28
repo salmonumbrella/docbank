@@ -223,7 +223,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			case tc.malformed:
 				_, _ = w.Write([]byte(`{"actual_mode":"semantic"}`))
 			default:
-				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
+				assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{Validity: api.DocumentSearchValidity{AsOf: "2025-01-01", Status: "current", Successors: []api.DocumentValiditySuccessor{}}, RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}, Results: []api.DocumentSearchResult{{VaultUID: vault, NodeID: 42, ContentVersionID: processingTestVersionID, Rank: 1, Score: .75, Path: "/query.txt", Excerpt: "query words", LexicalRank: 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}}}))
 			}
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)

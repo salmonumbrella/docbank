@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-27
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -835,6 +835,38 @@ Hybrid uses these lexical ranks alongside semantic ranks. Pure semantic accepts
 the option without changing vector results. Optional reranking can reorder
 the selected candidates. `POST /search/validate` accepts the same preference.
 
+Optional `as_of` is a canonical `YYYY-MM-DD` calendar date. Omission uses the
+daemon host's local calendar date. Optional `superseded` is `demote` (default)
+or `keep_order`. Evaluation follows retrieval, including media-source search.
+Default ordering stably places current hits before out-of-force hits, renumbers
+`rank`, and preserves `score`, lane ranks, and evidence. `keep_order` returns
+the original order with the same validity metadata. The web and MCP use this
+option while they do not present validity reasons.
+
+Every processing-search response includes `validity` with `as_of`, `status`,
+`declared_results`, and `successors`. Status is `empty`, `current`,
+`future_only`, or `outdated_only`; the latter describes the returned page, not
+the whole fence. Declared results include `validity.state` (`current`,
+`superseded`, `expired`, or `not_yet_effective`), `undated`, `superseded_by`,
+and optional inclusive `effective_from` and `effective_to`. Undeclared hits
+omit the per-result object. See [date-aware search](../usage/search.md#search-documents-in-force-on-a-date)
+for evaluation and display semantics.
+
+Report successors are the first in-force nodes reached from out-of-force hits,
+deduplicated and capped at 16. Each names `node_id`, `content_version_id`,
+`path`, optional `effective_from`, `undated`, and `in_fence: true`. Evaluation
+and traversal use only current live file versions within the request fence;
+out-of-fence relationships neither annotate nor demote a hit. Media selectors
+limit evidence, while validity may use any current live version in that fence.
+The lookup validates the in-fence graph with bounds of 4,096 nodes and
+16 links in either direction. Corrupt or
+over-budget authority fails explicitly instead of returning partial validity.
+
+`POST /search/validate` accepts both optional fields, applies the same input
+semantics without executing search, and returns `{"valid": true, "as_of":
+"YYYY-MM-DD"}`. Search validity requires daemon protocol 98; Go clients reject missing or inconsistent reports and successors outside
+the request fence.
+
 The response includes `requested_mode`, `actual_mode`, `coverage`,
 `degradations`, `results`, `truncated`, and `trace` (`explain: true` populates
 the trace). An opted-in request also returns a `reranking` receipt with
@@ -874,7 +906,7 @@ envelope. Common processing codes are:
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
 | 409 | `rendition_operator_required` | Processing needs operator intervention; an unreadable PDF passwords file returns the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file` without its path |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
-| 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
+| 422 | `invalid_processing_consent_expiry`, `search_query_required`, `invalid_supersession`, `validation` | Invalid expiry, blank query, invalid validity input or authority, or request schema violation |
 | 422 | `rendition_failed` | Required rendition work failed |
 | 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why. A locked PDF that no configured password opens instead creates a job that ends `failed` with `failure_code=pdf_password_required` |
 | 404 | `not_found` | Requested node, version, job, or active rendition is absent |
@@ -1747,7 +1779,7 @@ receives `413` before the append runs.
 ### Document validity declarations
 
 Owners can record that one live file replaces another, independently of content
-versions and provenance facts. These routes do not change search order.
+versions and provenance facts. Their declarations inform processing-search validity; ordinary lexical search keeps its existing order.
 
 | Route | Behavior | Revision guarded by `If-Match` |
 | --- | --- | --- |

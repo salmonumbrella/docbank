@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-14
+last_edited: 2026-10-27
 title: Automatic and processing search
 description: Choose automatic retrieval or an explicit profile and source-version set.
 ---
@@ -110,6 +110,55 @@ grant in the same approval. Review the reranking provider and its disclosure
 alongside the document and query operations. CLI grants have no expiry.
 Explicit processing `lexical` and `auto` use text already stored locally. They do not require
 query-text consent or call an embedding provider.
+
+## Search documents in force on a date
+
+Processing search evaluates owner-declared [supersession and effective dates](organizing.md#document-validity)
+after ranking. It places documents in force first and preserves the relative
+order in each group. Scores stay unchanged: use `rank` for display order,
+because scores need not decrease with rank. Vaults without
+declarations keep their existing order and scores.
+
+Use `--as-of YYYY-MM-DD` with the explicit processing form to evaluate another
+calendar date. Omission uses the daemon host's local date. Dates include both
+endpoints. Search still reads current content versions; it does not retrieve
+historical document contents. Add `--keep-superseded-order` to retain the
+original order while receiving the same validity reasons. Both flags require
+`--mode`, `--profile`, and `--source-version`; the CLI rejects them when it
+would use ordinary lexical search.
+
+```sh
+docbank search renewal --mode lexical --profile private \
+  --source-version 11111111-1111-4111-8111-111111111111 \
+  --as-of 2024-06-01
+```
+
+Text output marks `superseded`, `expired`, and `not_yet_effective` hits. A
+superseded hit names a successor path already present in the response, or its
+`id:N` selector when only the direct successor identity is available. The
+report separately names up to 16 terminal successors in force as guidance for
+what to read next. An undated replacement applies at every evaluation date and
+sets `undated: true`.
+
+Automatic search reserves space for matching folders. If this removes an
+out-of-force file hit, it clears terminal successor suggestions. When only
+outdated files remain and suggestions were cleared, text output says that
+successor guidance was omitted.
+Status and counts describe the displayed file page. Use explicit processing search when
+you need the daemon's complete bounded replacement guidance.
+
+JSON reports always include `validity.as_of`, `status`, `declared_results`, and
+`successors`. Status is `empty` for no hits, `current` when any hit is in force,
+`future_only` when every hit starts later, and `outdated_only` otherwise.
+`outdated_only` describes the returned page; a current document below the limit
+may still exist. Each declared hit includes its state, dates, and direct
+`superseded_by` node IDs. Undeclared hits omit the per-hit object.
+
+Validity uses only current live versions inside the request's source fence.
+An excluded or trashed successor cannot demote a hit or appear in its metadata.
+For media-source searches, selectors constrain searched evidence; replacement
+authority can use any current live version already in the request fence.
+The web and MCP request `keep_order` while they do not present validity reasons.
 
 ## Rerank search results
 
