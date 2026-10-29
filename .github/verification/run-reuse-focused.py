@@ -57,8 +57,10 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'default-only':
-        runs = [('default', '1', packet['packages'], packet['run_regex'], 'fts5', False)]
+    elif packet['mode'] == 'cover-profile':
+        runs = [('profile-index-default', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False), ('profile-index-cache64', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
+    elif packet['mode'] == 'profile':
+        runs = [('profile', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -82,7 +84,8 @@ try:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
             command += ['-bench', '^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$', '-benchtime=3x', '-benchmem']
-        run_env = env | {'CGO_ENABLED': cgo}
+        run_env = env | {'CGO_ENABLED': cgo, 'REUSE_DIAGNOSTIC_CPU': str(evidence / (name + '-query.cpu'))}
+        run_env['REUSE_SOURCE_DIAGNOSTIC_CACHE'] = '64MiB' if name.endswith('cache64') else 'default'
         log = evidence / (name + '.log')
         with log.open('w') as output:
             output.write('COMMAND=' + json.dumps(command) + '\nCGO_ENABLED=' + cgo + '\n')
@@ -116,6 +119,10 @@ try:
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
         if packet['mode'] != 'red':
             assert process.returncode == 0
+        if name.startswith('profile'):
+            for suffix, flags in [('flat', []), ('cumulative', ['-cum'])]:
+                with (evidence / (name + '-' + suffix + '.txt')).open('w') as output:
+                    subprocess.run(['go', 'tool', 'pprof', '-top', '-nodecount=40', *flags, str(evidence / (name + '-query.cpu'))], env=run_env, stdout=output, stderr=subprocess.STDOUT, check=True)
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
