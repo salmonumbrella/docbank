@@ -57,6 +57,8 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
+    elif packet['mode'] == 'null-red':
+        runs = [('null-red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonNullOrdinalParity$', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -110,9 +112,14 @@ try:
             small, multi = map(int, match.groups())
             assert multi > small + 4
             result |= {'expected_red': True, 'small': small, 'multi': multi}
+        if packet['mode'] == 'null-red':
+            assert process.returncode == 1 and 'An error is expected but got nil' in content
+            assert '--- FAIL: TestSemanticSearchSourceSingletonNullOrdinalParity/input' in content
+            assert '--- FAIL: TestSemanticSearchSourceSingletonNullOrdinalParity/vector' in content
+            result['expected_red'] = True
         results.append(result)
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
-        if packet['mode'] != 'red':
+        if packet['mode'] not in ('red','null-red'):
             assert process.returncode == 0
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
