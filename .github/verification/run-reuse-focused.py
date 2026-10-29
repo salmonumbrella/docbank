@@ -31,8 +31,8 @@ try:
     for name, item in packet['files'].items():
         relative = Path(name)
         assert not relative.is_absolute() and '..' not in relative.parts
-        assert name.startswith(('internal/store/', 'internal/retrieval/', 'internal/processing/', 'docs/architecture/'))
-        assert relative.suffix in ('.go', '.md')
+        assert name.startswith(('internal/store/', 'internal/retrieval/', 'internal/processing/', 'docs/architecture/', 'sqlite/mattn/'))
+        assert relative.suffix in ('.go', '.md', '.c', '.h')
         data = base64.b64decode(item['content'])
         assert hashlib.sha256(data).hexdigest() == item['sha256']
         destination = root / relative
@@ -57,6 +57,10 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
+    elif packet['mode'] == 'native-return':
+        runs = [('native-return', '1', ['./internal/store'], '^TestNativeOriginalSingletonReturnPathUtility$', 'fts5', False)]
+    elif packet['mode'] == 'native-spike':
+        runs = [('native', '1', ['./sqlite/...'], '^Test', 'fts5', False), ('purego', '0', ['./sqlite/...'], '^Test', 'fts5', False), ('system-lib', '1', ['./sqlite/...'], '^Test', 'fts5 libsqlite3', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -75,7 +79,7 @@ try:
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
     assert not fuzz_dir.exists()
     for name, cgo, packages, expression, run_tags, fuzz in runs:
-        command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=20m', '-v']
+        command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=' + ('5m' if packet['mode'] == 'native-return' else '60s' if packet['mode'] == 'native-spike' else '20m'), '-v']
         if fuzz:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
