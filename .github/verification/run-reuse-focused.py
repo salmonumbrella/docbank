@@ -54,9 +54,13 @@ try:
         for key in ('GOGC', 'GOMEMLIMIT', 'GODEBUG'):
             f.write(key + '=' + env.get(key, 'unset') + '\n')
     if packet['mode'] == 'red':
-        runs = [('red', '1', ['./internal/store'], packet.get('trace_regex','^TestSemanticSearchSourceSingletonQueryGrowth$'), tags, False)]
+        runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
+    elif packet['mode'] == 'prototype':
+        runs = [('prototype-focused', '1', ['./internal/store'], '^Test(SemanticSearchSourceSingleton|OriginalSemanticSnapshot|VectorIndex)', 'fts5', False), ('profile', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
+    elif packet['mode'] == 'profile':
+        runs = [('profile', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -69,7 +73,7 @@ try:
         assert len(default_expression) < 2048
         runs = [('default', '1', default_packages, default_expression, 'fts5', False), ('purego', '0', packages, expression, 'fts5', False)]
         if packet.get('trace'):
-            runs.append(('execution-trace', '1', ['./internal/store'], packet.get('trace_regex','^TestSemanticSearchSourceSingletonQueryGrowth$'), 'fts5 sqlite_trace', False))
+            runs.append(('execution-trace', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', 'fts5 sqlite_trace', False))
         if packet.get('fuzz'):
             runs.append(('fuzz', '1', ['./internal/store'], '^$', 'fts5', True))
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
@@ -80,7 +84,7 @@ try:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
             command += ['-bench', '^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$', '-benchtime=3x', '-benchmem']
-        run_env = env | {'CGO_ENABLED': cgo}
+        run_env = env | {'CGO_ENABLED': cgo, 'REUSE_DIAGNOSTIC_CPU': str(evidence / 'query.cpu')}
         log = evidence / (name + '.log')
         with log.open('w') as output:
             output.write('COMMAND=' + json.dumps(command) + '\nCGO_ENABLED=' + cgo + '\n')
@@ -114,6 +118,10 @@ try:
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
         if packet['mode'] != 'red':
             assert process.returncode == 0
+        if name == 'profile':
+            for suffix, flags in [('flat', []), ('cumulative', ['-cum'])]:
+                with (evidence / ('profile-' + suffix + '.txt')).open('w') as output:
+                    subprocess.run(['go', 'tool', 'pprof', '-top', '-nodecount=40', *flags, str(evidence / 'query.cpu')], env=run_env, stdout=output, stderr=subprocess.STDOUT, check=True)
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
