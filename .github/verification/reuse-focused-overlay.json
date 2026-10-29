@@ -1,6 +1,6 @@
 {
   "base": "a9ba01d956ca7f2e7e476bbbb10a6dd6ac0cce47",
-  "mode": "green",
+  "mode": "benchmark",
   "tags": "fts5",
   "files": {
     "docs/architecture/document-processing.md": {

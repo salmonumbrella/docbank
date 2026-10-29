@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 
@@ -40,14 +41,22 @@ try:
         destination.write_bytes(data)
     tags = packet.get('tags', 'fts5')
     assert tags in ('fts5', 'fts5 sqlite_trace')
-    metadata = {'base': expected, 'mode': packet['mode'], 'tags': tags, 'files': {k: v['sha256'] for k, v in packet['files'].items()}}
+    index_env = env | {'GIT_INDEX_FILE': str(managed / 'candidate.index')}
+    subprocess.run(['git', 'read-tree', expected], env=index_env, check=True)
+    subprocess.run(['git', 'add', '--', *packet['files']], env=index_env, check=True)
+    candidate_tree = subprocess.check_output(['git', 'write-tree'], env=index_env).decode().strip()
+    metadata = {'base': expected, 'candidate_tree': candidate_tree, 'mode': packet['mode'], 'tags': tags, 'files': {k: v['sha256'] for k, v in packet['files'].items()}}
     (evidence / 'source.json').write_text(json.dumps(metadata, indent=2))
     with (evidence / 'environment.txt').open('w') as f:
         for command in (['uname', '-smr'], ['lscpu'], ['go', 'version']):
             subprocess.run(command, env=env, stdout=f, check=True)
         f.write('GOMAXPROCS=2 GOFLAGS=-p=2 -trimpath\n')
+        for key in ('GOGC', 'GOMEMLIMIT', 'GODEBUG'):
+            f.write(key + '=' + env.get(key, 'unset') + '\n')
     if packet['mode'] == 'red':
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
+    elif packet['mode'] == 'benchmark':
+        runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -69,12 +78,29 @@ try:
         command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=20m', '-v']
         if fuzz:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
+        if name == 'benchmark':
+            command += ['-bench', '^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$', '-benchtime=3x', '-benchmem']
         run_env = env | {'CGO_ENABLED': cgo}
         log = evidence / (name + '.log')
         with log.open('w') as output:
             output.write('COMMAND=' + json.dumps(command) + '\nCGO_ENABLED=' + cgo + '\n')
             output.flush()
-            process = subprocess.run(command, env=run_env, stdout=output, stderr=subprocess.STDOUT, timeout=1500)
+            process = subprocess.Popen(command, env=run_env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            try:
+                process.wait(timeout=1500)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=10)
+                raise
+            finally:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
         content = log.read_text()
         print(content, flush=True)
         result = {'name': name, 'go_exit': process.returncode}
@@ -84,10 +110,10 @@ try:
             small, multi = map(int, match.groups())
             assert multi > small + 4
             result |= {'expected_red': True, 'small': small, 'multi': multi}
-        else:
-            assert process.returncode == 0
         results.append(result)
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
+        if packet['mode'] != 'red':
+            assert process.returncode == 0
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
