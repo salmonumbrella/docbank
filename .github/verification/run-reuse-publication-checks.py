@@ -41,10 +41,10 @@ def main() -> int:
     bundle = args.bundle.resolve()
     if not bundle.is_relative_to(runner_temp) or bundle.is_relative_to(repo):
         parser.error("bundle must be preserved under RUNNER_TEMP, outside the checkout")
-    output = runner_temp / "reuse-review-fix-prepush"
+    output = runner_temp / "reuse-exact-benchmark"
     output.mkdir(mode=0o700)  # Refuse to reuse evidence from a prior invocation.
     status = {
-        "purpose": "prepush after test-only review repair; unchanged documentation inputs reuse verified400 docs evidence",
+        "purpose": "exact unchanged tracked full-Service.Search benchmark; report actual acceptance outcome",
         "base": BASE, "pin": args.pin, "stages": [], "success": False,
         "cleanup": False, "owned_processes_stopped": False,
     }
@@ -223,9 +223,6 @@ def main() -> int:
             raise RuntimeError("fresh checkout contains generated outputs; refusing to reuse or remove them")
         if not freeze("source_before") or not status["source_before"]["clean_status"]:
             raise RuntimeError("exact source checkout is not clean")
-        config = (repo / ".custom-gcl.yml").read_text(encoding="utf-8")
-        if not re.match(r"version:\s*v2\.14\.0\s*\n", config):
-            raise RuntimeError("review linter pin against authoritative .custom-gcl.yml")
         with bundle.open("rb") as bundle_stream:
             bundle_sha256 = hashlib.file_digest(bundle_stream, "sha256").hexdigest()
         (output / "environment.json").write_text(json.dumps({
@@ -233,21 +230,12 @@ def main() -> int:
             "bundle_sha256": bundle_sha256,
             "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "GOMAXPROCS": env["GOMAXPROCS"], "GOFLAGS": env["GOFLAGS"], "CGO_ENABLED": env["CGO_ENABLED"],
-            "prek": "0.5.7", "uv": "0.13.6", "golangci_lint": "v2.14.0",
+            "benchmark": "tracked50k-original-file-x1024-3x",
         }, indent=2) + "\n", encoding="utf-8")
-        node_version = run("node-version", ["node", "--version"]).decode().strip()
-        if not node_version.startswith("v24."):
-            raise RuntimeError("Node 24 is required")
         run("go-version", ["go", "version"])
-        run("venv", ["python3", "-m", "venv", str(work / "venv")])
-        run("install-tools", [str(work / "venv/bin/pip"), "install", "prek==0.5.7", "uv==0.13.6"], 300)
-        run("prek-version", ["prek", "--version"])
-        run("uv-version", ["uv", "--version"])
-        run("install-linter", ["go", "install", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0"], 1800)
-        run("linter-version", ["golangci-lint", "--version"])
-        run("prepush", ["prek", "run", "--all-files", "--stage", "pre-push"], 2400)
+        run("benchmark", ["go", "test", "-tags", "fts5", "./internal/processing", "-run", "^$", "-bench", "^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$", "-benchtime=3x", "-benchmem", "-count=1", "-parallel=1", "-timeout=45m", "-v"], 3000)
         if not freeze("source_after_prepush"):
-            raise RuntimeError("prepush changed tracked source; patches archived, checks stopped")
+            raise RuntimeError("benchmark changed tracked source")
     except BaseException as error:
         status["error"] = f"{type(error).__name__}: {error}"
     finally:
