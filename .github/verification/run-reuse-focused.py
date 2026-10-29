@@ -31,8 +31,8 @@ try:
     for name, item in packet['files'].items():
         relative = Path(name)
         assert not relative.is_absolute() and '..' not in relative.parts
-        assert name.startswith(('internal/store/', 'internal/retrieval/', 'internal/processing/', 'docs/architecture/'))
-        assert relative.suffix in ('.go', '.md')
+        assert name.startswith(('internal/store/', 'internal/retrieval/', 'internal/processing/', 'docs/architecture/', 'sqlite/mattn/'))
+        assert relative.suffix in ('.go', '.md', '.c', '.h')
         data = base64.b64decode(item['content'])
         assert hashlib.sha256(data).hexdigest() == item['sha256']
         destination = root / relative
@@ -54,9 +54,11 @@ try:
         for key in ('GOGC', 'GOMEMLIMIT', 'GODEBUG'):
             f.write(key + '=' + env.get(key, 'unset') + '\n')
     if packet['mode'] == 'red':
-        runs = [('red', '1', ['./internal/store'], packet.get('trace_regex','^TestSemanticSearchSourceSingletonQueryGrowth$'), tags, False)]
+        runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
+    elif packet['mode'] == 'native-spike':
+        runs = [('native', '1', ['./sqlite/...'], '^Test', 'fts5', False), ('purego', '0', ['./sqlite/...'], '^Test', 'fts5', False), ('system-lib', '1', ['./sqlite/...'], '^Test', 'fts5 libsqlite3', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -69,13 +71,13 @@ try:
         assert len(default_expression) < 2048
         runs = [('default', '1', default_packages, default_expression, 'fts5', False), ('purego', '0', packages, expression, 'fts5', False)]
         if packet.get('trace'):
-            runs.append(('execution-trace', '1', ['./internal/store'], packet.get('trace_regex','^TestSemanticSearchSourceSingletonQueryGrowth$'), 'fts5 sqlite_trace', False))
+            runs.append(('execution-trace', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', 'fts5 sqlite_trace', False))
         if packet.get('fuzz'):
             runs.append(('fuzz', '1', ['./internal/store'], '^$', 'fts5', True))
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
     assert not fuzz_dir.exists()
     for name, cgo, packages, expression, run_tags, fuzz in runs:
-        command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=20m', '-v']
+        command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=' + ('60s' if packet['mode'] == 'native-spike' else '20m'), '-v']
         if fuzz:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
