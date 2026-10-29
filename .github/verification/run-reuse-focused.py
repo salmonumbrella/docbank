@@ -57,8 +57,8 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'pager':
-        runs = [('pager', '1', ['./internal/processing'], '^TestReusePagerDiagnostic$', 'fts5', False)]
+    elif packet['mode'] == 'locality':
+        runs = [('locality', '1', ['./internal/processing'], '^TestReuseQueryLocalityDiagnostic$', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
