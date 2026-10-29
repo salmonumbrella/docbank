@@ -1,40 +1,82 @@
-name: Vault-wide reuse focused verification
+name: Vault-wide reuse exact-source acceptance
+
 on:
   push:
     branches: [verification/vault-wide-reuse-acceptance-1136]
+
 permissions:
   contents: read
+
 jobs:
-  focused:
+  publication:
+    name: Exact-source 50k warm full-search acceptance
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check out immutable helper revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Preserve exact verification inputs
+
+      # Root publishes these three public, committed inputs together on the
+      # helper branch. The pin file has one complete lowercase source SHA.
+      - name: Preserve owned verification inputs outside the source checkout
+        shell: bash
         run: |
-          cp .github/verification/reuse-focused-overlay.json "$RUNNER_TEMP/reuse-focused-overlay.json"
-          cp .github/verification/run-reuse-focused.py "$RUNNER_TEMP/run-reuse-focused.py"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+          set -euo pipefail
+          inputs="$RUNNER_TEMP/reuse-publication-inputs"
+          mkdir -m 700 "$inputs"
+          cp .github/verification/run-reuse-publication-checks.py "$inputs/runner.py"
+          cp .github/verification/reuse-publication-source.bundle "$inputs/source.bundle"
+          cp .github/verification/reuse-publication-source.pin "$inputs/source.pin"
+          python3 - "$inputs/source.pin" <<'PY'
+          import pathlib, re, sys
+          value = pathlib.Path(sys.argv[1]).read_text(encoding="ascii")
+          if re.fullmatch(r"[0-9a-f]{40}\n?", value) is None:
+              raise SystemExit("source pin must contain exactly one full lowercase SHA")
+          PY
+
+      - name: Check out full prerequisite history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: salmonumbrella/docbank
-          ref: a9ba01d956ca7f2e7e476bbbb10a6dd6ac0cce47
+          ref: 76f5e703055ecd89e7aba297b9179260aac5e98f
+          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+
+      - name: Set up source Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
           cache: false
-      - name: Run pinned focused verification
-        run: python3 "$RUNNER_TEMP/run-reuse-focused.py"
-      - name: Remove verification inputs
+
+      - name: Run exact-source tracked benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          inputs="$RUNNER_TEMP/reuse-publication-inputs"
+          pin=$(cat "$inputs/source.pin")
+          python3 "$inputs/runner.py" --pin "$pin" --bundle "$inputs/source.bundle"
+
+      - name: Upload benchmark samples, statuses and cleanup proof
         if: always()
-        run: rm -f -- "$RUNNER_TEMP/reuse-focused-overlay.json" "$RUNNER_TEMP/run-reuse-focused.py"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: reuse-focused-results
-          path: ${{ runner.temp }}/reuse-focused-evidence/
-          if-no-files-found: error
+          name: reuse-exact-benchmark
+          path: ${{ runner.temp }}/reuse-exact-benchmark/
           retention-days: 7
+          if-no-files-found: error
+
+      - name: Remove owned preserved inputs after artifact upload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, shutil
+          inputs = pathlib.Path(os.environ["RUNNER_TEMP"]) / "reuse-publication-inputs"
+          if inputs.exists():
+              shutil.rmtree(inputs)
+          if inputs.exists():
+              raise SystemExit("owned verification inputs were not removed")
+          PY
