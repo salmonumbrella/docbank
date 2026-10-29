@@ -55,6 +55,10 @@ try:
             f.write(key + '=' + env.get(key, 'unset') + '\n')
     if packet['mode'] == 'red':
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
+    elif packet['mode'] == 'fullscale-native-path':
+        env['REUSE_EXPECT_NATIVE'] = '1'
+        env['REUSE_DIAGNOSTIC_CPU'] = str(evidence / 'fullscale-native-path.cpu.pprof')
+        runs = [('fullscale-native-path', '1', ['./internal/processing'], '^TestReuseNativeReaderDiagnostic$', 'fts5', False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
     elif packet['mode'] == 'native-cover':
