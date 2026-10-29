@@ -1,0 +1,75 @@
+name: Vault-wide reuse warm acceptance
+on:
+  push:
+    branches: [verification/vault-wide-reuse-acceptance-1136]
+permissions:
+  contents: read
+jobs:
+  warm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: salmonumbrella/docbank
+          ref: a9ba01d956ca7f2e7e476bbbb10a6dd6ac0cce47
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Measure exact tracked warm and cold full-Service.Search
+        env:
+          CGO_ENABLED: '1'
+          GOMAXPROCS: '2'
+          GOFLAGS: -p=2 -trimpath
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=a9ba01d956ca7f2e7e476bbbb10a6dd6ac0cce47
+          test "$(git rev-parse HEAD)" = "$expected"
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+          evidence="$RUNNER_TEMP/reuse-evidence"
+          mkdir -p "$evidence"
+          managed=$(mktemp -d "$RUNNER_TEMP/docbank-reuse.XXXXXX")
+          mkdir -p "$managed/tmp" "$managed/gotmp" "$managed/cache" "$managed/modcache"
+          export TMPDIR="$managed/tmp" GOTMPDIR="$managed/gotmp" GOCACHE="$managed/cache" GOMODCACHE="$managed/modcache"
+          cleanup() {
+            chmod -R u+w "$managed"
+            rm -rf -- "$managed"
+            test ! -e "$managed"
+            test "$(git rev-parse HEAD)" = "$expected"
+            git diff --exit-code
+            test -z "$(git status --porcelain --untracked-files=all)"
+            echo CLEANUP_VERIFIED_SOURCE_FROZEN | tee -a "$evidence/benchmark.log"
+          }
+          trap cleanup EXIT
+          {
+            date -u +%FT%TZ
+            echo "SOURCE=$expected"
+            uname -smr
+            lscpu
+            free -b
+            df -B1 "$RUNNER_TEMP"
+            go version
+            echo "CGO_ENABLED=$CGO_ENABLED GOMAXPROCS=$GOMAXPROCS GOFLAGS=$GOFLAGS"
+            echo "GOGC=${GOGC-unset} GOMEMLIMIT=${GOMEMLIMIT-unset} GODEBUG=${GODEBUG-unset}"
+            sha256sum internal/processing/search_scope_benchmark_test.go internal/processing/search_scope_workload_test.go
+          } > "$evidence/environment.txt"
+          set +e
+          go test -tags fts5 ./internal/processing -run '^$' -bench '^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$' -benchtime=3x -benchmem -count=1 -parallel=1 -timeout=45m -v 2>&1 | tee "$evidence/benchmark.log"
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "BENCHMARK_EXIT=$result" | tee -a "$evidence/benchmark.log"
+          cleanup
+          trap - EXIT
+          exit "$result"
+      - name: Upload raw samples and environment
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: reuse-a9ba01d-50000x1x1024
+          path: ${{ runner.temp }}/reuse-evidence/
+          if-no-files-found: error
+          retention-days: 7
