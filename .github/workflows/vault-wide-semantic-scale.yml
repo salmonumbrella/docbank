@@ -1,0 +1,58 @@
+name: Vault-wide ownership test-style push checks
+on:
+  push:
+    branches: [verification/vault-wide-semantic-3d5b3ad]
+permissions:
+  contents: read
+jobs:
+  checks:
+    name: ${{ matrix.kind }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {kind: core, sha: 76f5e703055ecd89e7aba297b9179260aac5e98f, artifact: core-push-76f5e70}
+          - {kind: client, sha: 60da7760c21ded10421171f51ed0da064b1794a8, artifact: client-push-60da776}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: salmonumbrella/docbank
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Copy verified runner
+        run: |
+          python3 - <<'PYRUNNER'
+          import hashlib,pathlib,os
+          source=pathlib.Path('.github/verification/run-push-checks.py').read_bytes()
+          assert hashlib.sha256(source).hexdigest()=='445dde93403808baa02f021b18fd643da3b463cdebe90843656c770e60ab585e'
+          (pathlib.Path(os.environ['RUNNER_TEMP'])/'run-push-checks.py').write_bytes(source)
+          PYRUNNER
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: salmonumbrella/docbank
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run pinned checks
+        env:
+          CHECK_KIND: ${{ matrix.kind }}
+          CHECK_SHA: ${{ matrix.sha }}
+        run: python3 "$RUNNER_TEMP/run-push-checks.py" "$CHECK_KIND" "$CHECK_SHA"
+      - name: Remove runner input
+        if: always()
+        run: |
+          rm -f -- "$RUNNER_TEMP/run-push-checks.py"
+          test ! -e "$RUNNER_TEMP/run-push-checks.py"
+      - name: Upload check results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/${{ matrix.kind }}-push-results/
+          if-no-files-found: error
+          retention-days: 7
