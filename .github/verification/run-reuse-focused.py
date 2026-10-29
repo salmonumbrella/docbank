@@ -57,10 +57,8 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'cover-profile':
-        runs = [('profile-index-default', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False), ('profile-index-cache64', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
-    elif packet['mode'] == 'profile':
-        runs = [('profile', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
+    elif packet['mode'] == 'atomic-red':
+        runs = [('atomic-red', '1', ['./internal/store'], '^TestSemanticSearchAuthorityHeadAtomicSourceAcquisition$', 'fts5 sqlite_trace', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -84,8 +82,7 @@ try:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
             command += ['-bench', '^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$', '-benchtime=3x', '-benchmem']
-        run_env = env | {'CGO_ENABLED': cgo, 'REUSE_DIAGNOSTIC_CPU': str(evidence / (name + '-query.cpu'))}
-        run_env['REUSE_SOURCE_DIAGNOSTIC_CACHE'] = '64MiB' if name.endswith('cache64') else 'default'
+        run_env = env | {'CGO_ENABLED': cgo}
         log = evidence / (name + '.log')
         with log.open('w') as output:
             output.write('COMMAND=' + json.dumps(command) + '\nCGO_ENABLED=' + cgo + '\n')
@@ -115,14 +112,16 @@ try:
             small, multi = map(int, match.groups())
             assert multi > small + 4
             result |= {'expected_red': True, 'small': small, 'multi': multi}
+        if packet['mode'] == 'atomic-red':
+            match = re.search(r'initial source captures=(\d+) BEGIN=(\d+) COMMIT=(\d+)', content)
+            assert process.returncode == 1 and match and 'initial lease and ANN authority share one complete fresh source capture' in content
+            captures, begins, commits = map(int, match.groups())
+            assert captures > 1 and begins > 1 and commits == begins
+            result |= {'expected_red': True, 'source_captures': captures, 'begins': begins, 'commits': commits}
         results.append(result)
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
-        if packet['mode'] != 'red':
+        if packet['mode'] not in ('red','atomic-red'):
             assert process.returncode == 0
-        if name.startswith('profile'):
-            for suffix, flags in [('flat', []), ('cumulative', ['-cum'])]:
-                with (evidence / (name + '-' + suffix + '.txt')).open('w') as output:
-                    subprocess.run(['go', 'tool', 'pprof', '-top', '-nodecount=40', *flags, str(evidence / (name + '-query.cpu'))], env=run_env, stdout=output, stderr=subprocess.STDOUT, check=True)
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
