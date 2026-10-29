@@ -1,4 +1,4 @@
-name: Vault-wide reuse publication checks
+name: Vault-wide reuse exact-source acceptance
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   publication:
-    name: Exact-source prepush and strict documentation
+    name: Exact-source 50k warm full-search acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -50,12 +50,7 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Set up Node.js 24
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "24.22.1"
-
-      - name: Run exact-source publication checks
+      - name: Run exact-source tracked benchmark
         shell: bash
         run: |
           set -euo pipefail
@@ -63,12 +58,12 @@ jobs:
           pin=$(cat "$inputs/source.pin")
           python3 "$inputs/runner.py" --pin "$pin" --bundle "$inputs/source.bundle"
 
-      - name: Upload publication logs, statuses, and any source-change patches
+      - name: Upload benchmark samples, statuses and cleanup proof
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: reuse-publication-checks
-          path: ${{ runner.temp }}/reuse-publication-checks/
+          name: reuse-exact-benchmark
+          path: ${{ runner.temp }}/reuse-exact-benchmark/
           retention-days: 7
           if-no-files-found: error
 
