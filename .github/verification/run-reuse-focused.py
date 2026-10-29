@@ -57,9 +57,9 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'native-phase-profile':
+    elif packet['mode'] == 'native-c-phase-profile':
         assert not any(key in env for key in ('GOGC', 'GOMEMLIMIT', 'GODEBUG'))
-        runs = [('native-phase-profile', '1', ['./internal/processing'], '^TestNativeSourcePhaseProfile$', 'fts5 sqlite_trace', False)]
+        runs = [('native-default', '1', ['./sqlite/...', './internal/store'], '^Test(NativeSource|SemanticSearchSourceSingleton|OriginalSemanticSnapshot|SemanticSearchAuthorityHead|SemanticPrefix|Mattn|Modernc|Driver)', 'fts5', False), ('native-c-phase-profile', '1', ['./internal/processing'], '^TestNativeSourcePhaseProfile$', 'fts5 sqlite_trace', False)]
     elif packet['mode'] == 'native-cover':
         expression = '^Test(NativeSource|SemanticSearchSourceSingleton|OriginalSemanticSnapshot|SemanticSearchAuthorityHead|SemanticPrefix|Mattn|Modernc|Driver)'
         runs = [('native-focused', '1', ['./sqlite/...', './internal/store'], expression, 'fts5', False), ('execution-trace', '1', ['./internal/store'], '^Test(NativeSourcePhaseBatchExecutions|SemanticSearchSourceSingletonQueryGrowth|SemanticSearchAuthorityHeadAtomicSourceAcquisition)$', 'fts5 sqlite_trace', False)]
@@ -86,7 +86,7 @@ try:
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
     assert not fuzz_dir.exists()
     for name, cgo, packages, expression, run_tags, fuzz in runs:
-        command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=' + ('10m' if packet['mode'] == 'native-phase-profile' else '60s' if packet['mode'] == 'native-spike' else '20m'), '-v']
+        command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=' + ('10m' if packet['mode'] == 'native-c-phase-profile' else '60s' if packet['mode'] == 'native-spike' else '20m'), '-v']
         if fuzz:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
