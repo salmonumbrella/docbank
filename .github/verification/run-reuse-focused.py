@@ -57,8 +57,8 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'locality':
-        runs = [('locality', '1', ['./internal/processing'], '^TestReuseQueryLocalityDiagnostic$', 'fts5', False)]
+    elif packet['mode'] == 'checksum':
+        runs = [('checksum', '1', ['./internal/store'], '^TestReuseChecksumDiagnostic$', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -82,6 +82,8 @@ try:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
             command += ['-bench', '^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$', '-benchtime=3x', '-benchmem']
+        if packet['mode'] == 'checksum':
+            command += ['-bench', '^BenchmarkReuseChecksumDiagnostic$', '-benchtime=3x', '-benchmem']
         run_env = env | {'CGO_ENABLED': cgo}
         log = evidence / (name + '.log')
         with log.open('w') as output:
