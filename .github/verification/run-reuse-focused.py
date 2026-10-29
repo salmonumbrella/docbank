@@ -53,12 +53,20 @@ try:
         f.write('GOMAXPROCS=2 GOFLAGS=-p=2 -trimpath\n')
         for key in ('GOGC', 'GOMEMLIMIT', 'GODEBUG'):
             f.write(key + '=' + env.get(key, 'unset') + '\n')
-    if packet['mode'] == 'red':
+    if packet['mode'] == 'perf-probe':
+        probe = {'perf': shutil.which('perf')}
+        for name, command in [('perf-version', ['perf', '--version']), ('perf-probe', ['perf', 'stat', '-e', 'task-clock:u', '--', 'true'])]:
+            if probe['perf'] is None:
+                probe[name] = {'available': False}
+                continue
+            with (evidence / (name + '.log')).open('w') as output:
+                completed = subprocess.run(command, env=env, stdout=output, stderr=subprocess.STDOUT, timeout=30)
+            probe[name] = {'exit': completed.returncode}
+        (evidence / 'perf-capability.json').write_text(json.dumps(probe, indent=2))
+        print(json.dumps(probe), flush=True)
+        runs = []
+    elif packet['mode'] == 'red':
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
-    elif packet['mode'] == 'fullscale-native-path':
-        env['REUSE_EXPECT_NATIVE'] = '1'
-        env['REUSE_DIAGNOSTIC_CPU'] = str(evidence / 'fullscale-native-path.cpu.pprof')
-        runs = [('fullscale-native-path', '1', ['./internal/processing'], '^TestReuseNativeReaderDiagnostic$', 'fts5', False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
     elif packet['mode'] == 'native-cover':
