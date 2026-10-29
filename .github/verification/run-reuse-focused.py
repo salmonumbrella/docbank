@@ -54,7 +54,11 @@ try:
         assert len(expression) < 2048
         packages = packet.get('packages', ['./internal/store'])
         assert packages and all(p in ('./internal/store', './internal/retrieval', './internal/processing') for p in packages)
-        runs = [('default', '1', packages, expression, 'fts5', False), ('purego', '0', packages, expression, 'fts5', False)]
+        default_packages = packet.get('default_packages', packages)
+        assert default_packages and all(p in packages for p in default_packages)
+        default_expression = packet.get('default_regex', expression)
+        assert len(default_expression) < 2048
+        runs = [('default', '1', default_packages, default_expression, 'fts5', False), ('purego', '0', packages, expression, 'fts5', False)]
         if packet.get('trace'):
             runs.append(('execution-trace', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', 'fts5 sqlite_trace', False))
         if packet.get('fuzz'):
