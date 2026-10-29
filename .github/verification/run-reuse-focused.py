@@ -55,7 +55,7 @@ try:
             f.write(key + '=' + env.get(key, 'unset') + '\n')
     if packet['mode'] == 'perf-probe':
         probe = {'perf': shutil.which('perf')}
-        for name, command in [('perf-version', ['perf', '--version']), ('perf-probe', ['perf', 'stat', '-e', 'task-clock:u', '--', 'true'])]:
+        for name, command in [('perf-version', ['perf', '--version']), ('perf-root-probe', ['sudo', '-n', 'perf', 'stat', '-e', 'task-clock:u', '--', 'true'])]:
             if probe['perf'] is None:
                 probe[name] = {'available': False}
                 continue

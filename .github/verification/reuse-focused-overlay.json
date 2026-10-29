@@ -2,5 +2,5 @@
   "base": "a9ba01d956ca7f2e7e476bbbb10a6dd6ac0cce47",
   "mode": "perf-probe",
   "files": {},
-  "purpose": "Capability probe only: can GitHub-hosted unprivileged perf attribute opaque C? No Go build/test or source changes."
+  "purpose": "Read-only perf capability probe via hosted existing sudo; no kernel setting/source changes or Go build/test."
 }
