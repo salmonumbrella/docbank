@@ -38,7 +38,9 @@ try:
         backups[name] = destination.read_bytes() if destination.exists() else None
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
-    metadata = {'base': expected, 'mode': packet['mode'], 'files': {k: v['sha256'] for k, v in packet['files'].items()}}
+    tags = packet.get('tags', 'fts5')
+    assert tags in ('fts5', 'fts5 sqlite_trace')
+    metadata = {'base': expected, 'mode': packet['mode'], 'tags': tags, 'files': {k: v['sha256'] for k, v in packet['files'].items()}}
     (evidence / 'source.json').write_text(json.dumps(metadata, indent=2))
     with (evidence / 'environment.txt').open('w') as f:
         for command in (['uname', '-smr'], ['lscpu'], ['go', 'version']):
@@ -52,7 +54,7 @@ try:
         assert len(expression) < 2048
         runs = [('default', '1', './internal/store', expression), ('purego', '0', './internal/store', expression)]
     for name, cgo, package, expression in runs:
-        command = ['go', 'test', '-tags', 'fts5', package, '-run', expression, '-count=1', '-parallel=2', '-timeout=20m', '-v']
+        command = ['go', 'test', '-tags', tags, package, '-run', expression, '-count=1', '-parallel=2', '-timeout=20m', '-v']
         run_env = env | {'CGO_ENABLED': cgo}
         log = evidence / (name + '.log')
         with log.open('w') as output:
@@ -63,8 +65,8 @@ try:
         print(content, flush=True)
         result = {'name': name, 'go_exit': process.returncode}
         if packet['mode'] == 'red':
-            match = re.search(r'prepared SELECTs: small=(\d+) multi=(\d+)', content)
-            assert process.returncode != 0 and match and 'source SQL preparation must stay bounded as members grow' in content
+            match = re.search(r'executed SELECTs: small=(\d+) multi=(\d+)', content)
+            assert process.returncode != 0 and match and 'source SQL executions must stay bounded as members grow' in content
             small, multi = map(int, match.groups())
             assert multi > small + 4
             result |= {'expected_red': True, 'small': small, 'multi': multi}
