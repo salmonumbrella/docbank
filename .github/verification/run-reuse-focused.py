@@ -47,14 +47,24 @@ try:
             subprocess.run(command, env=env, stdout=f, check=True)
         f.write('GOMAXPROCS=2 GOFLAGS=-p=2 -trimpath\n')
     if packet['mode'] == 'red':
-        runs = [('red', '1', './internal/store', '^TestSemanticSearchSourceSingletonQueryGrowth$')]
+        runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
         assert len(expression) < 2048
-        runs = [('default', '1', './internal/store', expression), ('purego', '0', './internal/store', expression)]
-    for name, cgo, package, expression in runs:
-        command = ['go', 'test', '-tags', tags, package, '-run', expression, '-count=1', '-parallel=2', '-timeout=20m', '-v']
+        packages = packet.get('packages', ['./internal/store'])
+        assert packages and all(p in ('./internal/store', './internal/retrieval', './internal/processing') for p in packages)
+        runs = [('default', '1', packages, expression, 'fts5', False), ('purego', '0', packages, expression, 'fts5', False)]
+        if packet.get('trace'):
+            runs.append(('execution-trace', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', 'fts5 sqlite_trace', False))
+        if packet.get('fuzz'):
+            runs.append(('fuzz', '1', ['./internal/store'], '^$', 'fts5', True))
+    fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
+    assert not fuzz_dir.exists()
+    for name, cgo, packages, expression, run_tags, fuzz in runs:
+        command = ['go', 'test', '-tags', run_tags, *packages, '-run', expression, '-count=1', '-parallel=' + ('1' if fuzz else '2'), '-timeout=20m', '-v']
+        if fuzz:
+            command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         run_env = env | {'CGO_ENABLED': cgo}
         log = evidence / (name + '.log')
         with log.open('w') as output:
@@ -73,8 +83,13 @@ try:
         else:
             assert process.returncode == 0
         results.append(result)
+        (evidence / 'results.json').write_text(json.dumps(results, indent=2))
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
+    fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
+    if fuzz_dir.exists():
+        shutil.copytree(fuzz_dir, evidence / 'failing-fuzz-corpus')
+        shutil.rmtree(fuzz_dir)
     for name, previous in backups.items():
         destination = root / name
         if previous is None:
