@@ -57,8 +57,6 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'checksum-red':
-        runs = [('checksum-red', '1', ['./internal/store'], '^TestVectorIndexSourceChecksum', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -112,14 +110,9 @@ try:
             small, multi = map(int, match.groups())
             assert multi > small + 4
             result |= {'expected_red': True, 'small': small, 'multi': multi}
-        if packet['mode'] == 'checksum-red':
-            assert process.returncode == 1 and 'source checksum allocations grow with membership' in content
-            assert '--- FAIL: TestVectorIndexSourceChecksumAllocationGrowth' in content
-            assert '--- PASS: TestVectorIndexSourceChecksumGolden' in content
-            result['expected_red'] = True
         results.append(result)
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
-        if packet['mode'] not in ('red', 'checksum-red'):
+        if packet['mode'] != 'red':
             assert process.returncode == 0
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
