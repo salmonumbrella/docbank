@@ -57,10 +57,8 @@ try:
         runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'prototype':
-        runs = [('prototype-focused', '1', ['./internal/store'], '^TestSemanticSearchSourceSingleton', 'fts5', False), ('profile', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
-    elif packet['mode'] == 'profile':
-        runs = [('profile', '1', ['./internal/processing'], '^TestReuseResidualDiagnostic$', 'fts5', False)]
+    elif packet['mode'] == 'checksum-red':
+        runs = [('checksum-red', '1', ['./internal/store'], '^TestVectorIndexSourceChecksum', 'fts5', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -84,7 +82,7 @@ try:
             command += ['-fuzz', '^FuzzSemanticSearchSourceSingletonParity$', '-fuzztime=5s']
         if name == 'benchmark':
             command += ['-bench', '^BenchmarkAllLiveSemanticSearch$/^50000x1x1024$', '-benchtime=3x', '-benchmem']
-        run_env = env | {'CGO_ENABLED': cgo, 'REUSE_DIAGNOSTIC_CPU': str(evidence / 'query.cpu')}
+        run_env = env | {'CGO_ENABLED': cgo}
         log = evidence / (name + '.log')
         with log.open('w') as output:
             output.write('COMMAND=' + json.dumps(command) + '\nCGO_ENABLED=' + cgo + '\n')
@@ -114,14 +112,15 @@ try:
             small, multi = map(int, match.groups())
             assert multi > small + 4
             result |= {'expected_red': True, 'small': small, 'multi': multi}
+        if packet['mode'] == 'checksum-red':
+            assert process.returncode == 1 and 'source checksum allocations grow with membership' in content
+            assert '--- FAIL: TestVectorIndexSourceChecksumAllocationGrowth' in content
+            assert '--- PASS: TestVectorIndexSourceChecksumGolden' in content
+            result['expected_red'] = True
         results.append(result)
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
-        if packet['mode'] != 'red':
+        if packet['mode'] not in ('red', 'checksum-red'):
             assert process.returncode == 0
-        if name == 'profile':
-            for suffix, flags in [('flat', []), ('cumulative', ['-cum'])]:
-                with (evidence / ('profile-' + suffix + '.txt')).open('w') as output:
-                    subprocess.run(['go', 'tool', 'pprof', '-top', '-nodecount=40', *flags, str(evidence / 'query.cpu')], env=run_env, stdout=output, stderr=subprocess.STDOUT, check=True)
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
