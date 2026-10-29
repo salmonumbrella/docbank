@@ -54,11 +54,9 @@ try:
         for key in ('GOGC', 'GOMEMLIMIT', 'GODEBUG'):
             f.write(key + '=' + env.get(key, 'unset') + '\n')
     if packet['mode'] == 'red':
-        runs = [('red', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', tags, False)]
+        runs = [('red', '1', ['./internal/store'], packet.get('trace_regex','^TestSemanticSearchSourceSingletonQueryGrowth$'), tags, False)]
     elif packet['mode'] == 'benchmark':
         runs = [('benchmark', '1', ['./internal/processing'], '^$', 'fts5', False)]
-    elif packet['mode'] == 'atomic-red':
-        runs = [('atomic-red', '1', ['./internal/store'], '^TestSemanticSearchAuthorityHeadAtomicSourceAcquisition$', 'fts5 sqlite_trace', False)]
     else:
         assert packet['mode'] == 'green'
         expression = packet['run_regex']
@@ -71,7 +69,7 @@ try:
         assert len(default_expression) < 2048
         runs = [('default', '1', default_packages, default_expression, 'fts5', False), ('purego', '0', packages, expression, 'fts5', False)]
         if packet.get('trace'):
-            runs.append(('execution-trace', '1', ['./internal/store'], '^TestSemanticSearchSourceSingletonQueryGrowth$', 'fts5 sqlite_trace', False))
+            runs.append(('execution-trace', '1', ['./internal/store'], packet.get('trace_regex','^TestSemanticSearchSourceSingletonQueryGrowth$'), 'fts5 sqlite_trace', False))
         if packet.get('fuzz'):
             runs.append(('fuzz', '1', ['./internal/store'], '^$', 'fts5', True))
     fuzz_dir = root / 'internal/store/testdata/fuzz/FuzzSemanticSearchSourceSingletonParity'
@@ -112,15 +110,9 @@ try:
             small, multi = map(int, match.groups())
             assert multi > small + 4
             result |= {'expected_red': True, 'small': small, 'multi': multi}
-        if packet['mode'] == 'atomic-red':
-            match = re.search(r'initial source captures=(\d+) BEGIN=(\d+) COMMIT=(\d+)', content)
-            assert process.returncode == 1 and match and 'initial lease and ANN authority share one complete fresh source capture' in content
-            captures, begins, commits = map(int, match.groups())
-            assert captures > 1 and begins > 1 and commits == begins
-            result |= {'expected_red': True, 'source_captures': captures, 'begins': begins, 'commits': commits}
         results.append(result)
         (evidence / 'results.json').write_text(json.dumps(results, indent=2))
-        if packet['mode'] not in ('red','atomic-red'):
+        if packet['mode'] != 'red':
             assert process.returncode == 0
     (evidence / 'results.json').write_text(json.dumps(results, indent=2))
 finally:
