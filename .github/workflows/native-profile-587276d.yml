@@ -11,7 +11,7 @@ permissions:
 jobs:
   profile:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - name: Check out the verification branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

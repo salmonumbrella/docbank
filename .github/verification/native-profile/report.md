@@ -71,13 +71,17 @@ require positive warmup and measured SQL counts, one fewer SELECT on the cache
 hit for the skipped generation load, and zero measured prepares. Run `41732025679`
 reached the exact 50k fixture and started `perf`, but failed before the measured
 search when the parser rejected `ack\n\0`. The runner now accepts the documented
-`ack\n` or that exact observed form. Run `41733975323` wrote nine temporary
-perf samples, but stopped at the old SELECT-count assertion before symbol
-validation or evidence publication. Its cleanup step succeeded and discarded
-the temporary profile; the generated
-overlay and all synthetic databases, blobs, test binaries, FIFO endpoints,
-perf data, and logs are temporary and removed when the hosted runner exits. No
-accepted native profile summary has been captured yet.
+`ack\n` or that exact observed form. Run `41735391574` completed the measured
+search but produced only nine temporary perf samples, none attributed to a
+SQLite C function. The workflow failed the symbol-attribution guard and cleanup
+discarded its profile. The next run samples at 997 Hz and emits at most the 20
+most common `perf script` symbol names even if SQLite attribution still fails.
+The Go-wrapper check is anchored to the start of the symbol field, cleanup can
+signal the exact root-owned `perf` process group through passwordless `sudo`,
+and the workflow timeout now covers the controller's build and test limits.
+The generated overlay and all synthetic databases, blobs, test binaries, FIFO
+endpoints, perf data, and logs are temporary and removed when the hosted runner
+exits. No accepted native profile summary has been captured yet.
 
 ## Files
 

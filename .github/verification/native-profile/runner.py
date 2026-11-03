@@ -20,6 +20,8 @@ import time
 
 TEST_NAME = "TestNativeWarmSearchProfile"
 MAX_TEST_SECONDS = 20 * 60
+PERF_SAMPLE_FREQUENCY = 997
+MAX_REPORTED_SYMBOLS = 20
 PROCESS_SETTLE_SECONDS = 0.5
 STOP_TIMEOUT_SECONDS = 10
 PERF_DRAIN_SECONDS = 30
@@ -115,17 +117,39 @@ def wait_until_stopped(pid: int, timeout: float) -> None:
 def terminate_group(process: subprocess.Popen[str] | None) -> None:
     if process is None or process.poll() is not None:
         return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+
+    def send_group_signal(signum: signal.Signals) -> None:
+        try:
+            os.killpg(process.pid, signum)
+            return
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            # perf runs as root under sudo. If the runner cannot signal its
+            # process group directly, use sudo for this exact group ID.
+            result = subprocess.run(
+                [
+                    "sudo",
+                    "-n",
+                    "kill",
+                    f"-{signum.name.removeprefix('SIG')}",
+                    "--",
+                    f"-{process.pid}",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0 and process.poll() is None:
+                detail = (result.stderr or result.stdout).strip()
+                raise ProfileError(f"could not signal process group {process.pid}: {detail}")
+
+    send_group_signal(signal.SIGTERM)
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
+        send_group_signal(signal.SIGKILL)
         process.wait(timeout=5)
 
 
@@ -312,7 +336,7 @@ def main() -> int:
                         "-e",
                         "cpu-clock:u",
                         "-F",
-                        "99",
+                        str(PERF_SAMPLE_FREQUENCY),
                         "-p",
                         str(test_process.pid),
                         "-o",
@@ -375,19 +399,24 @@ def main() -> int:
             if lost_events:
                 raise ProfileError("perf recorded lost events: " + " | ".join(lost_events[:5]))
             native_symbols: collections.Counter[str] = collections.Counter()
+            observed_symbols: collections.Counter[str] = collections.Counter()
             go_symbol_samples = 0
             for line in script.splitlines():
+                printed_symbol = line.strip()
+                if printed_symbol:
+                    observed_symbols[printed_symbol] += 1
                 # Request only the symbol field above: matching against the DSO
                 # field would falsely count an unresolved [unknown] symbol from
                 # a file named libsqlite3.so as a native SQLite function.
-                symbol = re.search(r"\b(sqlite3[A-Za-z0-9_]*)\b", line)
+                symbol = re.match(r"^\s*(sqlite3[A-Za-z0-9_]*)\b", line)
                 if symbol:
                     native_symbols[symbol.group(1)] += 1
-                if re.search(r"\b(runtime\.|go\.kenn\.io/docbank/)", line):
+                if re.search(
+                    r"\b(runtime\.|go\.kenn\.io/docbank/|github\.com/mattn/go-sqlite3\.)",
+                    line,
+                ):
                     go_symbol_samples += 1
             native_sample_count = sum(native_symbols.values())
-            if native_sample_count == 0:
-                raise ProfileError("perf recorded no samples attributed to SQLite C symbols")
 
             summary = {
                 "candidate_sha": head,
@@ -398,9 +427,11 @@ def main() -> int:
                 "cpu_quota_count": cpu_quota_count,
                 "go_version": go_version,
                 "perf_version": perf_version,
-                "profile_event": "cpu-clock:u at 99 Hz",
+                "profile_event": f"cpu-clock:u at {PERF_SAMPLE_FREQUENCY} Hz",
+                "observed_perf_symbol_sample_count": sum(observed_symbols.values()),
+                "observed_perf_symbols": observed_symbols.most_common(MAX_REPORTED_SYMBOLS),
                 "native_sqlite_sample_count": native_sample_count,
-                "native_sqlite_symbols": native_symbols.most_common(20),
+                "native_sqlite_symbols": native_symbols.most_common(MAX_REPORTED_SYMBOLS),
                 "perf_go_symbol_samples": go_symbol_samples,
                 "perf_lost_events": 0,
                 "go_cpu_profile": "not collected",
@@ -431,6 +462,8 @@ def main() -> int:
                 with pathlib.Path(step_summary).open("a", encoding="utf-8") as output_file:
                     output_file.write("## Native warm-search profile\n\n")
                     output_file.write("```json\n" + summary_text + "\n```\n")
+            if native_sample_count == 0:
+                raise ProfileError("perf recorded no samples attributed to SQLite C symbols")
         finally:
             terminate_group(test_process)
             terminate_group(perf_process)
