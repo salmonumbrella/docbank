@@ -3,11 +3,11 @@
 Status: **prepared and manually reviewed; not built or run**.
 
 Target source is clean candidate `587276d12536ac1581d7410da608781e312dcebb`.
-The overlay test and controller live outside the repository. Manual Go and
-controller review found one attribution flaw and fixed it: `perf script` now
-requests only the `sym` field, so a DSO name such as `libsqlite3.so` cannot
-make an unresolved sample count as a SQLite function. No further static
-findings remain.
+The overlay test and controller stay outside the candidate checkout's source
+tree. Manual Go and controller review found one attribution flaw and fixed it:
+`perf script` now requests only the `sym` field, so a DSO name such as
+`libsqlite3.so` cannot make an unresolved sample count as a SQLite function.
+No further static findings remain.
 
 Static checks passed: `gofmt`, Python source compilation in memory, and JSON
 parsing. No Go compile, test, profile, or repository source change was run.
@@ -45,14 +45,14 @@ The single search duration, if captured, is one diagnostic observation. It is
 not a p50, a speedup claim, or evidence that the 300 ms warm full-search target
 passes. The candidate must remain draft while that acceptance target is unmet.
 
-The current main checkout has no workflow input for this overlay, and its CI
-manual dispatch runs the regular suite. The fork already has a push-triggered
-focused-verification workflow on
-`verification/vault-wide-reuse-acceptance-1136`; that route can host the profile
-after it is updated to preserve these three harness files and check out this
-candidate. The generated overlay and all synthetic databases, blobs, test
-binaries, FIFO endpoints, perf data, and logs are temporary and removed when
-the hosted runner exits.
+The main-pinned PR CI dispatcher has no input for this overlay, and manual CI
+dispatch runs the regular suite. This verification branch adds a dedicated
+push-triggered workflow on `verification/native-profile-587276d`. It stages the
+four reviewed diagnostic inputs outside the candidate checkout, checks out
+candidate `587276d` separately, and runs only the guarded profile. It does not
+change the PR branch. The generated overlay and all synthetic databases, blobs,
+test binaries, FIFO endpoints, perf data, and logs are temporary and removed
+when the hosted runner exits.
 
 ## Files
 
