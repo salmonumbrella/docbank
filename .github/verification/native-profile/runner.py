@@ -22,6 +22,7 @@ TEST_NAME = "TestNativeWarmSearchProfile"
 MAX_TEST_SECONDS = 20 * 60
 PERF_SAMPLE_FREQUENCY = 997
 MAX_REPORTED_SYMBOLS = 20
+PERF_IP_RE = re.compile(r"^(?:0x)?[0-9a-fA-F]+$")
 PROCESS_SETTLE_SECONDS = 0.5
 STOP_TIMEOUT_SECONDS = 10
 PERF_DRAIN_SECONDS = 30
@@ -155,6 +156,46 @@ def terminate_group(process: subprocess.Popen[str] | None) -> None:
 
 def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+
+def parse_profile_symbols(
+    script: str,
+) -> tuple[int, int, int, collections.Counter[str], collections.Counter[str], int]:
+    perf_samples = 0
+    resolved_samples = 0
+    unresolved_samples = 0
+    native_symbols: collections.Counter[str] = collections.Counter()
+    observed_symbols: collections.Counter[str] = collections.Counter()
+    go_symbol_samples = 0
+    for line in script.splitlines():
+        fields = line.split()
+        if not fields or PERF_IP_RE.fullmatch(fields[0]) is None:
+            continue
+        perf_samples += 1
+        # The script command requests only ip,sym in that order. Keep IPs
+        # private; use them only to retain samples whose symbol is unresolved.
+        symbol = " ".join(fields[1:])
+        if not symbol or symbol.lower() in {"?", "unknown", "[unknown]"}:
+            unresolved_samples += 1
+            continue
+        resolved_samples += 1
+        native = re.match(r"^(sqlite3[A-Za-z0-9_]*)\b", symbol)
+        if native:
+            native_symbols[native.group(1)] += 1
+        if re.search(
+            r"\b(runtime\.|go\.kenn\.io/docbank/|github\.com/mattn/go-sqlite3\.)",
+            symbol,
+        ):
+            go_symbol_samples += 1
+        observed_symbols[symbol] += 1
+    return (
+        perf_samples,
+        resolved_samples,
+        unresolved_samples,
+        native_symbols,
+        observed_symbols,
+        go_symbol_samples,
+    )
 
 
 def require_profile_guards(test_output: str) -> tuple[str, int, int, str]:
@@ -388,7 +429,7 @@ def main() -> int:
                     "-i",
                     str(perf_data),
                     "-F",
-                    "sym",
+                    "ip,sym",
                     "--show-lost-events",
                 ],
                 cwd=repo_root,
@@ -398,24 +439,14 @@ def main() -> int:
             lost_events = [line for line in script.splitlines() if "PERF_RECORD_LOST" in line]
             if lost_events:
                 raise ProfileError("perf recorded lost events: " + " | ".join(lost_events[:5]))
-            native_symbols: collections.Counter[str] = collections.Counter()
-            observed_symbols: collections.Counter[str] = collections.Counter()
-            go_symbol_samples = 0
-            for line in script.splitlines():
-                printed_symbol = line.strip()
-                if printed_symbol:
-                    observed_symbols[printed_symbol] += 1
-                # Request only the symbol field above: matching against the DSO
-                # field would falsely count an unresolved [unknown] symbol from
-                # a file named libsqlite3.so as a native SQLite function.
-                symbol = re.match(r"^\s*(sqlite3[A-Za-z0-9_]*)\b", line)
-                if symbol:
-                    native_symbols[symbol.group(1)] += 1
-                if re.search(
-                    r"\b(runtime\.|go\.kenn\.io/docbank/|github\.com/mattn/go-sqlite3\.)",
-                    line,
-                ):
-                    go_symbol_samples += 1
+            (
+                perf_sample_count,
+                resolved_symbol_sample_count,
+                unresolved_symbol_sample_count,
+                native_symbols,
+                observed_symbols,
+                go_symbol_samples,
+            ) = parse_profile_symbols(script)
             native_sample_count = sum(native_symbols.values())
 
             summary = {
@@ -428,7 +459,9 @@ def main() -> int:
                 "go_version": go_version,
                 "perf_version": perf_version,
                 "profile_event": f"cpu-clock:u at {PERF_SAMPLE_FREQUENCY} Hz",
-                "observed_perf_symbol_sample_count": sum(observed_symbols.values()),
+                "perf_script_sample_count": perf_sample_count,
+                "resolved_perf_symbol_sample_count": resolved_symbol_sample_count,
+                "unresolved_perf_symbol_sample_count": unresolved_symbol_sample_count,
                 "observed_perf_symbols": observed_symbols.most_common(MAX_REPORTED_SYMBOLS),
                 "native_sqlite_sample_count": native_sample_count,
                 "native_sqlite_symbols": native_symbols.most_common(MAX_REPORTED_SYMBOLS),

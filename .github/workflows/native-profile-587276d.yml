@@ -28,7 +28,15 @@ jobs:
           cp verification/.github/verification/native-profile/diagnostic_test.go "$input_dir/"
           cp verification/.github/verification/native-profile/overlay.json "$input_dir/"
           cp verification/.github/verification/native-profile/runner.py "$input_dir/"
+          cp verification/.github/verification/native-profile/runner_test.py "$input_dir/"
           cp verification/.github/verification/native-profile/report.md "$input_dir/"
+
+      - name: Validate native symbol parser
+        shell: bash
+        run: |
+          python3 -m unittest discover \
+            -s "$RUNNER_TEMP/docbank-native-profile-inputs" \
+            -p runner_test.py
 
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -63,7 +71,7 @@ jobs:
           import pathlib
 
           input_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "docbank-native-profile-inputs"
-          for name in ("diagnostic_test.go", "overlay.json", "runner.py", "report.md"):
+          for name in ("diagnostic_test.go", "overlay.json", "runner.py", "runner_test.py", "report.md"):
               (input_dir / name).unlink(missing_ok=True)
           try:
               input_dir.rmdir()

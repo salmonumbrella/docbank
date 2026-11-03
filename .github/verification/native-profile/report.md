@@ -4,9 +4,12 @@ Status: **prepared; usable native profile still pending**.
 
 Target source is clean candidate `da40a73d906e02c957a71de2b196384036e3c08d`.
 The overlay test and controller stay outside the candidate checkout's source
-tree. Manual Go and controller review found one attribution flaw and fixed it:
-`perf script` now requests only the `sym` field, so a DSO name such as
-`libsqlite3.so` cannot make an unresolved sample count as a SQLite function.
+tree. Manual Go and controller review found and fixed attribution and cleanup
+risks. A Python unit test covers `ip,sym` parsing and runs before candidate
+build. `perf script` requests the `ip,sym` fields; the controller counts rows
+with a hexadecimal instruction address, then separates resolved symbols from
+unresolved samples. It never uses DSO names or publishes process addresses as
+SQLite function attribution.
 Run `41733975323` reached the 50k fixture, enabled `perf`, and completed the
 measured search, but failed the old SQL-count assertion: warmup ran 124
 `SELECT`s and the cached search ran 123. This is the
@@ -15,9 +18,10 @@ with one `LoadVectorIndexGeneration` query and the cached search skips that
 load. The guard now requires exactly that one-SELECT difference while retaining
 the zero-load, zero-prepare, full-coverage, and no-fallback checks.
 
-Static checks passed: `gofmt`, Python source compilation in memory, and JSON
-parsing. The candidate source is unchanged; build and profile execution stay on
-the hosted runner.
+Static checks passed: `actionlint`, `gofmt`, Python source compilation in
+memory, overlay JSON parsing, and two synthetic parser unit tests. The candidate
+source is unchanged; Go build/test and profile execution stay on the hosted
+runner.
 
 This packet profiles one warm `Service.Search` call against a synthetic
 50,000-document original-file scope. It overlays one Linux/cgo-only test onto
@@ -57,7 +61,7 @@ passes. The candidate must remain draft while that acceptance target is unmet.
 The main-pinned PR CI dispatcher has no input for this overlay, and manual CI
 dispatch runs the regular suite. This verification branch adds a dedicated
 push-triggered workflow on `verification/native-profile-587276d`. It stages the
-four reviewed diagnostic inputs outside the candidate checkout, checks out
+five reviewed diagnostic inputs outside the candidate checkout, checks out
 candidate `da40a73` separately, and runs only the guarded profile. It does not
 change the PR branch. The first hosted attempt stopped before building because
 the public `ubuntu-24.04` runner exposed four CPUs; the workflow now constrains
@@ -71,14 +75,16 @@ require positive warmup and measured SQL counts, one fewer SELECT on the cache
 hit for the skipped generation load, and zero measured prepares. Run `41732025679`
 reached the exact 50k fixture and started `perf`, but failed before the measured
 search when the parser rejected `ack\n\0`. The runner now accepts the documented
-`ack\n` or that exact observed form. Run `41735391574` completed the measured
-search but produced only nine temporary perf samples, none attributed to a
-SQLite C function. The workflow failed the symbol-attribution guard and cleanup
-discarded its profile. The next run samples at 997 Hz and emits at most the 20
-most common `perf script` symbol names even if SQLite attribution still fails.
-The Go-wrapper check is anchored to the start of the symbol field, cleanup can
-signal the exact root-owned `perf` process group through passwordless `sudo`,
-and the workflow timeout now covers the controller's build and test limits.
+`ack\n` or that exact observed form. Run `41739436282` passed the measured-search
+guards at 997 Hz and recorded one 7.05-second diagnostic call, but
+`perf script -F sym` returned no symbol rows. The workflow failed the
+symbol-attribution guard and cleanup discarded its profile. The next run
+requests `ip,sym`, counts unresolved samples without publishing their process
+addresses, and emits at most the 20 most common resolved symbol names even if
+SQLite attribution still fails. The Go-wrapper check is anchored to the symbol
+field, cleanup can signal the exact root-owned `perf` process group through
+passwordless `sudo`, and the workflow timeout covers the controller's build and
+test limits.
 The generated overlay and all synthetic databases, blobs, test binaries, FIFO
 endpoints, perf data, and logs are temporary and removed when the hosted runner
 exits. No accepted native profile summary has been captured yet.
@@ -89,5 +95,6 @@ exits. No accepted native profile summary has been captured yet.
   Linux, cgo, and the `sqlite_trace` build tag.
 - `overlay.json`: portable Go overlay template. `runner.py` expands its two
   path markers into a real overlay in a private runner temporary directory.
+- `runner_test.py`: synthetic parser tests that run before the hosted build.
 - `runner.py`: hosted-runner controller with CPU, identity, exact-SHA, clean
   checkout, privilege, timeout, counter, attribution, and cleanup checks.
