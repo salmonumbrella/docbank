@@ -1,16 +1,20 @@
 # Task 23 native C profile — preparation
 
-Status: **prepared and manually reviewed; profiling run pending**.
+Status: **prepared; usable native profile still pending**.
 
 Target source is clean candidate `da40a73d906e02c957a71de2b196384036e3c08d`.
 The overlay test and controller stay outside the candidate checkout's source
 tree. Manual Go and controller review found one attribution flaw and fixed it:
 `perf script` now requests only the `sym` field, so a DSO name such as
 `libsqlite3.so` cannot make an unresolved sample count as a SQLite function.
-No further static findings remain.
+The latest hosted attempt reached the 50k fixture and started `perf`, then
+stopped before the measured search because the acknowledgement parser rejected
+the observed trailing NUL byte. The parser now accepts only the documented
+`ack\n` form or that exact observed `ack\n\0` form.
 
 Static checks passed: `gofmt`, Python source compilation in memory, and JSON
-parsing. No Go compile, test, profile, or repository source change was run.
+parsing. The candidate source is unchanged; build and profile execution stay on
+the hosted runner.
 
 This packet profiles one warm `Service.Search` call against a synthetic
 50,000-document original-file scope. It overlays one Linux/cgo-only test onto
@@ -60,9 +64,13 @@ observed 124, so it stopped before perf measurement. After that guard became
 parity based, a second run stopped on the fixed authorizer expectation (12
 warmup callbacks observed as 40), also before perf measurement. The guards now
 use positive warmup baselines and require the measured search to preserve the
-SQL execution count while performing zero new prepares. The generated overlay
-and all synthetic databases, blobs, test binaries, FIFO endpoints, perf data,
-and logs are temporary and removed when the hosted runner exits.
+SQL execution count while performing zero new prepares. Run `41732025679`
+reached the exact 50k fixture and started `perf`, but failed before the measured
+search when the parser rejected `ack\n\0`. The runner now accepts the documented
+`ack\n` or that exact observed form. Its cleanup step succeeded; the generated
+overlay and all synthetic databases, blobs, test binaries, FIFO endpoints,
+perf data, and logs are temporary and removed when the hosted runner exits. No
+usable native profile has been captured yet.
 
 ## Files
 

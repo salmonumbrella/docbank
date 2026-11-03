@@ -412,7 +412,8 @@ func (control *nativeProfileControl) command(command string, timeout time.Durati
 		if err == nil && count > 0 {
 			response.Write(buffer[:count])
 			if strings.Contains(response.String(), "\n") {
-				if strings.TrimSpace(response.String()) != "ack" {
+				ack := response.String()
+				if ack != "ack\n" && ack != "ack\n\x00" {
 					return fmt.Errorf("unexpected perf FIFO acknowledgement %q", response.String())
 				}
 				return nil
