@@ -1,0 +1,5 @@
+{
+  "Replace": {
+    "__DOCBANK_ROOT__/internal/processing/native_warm_search_profile_test.go": "__HARNESS_DIR__/diagnostic_test.go"
+  }
+}
