@@ -1,4 +1,4 @@
-name: Vault-wide reuse focused verification
+name: Vault-wide reuse 50k warm acceptance
 on:
   push:
     branches: [verification/vault-wide-reuse-acceptance-1136]
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: salmonumbrella/docbank
-          ref: a9ba01d956ca7f2e7e476bbbb10a6dd6ac0cce47
+          ref: da40a73d906e02c957a71de2b196384036e3c08d
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:

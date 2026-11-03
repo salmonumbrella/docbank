@@ -1,6 +1,7 @@
 {
-  "base": "a9ba01d956ca7f2e7e476bbbb10a6dd6ac0cce47",
-  "mode": "perf-probe",
+  "base": "da40a73d906e02c957a71de2b196384036e3c08d",
+  "mode": "benchmark",
   "files": {},
-  "purpose": "Read-only perf capability probe via hosted existing sudo; no kernel setting/source changes or Go build/test."
+  "tags": "fts5",
+  "purpose": "Measure the current PR candidate's synthetic 50k all-live warm Service.Search p50 against the existing 300 ms acceptance gate using three benchmark samples; make no product changes."
 }
