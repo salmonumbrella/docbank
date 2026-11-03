@@ -50,9 +50,15 @@ dispatch runs the regular suite. This verification branch adds a dedicated
 push-triggered workflow on `verification/native-profile-587276d`. It stages the
 four reviewed diagnostic inputs outside the candidate checkout, checks out
 candidate `587276d` separately, and runs only the guarded profile. It does not
-change the PR branch. The generated overlay and all synthetic databases, blobs,
-test binaries, FIFO endpoints, perf data, and logs are temporary and removed
-when the hosted runner exits.
+change the PR branch. GitHub assigned four CPUs to its public `ubuntu-24.04`
+runner on the first attempt, so the controller stopped before building. The
+workflow now constrains the target process to two CPUs from the runner's
+available affinity with `taskset`; the controller checks and reports the
+effective affinity and cgroup quota separately. This is a two-CPU process
+profile on a four-CPU runner, not a claim that the runner VM has two CPUs. The
+generated overlay and all synthetic databases, blobs, test binaries, FIFO
+endpoints, perf data, and logs are temporary and removed when the hosted runner
+exits.
 
 ## Files
 

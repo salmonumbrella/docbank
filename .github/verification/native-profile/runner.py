@@ -60,7 +60,7 @@ def cpu_quota() -> float | None:
     return quota / period
 
 
-def verify_host() -> tuple[float, int, str]:
+def verify_host() -> tuple[float, int, str, float | None]:
     if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
         raise ProfileError("refusing to run outside GitHub Actions")
     if platform.system() != "Linux" or os.environ.get("RUNNER_OS") != "Linux":
@@ -72,9 +72,7 @@ def verify_host() -> tuple[float, int, str]:
     effective = min(float(len(affinity)), quota) if quota is not None else float(len(affinity))
     if not 1.8 <= effective <= 2.2:
         raise ProfileError(f"expected an effective 2-CPU runner, found {effective:.2f}")
-    if quota is not None and not 1.8 <= quota <= 2.2:
-        raise ProfileError(f"expected a 2-CPU cgroup quota, found {quota:.2f}")
-    return effective, len(affinity), platform.machine()
+    return effective, len(affinity), platform.machine(), quota
 
 
 def expand_overlay(
@@ -191,7 +189,7 @@ def main() -> int:
     if not harness_path.is_file() or not template_path.is_file():
         raise ProfileError("diagnostic_test.go and overlay.json must accompany runner.py")
 
-    effective_cpu_count, affinity_count, architecture = verify_host()
+    effective_cpu_count, affinity_count, architecture, cpu_quota_count = verify_host()
     env = os.environ.copy()
     env.update(
         {
@@ -378,6 +376,7 @@ def main() -> int:
                 "architecture": architecture,
                 "effective_cpu_count": effective_cpu_count,
                 "cpu_affinity_count": affinity_count,
+                "cpu_quota_count": cpu_quota_count,
                 "go_version": go_version,
                 "perf_version": perf_version,
                 "profile_event": "cpu-clock:u at 99 Hz",
