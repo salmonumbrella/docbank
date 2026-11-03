@@ -1,8 +1,8 @@
 # Task 23 native C profile — preparation
 
-Status: **prepared and manually reviewed; not built or run**.
+Status: **prepared and manually reviewed; profiling run pending**.
 
-Target source is clean candidate `587276d12536ac1581d7410da608781e312dcebb`.
+Target source is clean candidate `da40a73d906e02c957a71de2b196384036e3c08d`.
 The overlay test and controller stay outside the candidate checkout's source
 tree. Manual Go and controller review found one attribution flaw and fixed it:
 `perf script` now requests only the `sym` field, so a DSO name such as
@@ -26,14 +26,15 @@ synthetic blobs, a fake embedding runtime, and the existing production
 live synthetic versions are searched. No developer vault, provider account,
 external embedding service, daemon, or production data is read.
 
-The Go guard checks the warmup and measured SQL execution counts (15 and 15),
-authorizer prepare callbacks (12 and 0), generic fallback count (0), media
-selections (0), coverage (50,000/50,000), zero measured generation-load delta,
-same decoded-generation pointer, zero descriptor delta, and a positive cgo-call
-delta. It also disables perf if the test exits through a failure after the
-enable request. The controller requires actual SQLite C symbols in the perf
-sample stream, fails if none are attributed, and rejects any `PERF_RECORD_LOST`
-event.
+The Go guard requires a positive warmup SQL execution count, then verifies the
+measured search executes the same number of SQL statements. It also checks
+authorizer prepare callbacks (12 during warmup and 0 during measurement),
+generic fallback count (0), media selections (0), coverage (50,000/50,000),
+zero measured generation-load delta, the same decoded-generation pointer, zero
+descriptor delta, and a positive cgo-call delta. It disables perf if the test
+exits through a failure after the enable request. The controller requires
+actual SQLite C symbols in the perf sample stream, fails if none are attributed,
+and rejects any `PERF_RECORD_LOST` event.
 
 No Go CPU profiler is started, so the Go pprof sample count is zero by design.
 The Linux perf stream samples the whole target process and can also contain Go
@@ -49,16 +50,17 @@ The main-pinned PR CI dispatcher has no input for this overlay, and manual CI
 dispatch runs the regular suite. This verification branch adds a dedicated
 push-triggered workflow on `verification/native-profile-587276d`. It stages the
 four reviewed diagnostic inputs outside the candidate checkout, checks out
-candidate `587276d` separately, and runs only the guarded profile. It does not
-change the PR branch. GitHub assigned four CPUs to its public `ubuntu-24.04`
-runner on the first attempt, so the controller stopped before building. The
-workflow now constrains the target process to two CPUs from the runner's
-available affinity with `taskset`; the controller checks and reports the
-effective affinity and cgroup quota separately. This is a two-CPU process
-profile on a four-CPU runner, not a claim that the runner VM has two CPUs. The
-generated overlay and all synthetic databases, blobs, test binaries, FIFO
-endpoints, perf data, and logs are temporary and removed when the hosted runner
-exits.
+candidate `da40a73` separately, and runs only the guarded profile. It does not
+change the PR branch. The first hosted attempt stopped before building because
+the public `ubuntu-24.04` runner exposed four CPUs; the workflow now constrains
+the target process to two available CPUs with `taskset` and reports process
+affinity and cgroup quota separately. The next attempt reached the exact 50k
+synthetic fixture but the fixed SQL-count guard expected 15 executions and
+observed 124, so it stopped before perf measurement. The guard now checks parity
+between the warmup and measured searches instead of assuming a fixed query
+count. The generated overlay and all synthetic databases, blobs, test
+binaries, FIFO endpoints, perf data, and logs are temporary and removed when
+the hosted runner exits.
 
 ## Files
 

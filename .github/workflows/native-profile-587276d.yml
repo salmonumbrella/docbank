@@ -1,4 +1,4 @@
-name: Native C profile 587276d
+name: Native C profile da40a73
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: salmonumbrella/docbank
-          ref: 587276d12536ac1581d7410da608781e312dcebb
+          ref: da40a73d906e02c957a71de2b196384036e3c08d
           path: candidate
           persist-credentials: false
 
@@ -52,7 +52,7 @@ jobs:
           test -n "$cpu_list"
           taskset --cpu-list "$cpu_list" python3 "$RUNNER_TEMP/docbank-native-profile-inputs/runner.py" \
             --repo "$GITHUB_WORKSPACE/candidate" \
-            --expected-sha 587276d12536ac1581d7410da608781e312dcebb
+            --expected-sha da40a73d906e02c957a71de2b196384036e3c08d
 
       - name: Remove copied diagnostic inputs
         if: always()
