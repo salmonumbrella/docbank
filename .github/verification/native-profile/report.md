@@ -7,10 +7,13 @@ The overlay test and controller stay outside the candidate checkout's source
 tree. Manual Go and controller review found one attribution flaw and fixed it:
 `perf script` now requests only the `sym` field, so a DSO name such as
 `libsqlite3.so` cannot make an unresolved sample count as a SQLite function.
-The latest hosted attempt reached the 50k fixture and started `perf`, then
-stopped before the measured search because the acknowledgement parser rejected
-the observed trailing NUL byte. The parser now accepts only the documented
-`ack\n` form or that exact observed `ack\n\0` form.
+Run `41733975323` reached the 50k fixture, enabled `perf`, and completed the
+measured search, but failed the old SQL-count assertion: warmup ran 124
+`SELECT`s and the cached search ran 123. This is the
+expected one-statement difference because warmup loads the immutable generation
+with one `LoadVectorIndexGeneration` query and the cached search skips that
+load. The guard now requires exactly that one-SELECT difference while retaining
+the zero-load, zero-prepare, full-coverage, and no-fallback checks.
 
 Static checks passed: `gofmt`, Python source compilation in memory, and JSON
 parsing. The candidate source is unchanged; build and profile execution stay on
@@ -30,9 +33,10 @@ synthetic blobs, a fake embedding runtime, and the existing production
 live synthetic versions are searched. No developer vault, provider account,
 external embedding service, daemon, or production data is read.
 
-The Go guard requires positive warmup SQL execution and authorizer prepare
-counts, then verifies the measured search executes the same number of SQL
-statements without preparing any SELECT statements. It also checks
+The Go guard requires positive warmup and measured SQL execution counts and a
+positive warmup authorizer prepare count. It verifies that warmup executes one
+generation-load `SELECT` that the measured cache hit avoids, and that the
+measured search prepares no `SELECT` statements. It also checks
 generic fallback count (0), media selections (0), coverage (50,000/50,000),
 zero measured generation-load delta, the same decoded-generation pointer, zero
 descriptor delta, and a positive cgo-call delta. It disables perf if the test
@@ -63,14 +67,17 @@ synthetic fixture but the stale SQL-count guard expected 15 executions and
 observed 124, so it stopped before perf measurement. After that guard became
 parity based, a second run stopped on the fixed authorizer expectation (12
 warmup callbacks observed as 40), also before perf measurement. The guards now
-use positive warmup baselines and require the measured search to preserve the
-SQL execution count while performing zero new prepares. Run `41732025679`
+require positive warmup and measured SQL counts, one fewer SELECT on the cache
+hit for the skipped generation load, and zero measured prepares. Run `41732025679`
 reached the exact 50k fixture and started `perf`, but failed before the measured
 search when the parser rejected `ack\n\0`. The runner now accepts the documented
-`ack\n` or that exact observed form. Its cleanup step succeeded; the generated
+`ack\n` or that exact observed form. Run `41733975323` wrote nine temporary
+perf samples, but stopped at the old SELECT-count assertion before symbol
+validation or evidence publication. Its cleanup step succeeded and discarded
+the temporary profile; the generated
 overlay and all synthetic databases, blobs, test binaries, FIFO endpoints,
 perf data, and logs are temporary and removed when the hosted runner exits. No
-usable native profile has been captured yet.
+accepted native profile summary has been captured yet.
 
 ## Files
 

@@ -118,8 +118,8 @@ func TestNativeWarmSearchProfile(t *testing.T) {
 	require.False(t, measured.MediaSourceSelection)
 	require.Equal(t, beforeLoads, loads.Load(), "warm search must not load or decode the generation")
 	require.Same(t, warmGeneration, searchBenchmarkEntry(t, cache).generation)
-	require.Equal(t, warmupSQL.selectExecutions, measuredSQL.selectExecutions,
-		"warm search must execute the same SQL statements as warmup")
+	require.Equal(t, warmupSQL.selectExecutions, measuredSQL.selectExecutions+1,
+		"warmup generation load must execute one SELECT avoided by the cached search")
 	require.Zero(t, measuredSQL.selectPrepareCallbacks, "warm search must reuse prepared SQLite statements")
 	require.Zero(t, measuredSQL.genericFallbacks, "canonical source validation must not replay the generic path")
 	require.Equal(t, beforeFDs, afterFDs, "warm search must not leak process file descriptors")

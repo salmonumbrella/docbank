@@ -174,8 +174,13 @@ def require_profile_guards(test_output: str) -> tuple[str, int, int, str]:
     warmup_prepare_count = int(warmup_prepares.group(1))
     if warmup_prepare_count == 0:
         raise ProfileError("warmup search prepared no SELECT statements")
-    if int(measured_selects.group(1)) != warmup_select_count:
-        raise ProfileError("warmup and measured searches executed different SELECT counts")
+    measured_select_count = int(measured_selects.group(1))
+    if measured_select_count == 0:
+        raise ProfileError("measured search executed no SELECT statements")
+    if warmup_select_count != measured_select_count + 1:
+        raise ProfileError(
+            "warmup must execute one generation-load SELECT avoided by the cached search"
+        )
     cgo_delta = re.search(r"cgo_call_delta=([0-9]+)", measured.group(0))
     if cgo_delta is None or int(cgo_delta.group(1)) < 1:
         raise ProfileError("measured search did not record a positive cgo call delta")
