@@ -26,9 +26,9 @@ synthetic blobs, a fake embedding runtime, and the existing production
 live synthetic versions are searched. No developer vault, provider account,
 external embedding service, daemon, or production data is read.
 
-The Go guard requires a positive warmup SQL execution count, then verifies the
-measured search executes the same number of SQL statements. It also checks
-authorizer prepare callbacks (12 during warmup and 0 during measurement),
+The Go guard requires positive warmup SQL execution and authorizer prepare
+counts, then verifies the measured search executes the same number of SQL
+statements without preparing any SELECT statements. It also checks
 generic fallback count (0), media selections (0), coverage (50,000/50,000),
 zero measured generation-load delta, the same decoded-generation pointer, zero
 descriptor delta, and a positive cgo-call delta. It disables perf if the test
@@ -55,12 +55,14 @@ change the PR branch. The first hosted attempt stopped before building because
 the public `ubuntu-24.04` runner exposed four CPUs; the workflow now constrains
 the target process to two available CPUs with `taskset` and reports process
 affinity and cgroup quota separately. The next attempt reached the exact 50k
-synthetic fixture but the fixed SQL-count guard expected 15 executions and
-observed 124, so it stopped before perf measurement. The guard now checks parity
-between the warmup and measured searches instead of assuming a fixed query
-count. The generated overlay and all synthetic databases, blobs, test
-binaries, FIFO endpoints, perf data, and logs are temporary and removed when
-the hosted runner exits.
+synthetic fixture but the stale SQL-count guard expected 15 executions and
+observed 124, so it stopped before perf measurement. After that guard became
+parity based, a second run stopped on the fixed authorizer expectation (12
+warmup callbacks observed as 40), also before perf measurement. The guards now
+use positive warmup baselines and require the measured search to preserve the
+SQL execution count while performing zero new prepares. The generated overlay
+and all synthetic databases, blobs, test binaries, FIFO endpoints, perf data,
+and logs are temporary and removed when the hosted runner exits.
 
 ## Files
 

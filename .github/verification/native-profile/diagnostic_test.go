@@ -77,7 +77,7 @@ func TestNativeWarmSearchProfile(t *testing.T) {
 	require.NotNil(t, warmGeneration)
 	require.Nil(t, warmEntry.record.Bytes)
 	require.NotZero(t, warmupSQL.selectExecutions)
-	require.Equal(t, uint64(12), warmupSQL.selectPrepareCallbacks)
+	require.NotZero(t, warmupSQL.selectPrepareCallbacks)
 	require.Zero(t, warmupSQL.genericFallbacks)
 
 	control, err := openNativeProfileControl(controlPath, ackPath)

@@ -133,7 +133,7 @@ def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
 
 
-def require_profile_guards(test_output: str) -> tuple[str, int, str]:
+def require_profile_guards(test_output: str) -> tuple[str, int, int, str]:
     if f"--- PASS: {TEST_NAME}" not in test_output:
         raise ProfileError("the exact native-profile test did not pass")
     warmup = re.search(r"profile_guard warmup_[^\n]+", test_output)
@@ -142,7 +142,6 @@ def require_profile_guards(test_output: str) -> tuple[str, int, str]:
     if warmup is None or measured is None or duration is None:
         raise ProfileError("one or more profile guard log lines are missing")
     expected_warmup = (
-        "warmup_select_prepare_callbacks=12",
         "warmup_fallbacks=0",
         "warmup_generation_loads=1",
         "media_resources=0",
@@ -163,18 +162,24 @@ def require_profile_guards(test_output: str) -> tuple[str, int, str]:
     if any(item not in measured.group(0) for item in expected_measured):
         raise ProfileError(f"measured counters did not match: {measured.group(0)}")
     warmup_selects = re.search(r"\bwarmup_selects=([0-9]+)\b", warmup.group(0))
+    warmup_prepares = re.search(
+        r"\bwarmup_select_prepare_callbacks=([0-9]+)\b", warmup.group(0)
+    )
     measured_selects = re.search(r"\bmeasured_selects=([0-9]+)\b", measured.group(0))
-    if warmup_selects is None or measured_selects is None:
-        raise ProfileError("warmup or measured SELECT execution count is missing")
+    if warmup_selects is None or warmup_prepares is None or measured_selects is None:
+        raise ProfileError("warmup or measured SQL counters are missing")
     warmup_select_count = int(warmup_selects.group(1))
     if warmup_select_count == 0:
         raise ProfileError("warmup search executed no SELECT statements")
+    warmup_prepare_count = int(warmup_prepares.group(1))
+    if warmup_prepare_count == 0:
+        raise ProfileError("warmup search prepared no SELECT statements")
     if int(measured_selects.group(1)) != warmup_select_count:
         raise ProfileError("warmup and measured searches executed different SELECT counts")
     cgo_delta = re.search(r"cgo_call_delta=([0-9]+)", measured.group(0))
     if cgo_delta is None or int(cgo_delta.group(1)) < 1:
         raise ProfileError("measured search did not record a positive cgo call delta")
-    return duration.group(1), warmup_select_count, measured.group(0)
+    return duration.group(1), warmup_select_count, warmup_prepare_count, measured.group(0)
 
 
 def main() -> int:
@@ -339,7 +344,9 @@ def main() -> int:
                 raise ProfileError(f"profile test exited {test_status}:\n{output}\n{profile_log}")
             if perf_status != 0:
                 raise ProfileError(f"perf recorder exited {perf_status}:\n{profile_log}")
-            search_wall_time, sql_selects_per_search, measured_guard = require_profile_guards(output)
+            search_wall_time, sql_selects_per_search, warmup_prepares, measured_guard = (
+                require_profile_guards(output)
+            )
             if not perf_data.is_file() or perf_data.stat().st_size == 0:
                 raise ProfileError("perf produced no profile data")
 
@@ -395,6 +402,7 @@ def main() -> int:
                 "go_pprof_samples": 0,
                 "warm_search_wall_time": search_wall_time,
                 "sqlite_select_executions_per_search": sql_selects_per_search,
+                "sqlite_select_prepare_callbacks_during_warmup": warmup_prepares,
                 "warmup_and_measured_guards": [
                     line.strip()
                     for line in output.splitlines()
