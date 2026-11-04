@@ -397,8 +397,11 @@ def main() -> int:
 
             deadline = time.monotonic() + MAX_TEST_SECONDS
             while test_process.poll() is None:
-                if perf_process.poll() is not None:
-                    raise ProfileError("perf recorder exited while the test target was running")
+                perf_status = perf_process.poll()
+                if perf_status is not None and perf_status != 0:
+                    raise ProfileError(
+                        f"perf recorder exited with status {perf_status} while the test target was running"
+                    )
                 if time.monotonic() >= deadline:
                     raise ProfileError("synthetic profile test exceeded its time limit")
                 time.sleep(0.1)

@@ -84,7 +84,14 @@ addresses, and emits at most the 20 most common resolved symbol names even if
 SQLite attribution still fails. The Go-wrapper check is anchored to the symbol
 field, cleanup can signal the exact root-owned `perf` process group through
 passwordless `sudo`, and the workflow timeout covers the controller's build and
-test limits.
+test limits. Run `41743328721` passed parser validation and setup, then stopped
+when the controller saw `perf` exit while the test process was still finishing.
+The runner did not report the exit status or a profile summary. The final
+cleanup removed the copied files but failed to remove its input directory
+because `unittest` had created `__pycache__`. The controller now tolerates a
+successful recorder exit while the target completes, still fails on a
+nonzero recorder exit, runs the parser tests without bytecode, and removes the
+known cache directory explicitly.
 The generated overlay and all synthetic databases, blobs, test binaries, FIFO
 endpoints, perf data, and logs are temporary and removed when the hosted runner
 exits. No accepted native profile summary has been captured yet.
