@@ -1,0 +1,23 @@
+name: Go vulnerability check
+
+on:
+  push:
+    branches:
+      - ci/go-1.27.4-vulncheck
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 9d62aff154bdd9b2edd5c80a65885ef22b6025a9
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - run: go version
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest -tags fts5 ./...
