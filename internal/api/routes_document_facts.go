@@ -84,7 +84,7 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) Ver
 	out := VersionPeople{ContentVersionID: f.Version.ID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}, Open: factOpen(origin, f.Version.NodeID, f.Version.ID)}
 	for _, e := range f.Edges {
 		p, ok := f.Persons[e.PersonID]
-		if !ok || safe && (e.Sensitive || e.Role == "blind_copy" || !p.Visible) {
+		if !ok || safe && !p.Visible {
 			continue
 		}
 		name := p.Person.DisplayName
