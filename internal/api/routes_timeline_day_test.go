@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,4 +88,12 @@ func TestTimelineWhenContractExamples(t *testing.T) {
 			require.Equal(t, want, got)
 		})
 	}
+}
+
+func TestTimelineScopeUnsupportedError(t *testing.T) {
+	err := timelineError(fmt.Errorf("wrapped: %w", store.ErrTimelineScopeUnsupported))
+	problem, ok := err.(*Error)
+	require.True(t, ok)
+	require.Equal(t, http.StatusUnprocessableEntity, problem.Status)
+	require.Equal(t, "timeline_scope_unsupported", problem.Code)
 }

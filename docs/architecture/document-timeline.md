@@ -252,7 +252,7 @@ placed once per day, preferring exact, floating, date-only, then coarse claims.
 Both routes use safe disclosure for date claims and person matching, including
 saved searches. SQLite supports the shared Query filters. PostgreSQL currently
 accepts only an unscoped Query, with duplicate collapse allowed; narrowing
-filters are rejected. A processing `text_coverage`
+filters return `timeline_scope_unsupported` with HTTP 422. A processing `text_coverage`
 filter requires a resolved default processing profile. When the default is
 unconfigured or ambiguous, the routes return `invalid_profile`; they do not
 provide a profile selector.
