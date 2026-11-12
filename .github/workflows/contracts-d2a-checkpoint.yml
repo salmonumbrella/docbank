@@ -1,0 +1,93 @@
+name: Contracts D2a exact-source checkpoint
+on:
+  push:
+    branches: [ci/contracts-d2a-checkpoint-7f6de57]
+permissions:
+  contents: read
+jobs:
+  checkpoint:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - name: Render integrated API without generated client dependency
+        run: |
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+              "os"
+              "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+              out, err := api.OpenAPIYAML()
+              if err != nil { panic(err) }
+              if _, err := os.Stdout.Write(out); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi > internal/api/openapi.yaml
+          make generate-photo-policy
+          go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+          npm --prefix frontend run generate:api
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: contracts-d2a-generated-7f6de57-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts
+      - name: Focused SQLite, service, provider, API and CLI checks
+        run: |
+          for mode in 1 0; do
+            export CGO_ENABLED=$mode
+            go test -tags fts5 ./internal/docusealclient ./internal/contractsign ./internal/api ./internal/daemonconn ./cmd/docbank ./document -run 'Signature|Submission'
+            go test -tags fts5 ./internal/store -run 'TestSignature|TestBackendContractsSQLite/organization/Signature'
+          done
+      - name: Native PostgreSQL operations and metadata
+        env:
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+        run: |
+          go test -tags fts5 ./internal/store -run 'TestBackendContractsPostgres/organization/Signature|Test.*MetadataExport|Test.*AuditEnrollment'
+          make backend-coverage
+      - name: Generated-source drift
+        run: |
+          cp internal/api/openapi.yaml /tmp/d2a-openapi.yaml
+          cp internal/apiclient/client.gen.go /tmp/d2a-client.go
+          cp frontend/src/generated/docbank.ts /tmp/d2a-client.ts
+          cp frontend/src/generated/photoSourceExtensions.ts /tmp/d2a-photo.ts
+          make generate-api
+          npm --prefix frontend run generate:api
+          cmp /tmp/d2a-openapi.yaml internal/api/openapi.yaml
+          cmp /tmp/d2a-client.go internal/apiclient/client.gen.go
+          cmp /tmp/d2a-client.ts frontend/src/generated/docbank.ts
+          cmp /tmp/d2a-photo.ts frontend/src/generated/photoSourceExtensions.ts
+      - name: Strict documentation build
+        run: |
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+      - run: make docs-build
