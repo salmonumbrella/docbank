@@ -72,8 +72,9 @@ type CompiledQuery struct {
 	Timezone          string
 	TimezoneDefaulted bool
 	FullDisclosure    bool
-	Query             query.Query
-	Dependencies      []query.Dependency
+
+	Query        query.Query
+	Dependencies []query.Dependency
 
 	photoHidden       bool
 	withoutSuggestion bool
@@ -92,9 +93,11 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
-	fullDisclosure       bool
-	requireFreshDates    bool
-	dateZone             string
+	photos            bool
+	fullDisclosure    bool
+	requireFreshDates bool
+	dateZone          string
+
 	photoDisplayMetadata bool
 	photoMetadataSet     bool
 	photoMetadataDensity func(string) (bool, error)
@@ -126,20 +129,21 @@ func (c queryCompiler) compile(
 			return names, err
 		}
 	}
+	if c.photos {
+		if err := ValidatePhotoDocumentDates(value); err != nil {
+			return CompiledQuery{}, err
+		}
+	}
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
 	}
-	zone, defaulted := resolveDocumentDateZones(&resolved, queryDefaultZone(ctx))
-	if zone != "" && c.requireFreshDates {
-		if r, ok := resolver.(queryResolver); ok {
-			if q, ok := r.q.(metadataQuerier); ok {
-				if err := requireDocumentDateIndex(ctx, q); err != nil {
-					return CompiledQuery{}, err
-				}
-			}
+	if c.photos {
+		if err := validateResolvedPhotoDates(resolved); err != nil {
+			return CompiledQuery{}, err
 		}
 	}
+	zone, defaulted := resolveDocumentDateZones(&resolved, QueryDefaultZone(ctx))
 	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
 		c.photoMetadataDensity = func(value string) (bool, error) {
 			return r.photoMetadataHeadsFirst(ctx, value)
@@ -148,6 +152,15 @@ func (c queryCompiler) compile(
 	predicate, err := c.compileResolvedQuery(resolved)
 	if err != nil {
 		return CompiledQuery{}, err
+	}
+	if zone != "" && c.requireFreshDates {
+		if r, ok := resolver.(queryResolver); ok {
+			if q, ok := r.q.(metadataQuerier); ok {
+				if err := requireDocumentDateIndex(ctx, q); err != nil {
+					return CompiledQuery{}, err
+				}
+			}
+		}
 	}
 	compiled := CompiledQuery{
 		Query: resolved.Query, Dependencies: resolved.Dependencies, Timezone: zone, TimezoneDefaulted: defaulted, FullDisclosure: c.fullDisclosure,
@@ -264,7 +277,7 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 		if c.pdfOnly && query.PDFFieldKind(syntax.Field) == "" {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
 		}
-		if field == "" && slices.Contains([]string{"date", "date_kind", "date_precision"}, syntax.Field) {
+		if field == "" && query.IsDocumentDateField(syntax.Field) {
 			return c.compileDateScope(expression, nil)
 		}
 		if len(expression.Children) != 1 {
@@ -823,4 +836,50 @@ func (c queryCompiler) compileBetween(expression *query.ResolvedExpression) (com
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
 	}
 	return joinCompiledFragments([]compiledQueryFragment{c.compilePersonPredicate(children[0].Dependency.ID, betweenPersonRoles), c.compilePersonPredicate(children[1].Dependency.ID, betweenPersonRoles)}, ` AND `), nil
+}
+
+// ValidatePhotoDocumentDates rejects document-only vocabulary before ranking changes intent.
+func ValidatePhotoDocumentDates(value query.Query) error {
+	if query.UsesDocumentDate(value) {
+		return compileExpressionError(0, len(value.Text), "document dates are only supported in Documents")
+	}
+	return nil
+}
+
+// ValidatePhotoQuery resolves saved scopes before a photo ranking operation starts.
+func (s *Store) ValidatePhotoQuery(ctx context.Context, value query.Query) error {
+	if err := ValidatePhotoDocumentDates(value); err != nil {
+		return err
+	}
+	lexical := value
+	lexical.Mode = query.ModeLexical
+	resolved, err := query.ResolveQuery(ctx, lexical, queryResolver{q: s.db})
+	if err != nil {
+		return err
+	}
+	return validateResolvedPhotoDates(resolved)
+}
+
+func validateResolvedPhotoDates(resolved query.ResolvedQuery) error {
+	if err := ValidatePhotoDocumentDates(resolved.Query); err != nil {
+		return err
+	}
+	var visit func(*query.ResolvedExpression) error
+	visit = func(e *query.ResolvedExpression) error {
+		if e == nil {
+			return nil
+		}
+		if e.Saved != nil {
+			if err := validateResolvedPhotoDates(*e.Saved); err != nil {
+				return err
+			}
+		}
+		for _, child := range e.Children {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return visit(resolved.Expression)
 }

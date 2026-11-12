@@ -214,7 +214,6 @@ export interface Query {
   filters: QueryFilters;
   sort: QuerySort;
   timezone?: string;
-  timezone_defaulted?: boolean;
 }
 
 export interface HighlightTerm {
@@ -231,11 +230,7 @@ export function parseQuery(raw: string): Query {
   preflightJSON(raw, true);
   const input: unknown = JSON.parse(raw);
   const object = requireObject(input, "query");
-  requireOnlyKeys(
-    object,
-    ["v", "text", "syntax", "mode", "filters", "sort", "timezone", "timezone_defaulted"],
-    "query",
-  );
+  requireOnlyKeys(object, ["v", "text", "syntax", "mode", "filters", "sort", "timezone"], "query");
 
   const filtersInput = object.filters === undefined ? {} : requireObject(object.filters, "filters");
   requireOnlyKeys(filtersInput, [...optionalFilterFields], "filters");
@@ -249,7 +244,6 @@ export function parseQuery(raw: string): Query {
     mode: optionalString(object.mode, "lexical", "mode") as Query["mode"],
     filters: parseFilters(filtersInput),
     timezone: optionalNullableString(object.timezone, "timezone"),
-    timezone_defaulted: optionalBoolean(object.timezone_defaulted, "timezone_defaulted"),
     sort: {
       field: optionalString(sortInput.field, "name", "sort.field") as QuerySort["field"],
       direction: optionalString(
@@ -330,7 +324,6 @@ export function canonicalQuery(value: Query): string {
     syntax: normalized.syntax,
     text: normalized.text,
     ...(normalized.timezone === undefined ? {} : { timezone: normalized.timezone }),
-    ...(normalized.timezone_defaulted ? { timezone_defaulted: true } : {}),
     v: normalized.v,
   });
   requireCanonicalBound(encoded, "query");
@@ -514,8 +507,6 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   const syntax = value.syntax;
   const mode = value.mode;
   const sort = value.sort;
-  if (value.timezone_defaulted && value.timezone === undefined)
-    throw new Error("timezone_defaulted requires timezone");
   if (v !== 1) throw new Error("query version must be 1");
   validateUnicode(value.text, "query text");
   if (scalarLength(value.text) > 8192) throw new Error("query text exceeds 8192 Unicode scalars");
@@ -549,7 +540,6 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
     filters: normalizeFilters(value.filters ?? {}),
     sort,
     timezone: value.timezone,
-    timezone_defaulted: value.timezone_defaulted || undefined,
   };
 }
 

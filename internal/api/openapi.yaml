@@ -17486,8 +17486,6 @@ components:
           type:
             - string
             - "null"
-        timezone_defaulted:
-          type: boolean
         v:
           format: int64
           type: integer
@@ -19023,7 +19021,6 @@ components:
       additionalProperties: false
       properties:
         from:
-          format: date
           type: string
         kinds:
           items:
@@ -19038,7 +19035,6 @@ components:
             type: string
           type: array
         to:
-          format: date
           type: string
       required:
         - from
@@ -19645,8 +19641,6 @@ components:
           type: string
         timezone:
           type: string
-        timezone_defaulted:
-          type: boolean
         v:
           default: 1
           enum:

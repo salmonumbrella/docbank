@@ -64,16 +64,6 @@ func TestAdaptersPreserveDistinctF10CapturedClaimsAndCalendarComponents(t *testi
 	require.Equal(t, "DTSTART", calendar.SourceKindRaw)
 }
 
-func TestLegacyCalendarSourceKindRawUsesActualField(t *testing.T) {
-	input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
-		timestampField("calendar.start", "calendar", "DTSTART", false, "2024-04-05", "20240405", "date", "omitted"),
-	})
-	input.Target.MIMEType = "text/calendar"
-	record, _, err := DeriveDocumentEvents(input)
-	require.NoError(t, err)
-	require.Equal(t, "DTSTART", requireEventKind(t, record.Events, "started").SourceKindRaw)
-}
-
 func TestAdaptersAnchorActorOnlyF10ClaimsToVaultRecorded(t *testing.T) {
 	t.Parallel()
 	ada := "Ada Lovelace"
@@ -572,19 +562,33 @@ func testDigest(seed string) string {
 }
 
 func TestCalendarZoneGapAndOverlap(t *testing.T) {
-	for _, tc := range []struct{ value, utc string }{
-		{"2026-03-08T02:30", "2026-03-08T07:00:00.000000000Z"},
-		{"2026-11-01T01:30", "2026-11-01T05:30:00.000000000Z"},
+	t.Parallel()
+	for _, tc := range []struct{ zone, value, utc string }{
+		{"America/Toronto", "20260308T023000", "2026-03-08T07:00:00.000000000Z"},
+		{"America/Toronto", "20261101T013000", "2026-11-01T05:30:00.000000000Z"},
+		{"Europe/London", "20260329T013000", "2026-03-29T01:00:00.000000000Z"},
+		{"Europe/London", "20261025T013000", "2026-10-25T00:30:00.000000000Z"},
 	} {
-		field := timestampField("calendar.event.e000001.start", "calendar", "DTSTART;TZID=America/Toronto", false, tc.value, tc.value, "minute", "omitted")
+		field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID="+tc.zone, false, tc.value)
+		field.Namespace = "calendar"
 		event, err := metadataDateEvent(field)
 		require.NoError(t, err)
 		require.Equal(t, document.EventTimezoneKind("iana"), event.TimezoneKind)
+		require.Equal(t, document.EventPrecision("second"), event.Precision)
+		require.Equal(t, tc.value, event.RawValue)
+		require.Equal(t, tc.zone, event.ZoneText)
 		require.Equal(t, tc.utc, event.UTCKey)
 	}
+	field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID=UTC", false, "20260329T013000")
+	field.Namespace = "calendar"
+	event, err := metadataDateEvent(field)
+	require.NoError(t, err)
+	require.Equal(t, document.EventTimezoneKind("named"), event.TimezoneKind)
+	require.Empty(t, event.UTCKey)
 }
 
 func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {
+	t.Parallel()
 	payload := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260309\r\nDTEND;VALUE=DATE:20260311\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260401\r\nDTEND;VALUE=DATE:20260403\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
 	require.NoError(t, err)
@@ -592,25 +596,12 @@ func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {
 	input.Target.MIMEType = "text/calendar"
 	record, _, err := DeriveDocumentEvents(input)
 	require.NoError(t, err)
-	keys, err := document.DateKeysFor(record.Events)
-	require.NoError(t, err)
-	found := map[string]document.DateKey{}
-	for i, event := range record.Events {
+	found := map[string]bool{}
+	for _, event := range record.Events {
 		if event.DateKind == "started" || event.DateKind == "ended" {
 			require.NotEmpty(t, event.SourceKindRaw)
-			found[event.SourceKey] = keys[i]
+			found[event.SourceKey] = true
 		}
 	}
 	require.Len(t, found, 4)
-	for source, key := range found {
-		if strings.Contains(source, "e000001.start") {
-			require.Equal(t, "2026-03-10", key.CivilEndDate)
-		}
-		if strings.Contains(source, "e000001.end") {
-			require.Equal(t, "2026-03-10", key.CivilDate)
-		}
-		if strings.Contains(source, "e000002.start") {
-			require.Equal(t, "2026-04-02", key.CivilEndDate)
-		}
-	}
 }

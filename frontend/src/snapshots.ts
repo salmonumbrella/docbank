@@ -582,7 +582,6 @@ function parseQueryEvidence(
       ...(expectedQuery.timezone === undefined && decodedQuery.timezone !== undefined
         ? { timezone: decodedQuery.timezone }
         : {}),
-      timezone_defaulted: decodedQuery.timezone_defaulted,
     };
     if (
       canonicalQuery(decodedQuery) !== canonicalQuery(expected) &&

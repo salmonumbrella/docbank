@@ -1,13 +1,48 @@
 package query
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
+
+	"cloud.google.com/go/civil"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/kit/civiltime"
 )
+
+// LoadZone enforces the timeline zone admission policy.
+func LoadZone(name string) (*time.Location, error) {
+	if name == "UTC" {
+		return time.UTC, nil
+	}
+	if !strings.Contains(name, "/") || strings.HasPrefix(name, "posix/") || strings.HasPrefix(name, "right/") {
+		return nil, fmt.Errorf("invalid timezone %q", name)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone %q: %w", name, err)
+	}
+	return loc, nil
+}
+
+// RangeBounds composes inclusive civil endpoints from Kit day boundaries.
+func RangeBounds(from, to civil.Date, loc *time.Location) (time.Time, time.Time, error) {
+	if !from.IsValid() || !to.IsValid() || from.After(to) {
+		return time.Time{}, time.Time{}, errors.New("invalid date range")
+	}
+	start, _, ok := civiltime.DayBounds(from, loc)
+	if !ok {
+		return time.Time{}, time.Time{}, fmt.Errorf("date %s does not exist in %s", from, loc)
+	}
+	_, end, ok := civiltime.DayBounds(to, loc)
+	if !ok {
+		return time.Time{}, time.Time{}, fmt.Errorf("date %s does not exist in %s", to, loc)
+	}
+	return start, end, nil
+}
 
 // DateError carries the stable API code for a date or timezone failure.
 type DateError struct {
@@ -32,22 +67,19 @@ func ParseDocumentDate(value string) (string, string, error) {
 	if !found {
 		to = from
 	}
-	if _, err := civiltime.ParseDate(from); err != nil {
+	if _, err := civil.ParseDate(from); err != nil {
 		return "", "", &DateError{Code: "invalid_date", Err: err}
 	}
-	if _, err := civiltime.ParseDate(to); err != nil {
+	if _, err := civil.ParseDate(to); err != nil {
 		return "", "", &DateError{Code: "invalid_date", Err: err}
 	}
 	if from > to {
-		return "", "", &DateError{Code: "invalid_date", Err: fmt.Errorf("date range is reversed")}
+		return "", "", &DateError{Code: "invalid_date", Err: errors.New("date range is reversed")}
 	}
 	return from, to, nil
 }
 
 func normalizeDocumentDate(value *DocumentDateFilter) (*DocumentDateFilter, error) {
-	if value == nil {
-		return nil, nil
-	}
 	from, to, err := ParseDocumentDate(value.From + ".." + value.To)
 	if err != nil {
 		return nil, err
@@ -59,7 +91,7 @@ func normalizeDocumentDate(value *DocumentDateFilter) (*DocumentDateFilter, erro
 		}
 	}
 	for _, precision := range out.Precisions {
-		if !slices.Contains([]string{"exact", "day", "coarse"}, precision) {
+		if !ValidDocumentDatePrecision(precision) {
 			return nil, fmt.Errorf("unknown date precision %q", precision)
 		}
 	}
@@ -68,6 +100,16 @@ func normalizeDocumentDate(value *DocumentDateFilter) (*DocumentDateFilter, erro
 	slices.Sort(out.Precisions)
 	out.Precisions = slices.Compact(out.Precisions)
 	return out, nil
+}
+
+// IsDocumentDateField identifies the advanced document-date vocabulary.
+func IsDocumentDateField(field string) bool {
+	return slices.Contains([]string{"date", "date_kind", "date_precision"}, field)
+}
+
+// ValidDocumentDatePrecision reports whether precision is supported by date queries.
+func ValidDocumentDatePrecision(precision string) bool {
+	return slices.Contains([]string{"exact", "day", "coarse"}, precision)
 }
 
 // UsesDocumentDate reports whether a query needs a stable timeline zone.
@@ -84,15 +126,10 @@ func UsesDocumentDate(q Query) bool {
 	}
 	var has func(*Expression) bool
 	has = func(e *Expression) bool {
-		if e.Kind == ExpressionField && slices.Contains([]string{"date", "date_kind", "date_precision"}, e.Field) {
+		if e.Kind == ExpressionField && IsDocumentDateField(e.Field) {
 			return true
 		}
-		for _, child := range e.Children {
-			if has(child) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(e.Children, has)
 	}
 	return has(expr)
 }

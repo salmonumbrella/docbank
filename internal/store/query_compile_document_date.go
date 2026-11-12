@@ -2,15 +2,14 @@ package store
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
+	"cloud.google.com/go/civil"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/kit/civiltime"
 )
 
-// documentDateSortExpression is shared by document and photo snapshot sorting.
+// documentDateSortExpression selects the current primary date for Documents sorting.
 func documentDateSortExpression(fullDisclosure bool) string {
 	primary := "k.primary_safe=1 AND k.sensitive=0"
 	if fullDisclosure {
@@ -48,7 +47,7 @@ func (scope *dateScope) add(field, value string) error {
 		}
 		scope.kinds = append(scope.kinds, value)
 	case "date_precision":
-		if !slices.Contains([]string{"exact", "day", "coarse"}, value) {
+		if !query.ValidDocumentDatePrecision(value) {
 			return fmt.Errorf("unknown date precision %q", value)
 		}
 		scope.precisionGroups = append(scope.precisionGroups, []string{value})
@@ -77,7 +76,7 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 			}
 			return nil
 		}
-		if !c.pdfOnly && node.Syntax.Kind == query.ExpressionField && slices.Contains([]string{"date", "date_kind", "date_precision"}, node.Syntax.Field) {
+		if !c.pdfOnly && node.Syntax.Kind == query.ExpressionField && query.IsDocumentDateField(node.Syntax.Field) {
 			if len(node.Children) != 1 || (node.Children[0].Syntax.Kind != query.ExpressionTerm && node.Children[0].Syntax.Kind != query.ExpressionPhrase) || node.Children[0].Syntax.Prefix {
 				return compileExpressionError(node.Syntax.Start, node.Syntax.End, "date operand must be a single value")
 			}
@@ -111,7 +110,7 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 
 func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragment, error) {
 	zone := c.dateZone
-	loc, err := civiltime.LoadZone(zone)
+	loc, err := query.LoadZone(zone)
 	if err != nil {
 		return compiledQueryFragment{}, &query.DateError{Code: "invalid_timezone", Err: err}
 	}
@@ -150,10 +149,11 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		predicates = append(predicates, "("+strings.Join(alternatives, " OR ")+")")
 	}
 
+	var commonFrom, commonTo, commonStart, commonEnd string
 	for index, r := range scope.ranges {
-		from, _ := civiltime.ParseDate(r[0])
-		to, _ := civiltime.ParseDate(r[1])
-		start, end, err := civiltime.RangeBounds(from, to, loc)
+		from, _ := civil.ParseDate(r[0])
+		to, _ := civil.ParseDate(r[1])
+		start, end, err := query.RangeBounds(from, to, loc)
 		if err != nil {
 			dateErr := &query.DateError{Code: "date_not_in_zone", Err: err}
 			if index < len(scope.rangePositions) && scope.rangePositions[index] != nil {
@@ -164,17 +164,36 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		}
 		startKey, err := document.EventInstantUTCKey(start)
 		if err != nil {
-			return compiledQueryFragment{}, err
+			return compiledQueryFragment{}, dateBoundaryError(err, scope, index)
 		}
 		endKey, err := document.EventInstantUTCKey(end)
 		if err != nil {
-			return compiledQueryFragment{}, err
+			return compiledQueryFragment{}, dateBoundaryError(err, scope, index)
 		}
+		if commonFrom == "" || r[0] > commonFrom {
+			commonFrom, commonStart = r[0], startKey
+		}
+		if commonTo == "" || r[1] < commonTo {
+			commonTo, commonEnd = r[1], endKey
+		}
+	}
+	if commonFrom != "" && commonFrom > commonTo {
+		predicates = append(predicates, "1=0")
+	} else if commonFrom != "" {
 		predicates = append(predicates, `((k.utc_key IS NOT NULL AND k.utc_key>=? AND k.utc_key<?) OR
 			(k.utc_key IS NULL AND k.precision NOT IN ('year','month') AND k.civil_date<=? AND k.civil_end_date>=?) OR
 			(k.precision='month' AND k.civil_month>=? AND k.civil_month<=?) OR
 			(k.precision='year' AND k.civil_year>=? AND k.civil_year<=?))`)
-		args = append(args, startKey, endKey, r[1], r[0], r[0][:7], r[1][:7], r[0][:4], r[1][:4])
+		args = append(args, commonStart, commonEnd, commonTo, commonFrom, commonFrom[:7], commonTo[:7], commonFrom[:4], commonTo[:4])
 	}
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE ` + strings.Join(predicates, " AND ") + ")", args: args}, nil
+}
+
+func dateBoundaryError(err error, scope dateScope, index int) error {
+	dateErr := &query.DateError{Code: "invalid_date", Err: err}
+	if index < len(scope.rangePositions) && scope.rangePositions[index] != nil {
+		pos := scope.rangePositions[index]
+		return &query.ExpressionError{Offset: pos.Start, End: pos.End, Message: dateErr.Error(), Cause: dateErr}
+	}
+	return dateErr
 }

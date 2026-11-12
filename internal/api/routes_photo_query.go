@@ -78,8 +78,15 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, queryInputError(err)
 		}
-		value.TimezoneDefaulted = false
 		metadataSort := value.Sort
+		if in.Body.SnapshotID == "" {
+			err = d.Store.ValidatePhotoQuery(ctx, value)
+		} else {
+			err = store.ValidatePhotoDocumentDates(value)
+		}
+		if err != nil {
+			return nil, workspaceQueryError(err)
+		}
 		value = photoRankingQuery(value)
 		request := photoRankingRequest(value, in.Body.Hidden, store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint})
 		request.Stacks = in.Body.Stacks && in.Body.Projection != "map"

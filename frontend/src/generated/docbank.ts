@@ -5769,7 +5769,6 @@ export interface SavedQueryV1Schema {
   /** @maxLength 8192 */
   text?: string;
   timezone?: string;
-  timezone_defaulted?: boolean;
   v?: SavedQueryV1SchemaV;
 }
 
@@ -6803,7 +6802,6 @@ export interface Query {
   text: string;
   /** @nullable */
   timezone?: string | null;
-  timezone_defaulted?: boolean;
   v: number;
 }
 

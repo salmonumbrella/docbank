@@ -630,10 +630,6 @@ That explicit form requires a mode, a profile, and an authorized source set. See
 [Automatic and processing search](search.md) for modes, coverage, and the consumer
 contract.
 
-Next: organize documents beyond paths with
-[Organizing and tagging](organizing.md), or see every search flag in the
-[CLI reference](../cli-reference.md).
-
 ## Find documents by their own date
 
 Use advanced search to find claims from a document rather than a file's
@@ -643,18 +639,25 @@ of the primary claim, or `date_precision:day` to select date-only claims.
 The precision values are `exact`, `day`, and `coarse`; exact includes floating
 wall times, while coarse includes month and year claims. Constraints in one
 AND group apply to the same claim. OR branches and NOT operands each have
-separate scopes. Multiple date kinds in a group are alternatives.
+separate scopes. Multiple date kinds in a group are alternatives. Date range
+endpoints must yield representable instant bounds; otherwise the API returns
+HTTP 400 `invalid_date` without clamping the range.
 
 Exact instants are compared in the query's `timezone`; floating times and
 all-day dates use their written civil dates. Month and year claims match any
 range they overlap. A multi-day all-day calendar event matches each of its
 days. An omitted zone uses `[web] timeline_timezone`, which defaults to UTC.
-The result echoes the zone and whether it was defaulted. Saved searches retain
-the zone used when saved. Browser sessions see only claims whose event and
-actors are not sensitive.
+The response echoes the zone and whether it was defaulted; the current interface
+does not display it. Saved searches retain the zone used when saved; running one
+reports that pinned zone as explicit. These date filters and the document date
+sort are available in Documents. Photos rejects them. Browser sessions see only
+claims whose event and actors are not sensitive.
 
 Date search can return `document_dates_pending` while the timeline
-index is rebuilding; check timeline coverage and retry after indexing. An
+index is rebuilding; check timeline coverage and retry after indexing. Failed or
+unavailable derivations hide older date claims and do not establish that a
+document is undated. `NOT date:` can include files with failed or unavailable
+derivations because no current claim is visible. An
 API-key caller may request `"disclosure":"full"` when creating a workspace
 query to include sensitive date claims. Browser sessions always use safe
 disclosure.
@@ -666,3 +669,6 @@ list a day's placements. Add an advanced query as the final argument,
 kinds. The command prints the selected zone to stderr and JSON to stdout.
 Both reads use safe disclosure; see [Document timeline](../architecture/document-timeline.md#read-documents-by-day)
 for paging and indexing behavior.
+Next: organize documents beyond paths with
+[Organizing and tagging](organizing.md), or see every search flag in the
+[CLI reference](../cli-reference.md).

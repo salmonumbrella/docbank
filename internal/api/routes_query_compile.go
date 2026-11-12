@@ -65,7 +65,6 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			return nil, queryInputError(err)
 		}
 		submitted := value
-		value.TimezoneDefaulted = false // This request supplied a zone explicitly.
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
 			if problem := dateQueryError(err); problem != nil {
@@ -104,7 +103,6 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, queryInputError(err)
 		}
-		value.TimezoneDefaulted = false // This request supplied a zone explicitly.
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
 			if problem := dateQueryError(err); problem != nil {
@@ -119,7 +117,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			}
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query highlights")
 		}
-		fingerprint, err := query.Fingerprint(compiled.Query)
+		fingerprint, err := query.Fingerprint(value)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not fingerprint query highlights")
 		}
@@ -138,9 +136,9 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 }
 
 // dateQueryError preserves the timeline contract's error codes at every query entry point.
-func dateQueryError(err error) error {
+func dateQueryError(err error) *Error {
 	if date, ok := errors.AsType[*query.DateError](err); ok {
-		problem := NewError(http.StatusBadRequest, date.Code, err.Error())
+		problem := NewError(http.StatusBadRequest, date.Code, date.Err.Error())
 		if positioned, ok := errors.AsType[*query.ExpressionError](err); ok && positioned.End > positioned.Offset {
 			problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
 		}
