@@ -7555,6 +7555,18 @@ export interface ProcessingProfileSummary {
   reranking_available?: boolean;
 }
 
+export interface Profile {
+  columns: string[];
+  date_format: string;
+  declared_timezone: string;
+  encoding: string;
+  field: number;
+  header_row: boolean;
+  id: string;
+  newline_in_field: number;
+  qualifier: number;
+}
+
 export type PromotePhotoNodeRequestKind = typeof PromotePhotoNodeRequestKind[keyof typeof PromotePhotoNodeRequestKind];
 
 
@@ -7714,6 +7726,53 @@ export interface QueryPreview {
   query_fingerprint: string;
 }
 
+export interface RecipientPackageFile {
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+export interface RecipientPackageDocument {
+  allocation_id: string;
+  artifact_manifest_sha256: string;
+  document_id: string;
+  labels: string[];
+  namespace_id: string;
+  ordinal: number;
+  page_count: number;
+  pdf: RecipientPackageFile;
+  recipe_sha256: string;
+  review_sha256: string;
+  text: RecipientPackageFile;
+}
+
+export interface RecipientPackageReceipt {
+  contract: string;
+  dat_profile: Profile;
+  document_count: number;
+  documents: RecipientPackageDocument[];
+  load_file: RecipientPackageFile;
+  mapping: RecipientPackageFile;
+  opt_profile: Profile;
+  page_count: number;
+  page_map: RecipientPackageFile;
+}
+
+export interface RecipientPackageDownload {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  contract: string;
+  expires_at: string;
+  id: string;
+  name: string;
+  receipt: RecipientPackageReceipt;
+  sha256: string;
+  size: number;
+  url: string;
+  verification: string;
+}
+
 export type RecordFields = {[key: string]: unknown};
 
 export interface Record {
@@ -7731,6 +7790,24 @@ export interface Record {
   title: string;
   type_id: string;
   updated_at: string;
+}
+
+export type RecordCreateInputFields = {[key: string]: unknown};
+
+export interface RecordCreateInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fields?: RecordCreateInputFields;
+  /** At most 8192 UTF-8 bytes after normalization. */
+  note?: string;
+  status?: string;
+  /**
+     * After trimming and NFC normalization, 1 to 300 characters and at most 1200 UTF-8 bytes.
+     * @minLength 1
+     */
+  title: string;
+  /** @minLength 1 */
+  type_id: string;
 }
 
 export interface RecordPage {
@@ -7751,6 +7828,19 @@ export interface RecordType {
   definition: Definition;
   revision: number;
   updated_at: string;
+}
+
+export type RecordUpdateInputFields = {[key: string]: unknown};
+
+export interface RecordUpdateInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fields?: RecordUpdateInputFields;
+  /** At most 8192 UTF-8 bytes after normalization. */
+  note?: string;
+  status?: string;
+  /** After trimming and NFC normalization, 1 to 300 characters and at most 1200 UTF-8 bytes. */
+  title?: string;
 }
 
 export interface RedactionFileDigest {
@@ -10281,6 +10371,7 @@ export type DeactivateRecordTypeHeaders = {
 export type ListRecordsParams = {
 type: string;
 status?: string;
+include_inactive?: boolean;
 q?: string;
 as_of?: string;
 field?: string[];
@@ -10297,8 +10388,6 @@ limit?: number;
 offset?: number;
 };
 
-export type CreateRecordBody = {[key: string]: unknown};
-
 export type GetRecordParams = {
 as_of?: string;
 };
@@ -10306,8 +10395,6 @@ as_of?: string;
 export type UpdateRecordHeaders = {
 'If-Match': string;
 };
-
-export type UpdateRecordBody = {[key: string]: unknown};
 
 export type RetireRecordHeaders = {
 'If-Match': string;
@@ -19885,7 +19972,7 @@ export const getCreateRecordUrl = () => {
 /**
  * @summary Create a record
  */
-export const createRecord = async (createRecordBody: CreateRecordBody, options?: Parameters<typeof sessionJSON>[1]): Promise<Record> => {
+export const createRecord = async (recordCreateInput: NonReadonly<RecordCreateInput>, options?: Parameters<typeof sessionJSON>[1]): Promise<Record> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -19906,7 +19993,7 @@ return sessionJSON<Record>(getCreateRecordUrl(),
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(createRecordBody)
+    body: JSON.stringify(recordCreateInput)
   }
 );}
 
@@ -19957,7 +20044,7 @@ export const getUpdateRecordUrl = (id: string,) => {
  * @summary Edit a record
  */
 export const updateRecord = async (id: string,
-    updateRecordBody: UpdateRecordBody,
+    recordUpdateInput: NonReadonly<RecordUpdateInput>,
     headers: UpdateRecordHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Record> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
@@ -19979,7 +20066,7 @@ return sessionJSON<Record>(getUpdateRecordUrl(id),
     ...options,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
-    body: JSON.stringify(updateRecordBody)
+    body: JSON.stringify(recordUpdateInput)
   }
 );}
 
@@ -20313,6 +20400,68 @@ export const publishNumberedPDF = async (redactionRenderRequest: NonReadonly<Red
     return headers;
   };
 return sessionJSON<BatesExport>(getPublishNumberedPDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
+  }
+);}
+
+
+
+export const getDiscardRecipientPackagesUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Cancel this owner's recipient package and transfer
+ */
+export const discardRecipientPackages = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRecipientPackagesUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getBuildRecipientPackageUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Prepare a recipient ZIP from one completed numbered review
+ */
+export const buildRecipientPackage = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RecipientPackageDownload> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RecipientPackageDownload>(getBuildRecipientPackageUrl(),
   {
     ...options,
     method: 'POST',
