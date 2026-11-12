@@ -158,7 +158,7 @@ func TestSignatureHistoryContinuation(t *testing.T) {
 					items[i] = store.SignatureRequestSummary{RequestID: requestID, ContractID: contractID, Revision: 1, State: "failed", TemplateName: "Example"}
 				}
 				w.Header().Set("Content-Type", "application/json")
-				require.NoError(t, json.MarshalWrite(w, api.SignatureRequestPage{Items: items, Limit: tc.limit, Offset: tc.offset}))
+				assert.NoError(t, json.MarshalWrite(w, api.SignatureRequestPage{Items: items, Limit: tc.limit, Offset: tc.offset}))
 			})
 			cmd := newSignatureStatusCommand()
 			var out bytes.Buffer
