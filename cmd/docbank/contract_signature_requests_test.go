@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -65,4 +66,27 @@ func TestSignatureRequestDisclosureAndOutput(t *testing.T) {
 	require.NoError(t, printSignatureRequest(cmd, request, false))
 	require.Contains(t, out.String(), "https://sign.example.test")
 	require.Contains(t, out.String(), "Example template")
+}
+
+func TestSignatureRequestPreflightProblemIsDefinite(t *testing.T) {
+	const contractID = "11111111-1111-4111-8111-111111111111"
+	var posts atomic.Int32
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/contracts/"+contractID+"/signature-requests" {
+			http.NotFound(w, r)
+			return
+		}
+		posts.Add(1)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"title":"Bad Gateway","status":502,"detail":"Check the DocuSeal API path","code":"docuseal_not_found"}`))
+	})
+	_, err := runCLI(t, "contract", "sign", "request", contractID, "--revision", "1", "--template", "7", "--signer", "Signer=signer@example.com:Example")
+	require.Error(t, err)
+	code, ok := daemonconn.ProblemCode(err)
+	require.True(t, ok)
+	require.Equal(t, "docuseal_not_found", code)
+	require.ErrorContains(t, err, "Check the DocuSeal API path")
+	require.NotContains(t, err.Error(), "outcome unknown")
+	require.EqualValues(t, 1, posts.Load())
 }
