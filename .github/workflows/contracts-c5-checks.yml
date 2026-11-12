@@ -1,14 +1,18 @@
-name: Contracts C5 frontend checks and screenshots
+name: Contracts C5 combined checks and media
 
 on:
   push:
-    branches: [ci/contracts-c5-checks]
+    branches: [ci/contracts-c5-combined]
 
 permissions:
   contents: read
 
+env:
+  C5_SOURCE: d1ea4aa6efb0bf326fe861848a9a9bd6b1c69aa8
+  C5_BASE: 93c3f0b5e347de899822d9d3ad82693d32df4072
+
 jobs:
-  generate-and-check:
+  frontend-docs:
     if: github.repository == 'salmonumbrella/docbank'
     runs-on: ubuntu-26.04
     timeout-minutes: 45
@@ -25,7 +29,7 @@ jobs:
           node-version: "26.13.0"
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
       - run: kit-retry 3 5 npm ci --prefix frontend
-      - name: Render API without the not-yet-generated client
+      - name: Regenerate the API from source
         run: |
           mkdir -p .superpowers/openapi
           cat > .superpowers/openapi/main.go <<'GO'
@@ -44,34 +48,44 @@ jobs:
       - run: make generate-photo-policy
       - run: go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
       - run: npm --prefix frontend run generate:api
-      - run: git diff --stat
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: contracts-c5-generated-api-${{ github.sha }}
-          if-no-files-found: error
-          path: |
-            internal/api/openapi.yaml
-            internal/apiclient/client.gen.go
-            frontend/src/generated/docbank.ts
-            frontend/src/generated/photoSourceExtensions.ts
+      - name: Generated files match the committed source
+        run: git diff --exit-code -- internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts
       - name: Record formatter changes
         if: always()
         run: |
           (cd frontend && npx vp fmt)
           git diff -- frontend > format.patch
           git diff --stat -- frontend
+          git checkout -- frontend
+          printf 'workflow %s\nsource %s\n' "${{ github.sha }}" "$C5_SOURCE" > format-pin.txt
       - if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: contracts-c5-format-${{ github.sha }}
-          path: format.patch
-          if-no-files-found: ignore
-      - name: Frontend checks
+          path: |
+            format.patch
+            format-pin.txt
+          if-no-files-found: error
+      - name: Frontend checks (make frontend-test)
         if: always()
         run: make frontend-test
-      - name: Session and route tests
+      # make stops at the first failing step; the later checks still run so a
+      # format-only failure cannot hide a type, kit, unit or build failure.
+      - name: Svelte and TypeScript check
         if: always()
-        run: go test -tags fts5 ./internal/api/ -run 'TestWebPages|TestWebSession'
+        run: npm --prefix frontend run check
+      - name: Kit UI check
+        if: always()
+        run: npm --prefix frontend run check:kit-ui
+      - name: Screenshot harness check
+        if: always()
+        run: npm --prefix frontend run screenshots:check
+      - name: Unit tests
+        if: always()
+        run: npm --prefix frontend test
+      - name: Build
+        if: always()
+        run: npm --prefix frontend run build
       - name: Restore pinned uv archive
         if: always()
         id: uv_archive
@@ -88,10 +102,16 @@ jobs:
         if: always()
         run: make docs-build
 
-  screenshots:
+  go-browser:
     if: github.repository == 'salmonumbrella/docbank'
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -100,49 +120,111 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Browser session and web page routes
+        run: go test -tags fts5 ./internal/api/ -run 'TestWebPages|TestWebSession' -count=1
+      - name: Contract and party API routes
+        if: always()
+        run: go test -tags fts5 ./internal/api/ -run 'Contract|Part(y|ies)' -count=1
+
+  screenshots:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: "26.13.0"
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
-      - name: Install pinned Chromium
+      - name: Install pinned Chromium and ffmpeg
         run: |
           kit-retry 3 5 npm ci --prefix frontend
           kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
-      - name: Render API without the not-yet-generated client (screenshot build)
+          kit-retry 3 5 sudo apt-get update
+          kit-retry 3 5 sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Build the branch
+        run: make build
+      - name: Build the C4 base for Before captures
         run: |
-          mkdir -p .superpowers/openapi
-          cat > .superpowers/openapi/main.go <<'GO'
-          package main
-          import (
-              "os"
-              "go.kenn.io/docbank/internal/api"
-          )
-          func main() {
-              out, err := api.OpenAPIYAML()
-              if err != nil { panic(err) }
-              if _, err := os.Stdout.Write(out); err != nil { panic(err) }
-          }
-          GO
-          go run -tags fts5 ./.superpowers/openapi > internal/api/openapi.yaml
-      - run: make generate-photo-policy
-      - run: go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
-      - run: npm --prefix frontend run generate:api
-      - run: make build
-      - name: Capture synthetic real-daemon screenshots
+          git worktree add --detach .superpowers/base "$C5_BASE"
+          make -C .superpowers/base build
+      - name: Capture synthetic real-daemon media
         env:
           DOCBANK_SCREENSHOT_DIR: ${{ github.workspace }}/.superpowers/contracts-c5-shots
+          DOCBANK_C5_BASE_BIN: ${{ github.workspace }}/.superpowers/base/bin/docbank
           DOCBANK_PLAYWRIGHT_SUITE: contracts-c5
         run: |
           scratch=$(mktemp -d /tmp/docbank-screenshots-XXXXXX)
           trap 'rm -rf "$scratch"' EXIT
           cd frontend
           TMPDIR="$scratch" node node_modules/@playwright/test/cli.js test contracts-c5.screenshot.ts --config screenshots/playwright.config.ts --project chromium
+      - name: Encode the recording as H.264
+        if: always()
+        run: |
+          shots=.superpowers/contracts-c5-shots
+          webm=$(find "$shots/video" -name '*.webm' -print -quit 2>/dev/null || true)
+          if [ -z "$webm" ]; then echo "no recording"; exit 0; fi
+          start=$(cat "$shots/video-start.txt")
+          ffmpeg -y -loglevel error -ss "$start" -i "$webm" -c:v libx264 -pix_fmt yuv420p -preset slow -crf 20 -movflags +faststart "$shots/contracts-c5.mp4"
+          ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate:format=duration -of default=nw=1 "$shots/contracts-c5.mp4" | tee "$shots/mp4-probe.txt"
+          mkdir -p "$shots/frames"
+          ffmpeg -y -loglevel error -i "$shots/contracts-c5.mp4" -vf fps=1 "$shots/frames/frame-%03d.png"
+      - name: Record source and workflow pin
+        if: always()
+        run: |
+          mkdir -p .superpowers/contracts-c5-shots
+          printf 'workflow %s\nsource %s\nbase %s\nrunner_scale %s\n' "${{ github.sha }}" "$C5_SOURCE" "$C5_BASE" "${DOCBANK_SCREENSHOT_SCALE:-1}" > .superpowers/contracts-c5-shots/pin.txt
       - if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: contracts-c5-screenshots-${{ github.sha }}
+          name: contracts-c5-media-${{ github.sha }}
           if-no-files-found: warn
           path: |
             .superpowers/contracts-c5-shots/
             .superpowers/playwright/
             frontend/test-results/playwright/contracts-c5.json
+
+  lint:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Restore lint cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-lint
+          extra-path: ~/.cache/golangci-lint
+      - name: Reject timing suppressions
+        run: make check-timing-suppressions
+      - name: Run golangci-lint
+        uses: step-security/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          skip-cache: true
+      - name: Run golangci-lint for Windows
+        if: always()
+        env:
+          GOOS: windows
+        run: ./custom-gcl run ./...
+      - name: Run golangci-lint for macOS
+        if: always()
+        env:
+          GOOS: darwin
+        run: ./custom-gcl run ./...
+      - name: Check workflow retry rules
+        if: always()
+        run: make lint-workflow-retries
