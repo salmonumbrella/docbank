@@ -53,6 +53,7 @@ type SignatureSigner struct {
 }
 type SignatureRequest struct {
 	SignatureRequestSummary
+
 	Signers []SignatureSigner `json:"signers"`
 }
 type SignatureCreationResult struct {
