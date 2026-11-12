@@ -585,11 +585,13 @@ func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
 		require.Len(t, page.Items, 1)
 		require.Equal(t, nodes[0].ID, page.Items[0].NodeID)
 		require.NotEmpty(t, page.NextCursor)
-		scope.Coverage = CoverageSelection{}
-		_, err = svc.TimelineDays(ctx, "owner", scope, date, date)
-		require.ErrorIs(t, err, ErrInvalidCoverageSelection)
-		_, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
-		require.ErrorIs(t, err, ErrInvalidCoverageSelection)
+		for _, selection := range []CoverageSelection{{}, {Configuration: "profile_required"}} {
+			scope.Coverage = selection
+			_, err = svc.TimelineDays(ctx, "owner", scope, date, date)
+			require.ErrorIs(t, err, ErrInvalidCoverageSelection)
+			_, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
+			require.ErrorIs(t, err, ErrInvalidCoverageSelection)
+		}
 		var scratch int
 		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
 		require.Zero(t, scratch)
