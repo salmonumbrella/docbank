@@ -576,19 +576,12 @@ function parseQueryEvidence(
   } catch {
     malformed("query does not satisfy QueryV1");
   }
-  if (expectedQuery !== undefined) {
-    const expected = {
-      ...expectedQuery,
-      ...(expectedQuery.timezone === undefined && decodedQuery.timezone !== undefined
-        ? { timezone: decodedQuery.timezone }
-        : {}),
-    };
-    if (
-      canonicalQuery(decodedQuery) !== canonicalQuery(expected) &&
-      (match === "exact" || !resolvesRequestedQuery(decodedQuery, expected))
-    ) {
-      malformed("query does not match the request");
-    }
+  if (
+    expectedQuery !== undefined &&
+    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery) &&
+    (match === "exact" || !resolvesRequestedQuery(decodedQuery, expectedQuery))
+  ) {
+    malformed("query does not match the request");
   }
   if (!Array.isArray(raw.dependencies) || raw.dependencies.length > 256)
     malformed("dependencies exceeds its bound");

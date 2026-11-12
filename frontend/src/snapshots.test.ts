@@ -146,6 +146,36 @@ describe("snapshot transport and receipt validation", () => {
     }
   });
 
+  it("keeps the default timezone in response metadata, not query evidence", async () => {
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    fetcher.mockResolvedValueOnce(
+      jsonResponse(await page({ timezone: "America/Toronto", timezone_defaulted: true })),
+    );
+    const accepted = await createSnapshot(
+      "session",
+      query,
+      { page_size: 50 },
+      new AbortController().signal,
+    );
+    expect(accepted.timezone).toBe("America/Toronto");
+    expect(accepted.timezone_defaulted).toBe(true);
+
+    const changed = parseQuery(JSON.stringify({ timezone: "America/Toronto" }));
+    fetcher.mockResolvedValueOnce(
+      jsonResponse(
+        await page({
+          query: changed,
+          query_fingerprint: await queryFingerprint(changed),
+          timezone: "America/Toronto",
+          timezone_defaulted: true,
+        }),
+      ),
+    );
+    await expect(
+      createSnapshot("session", query, { page_size: 50 }, new AbortController().signal),
+    ).rejects.toThrow("query does not match the request");
+  });
+
   it("accepts a person dependency", async () => {
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
     const receipt = await page({ dependencies });
