@@ -56,6 +56,15 @@ func printSignatureRequest(cmd *cobra.Command, v store.SignatureRequest, asJSON 
 	}
 	return nil
 }
+
+// confirmedSignatureOutputError preserves the confirmed request identity when output fails.
+func confirmedSignatureOutputError(requestID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("signature request %s confirmed sent, but writing output failed: %w", requestID, err)
+}
+
 func newSignatureRequestCommand() *cobra.Command {
 	var template, revision int64
 	var signers []string
@@ -96,7 +105,7 @@ func newSignatureRequestCommand() *cobra.Command {
 			}
 			return contractMutationError("signature request", err)
 		}
-		return printSignatureRequest(cmd, v, asJSON)
+		return confirmedSignatureOutputError(v.RequestID, printSignatureRequest(cmd, v, asJSON))
 	}}
 	cmd.Flags().Int64Var(&template, "template", 0, "DocuSeal template ID")
 	cmd.Flags().StringArrayVar(&signers, "signer", nil, "ROLE=EMAIL[:NAME] or signer JSON (repeatable)")
@@ -131,7 +140,7 @@ func newSignatureStatusCommand() *cobra.Command {
 				return fmt.Errorf("write signature history: %w", err)
 			}
 		}
-		return nil
+		return writeContinuation(cmd.OutOrStdout(), "signature requests", page.Limit, page.Offset, len(page.Items))
 	}}
 	cmd.Flags().BoolVar(&request, "request", false, "show a single request")
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum requests")
