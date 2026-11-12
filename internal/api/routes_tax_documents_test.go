@@ -2,11 +2,12 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"net/http"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"net/http"
-	"testing"
 )
 
 func TestTaxDocumentHTTPWorkflow(t *testing.T) {

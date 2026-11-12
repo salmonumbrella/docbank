@@ -2,8 +2,9 @@ package api
 
 import (
 	"encoding/json/v2"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestTaxDocumentRequestStrict(t *testing.T) {

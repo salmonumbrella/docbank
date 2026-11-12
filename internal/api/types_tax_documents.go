@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json/v2"
 	"errors"
+
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
 )

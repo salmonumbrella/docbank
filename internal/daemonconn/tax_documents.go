@@ -5,13 +5,14 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"net/http"
+	"reflect"
+	"time"
+
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/taxrecord"
-	"net/http"
-	"reflect"
-	"time"
 )
 
 var documentFields = []string{"link_id", "record_id", "event_id", "node_id", "content_version_id", "content_sha256", "role", "form_code", "note", "recorded_at", "retired_at", "live", "pinned", "intact", "path"}

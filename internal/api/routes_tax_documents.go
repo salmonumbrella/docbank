@@ -2,9 +2,10 @@ package api
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
-	"net/http"
 )
 
 type taxDocumentOutput struct {

@@ -1,13 +1,14 @@
 package daemonconn
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/api"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
 )
 
 func TestTaxDocumentReceiptValidation(t *testing.T) {
