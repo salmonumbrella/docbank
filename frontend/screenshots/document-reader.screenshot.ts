@@ -100,7 +100,10 @@ test("reads PDFs and Markdown from file rows without a page runtime", async ({
   const externalRequests: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() !== "error") return;
+    const { url, lineNumber, columnNumber } = message.location();
+    const where = url ? `${url}:${lineNumber}:${columnNumber}` : "no location reported";
+    errors.push(`${message.text()} [${where}]`);
   });
   let originalLoads = 0;
   const origin = new URL(webURL).origin;
