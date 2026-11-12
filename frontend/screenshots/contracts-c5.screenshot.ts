@@ -147,7 +147,10 @@ async function formGeometry(main: Locator) {
     const pickers = [...element.querySelectorAll(".contract-form .kit-typeahead")].map((root) => {
       const trigger = root.querySelector(".kit-typeahead__trigger");
       return {
-        label: root.closest(".tool-field")?.querySelector("label, .tool-label")?.textContent?.trim(),
+        label: root
+          .closest(".tool-field")
+          ?.querySelector("label, .tool-label")
+          ?.textContent?.trim(),
         field: box(root.closest(".tool-field")!),
         root: box(root),
         trigger: trigger ? box(trigger) : null,

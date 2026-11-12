@@ -2,7 +2,7 @@ name: Contracts C5 combined checks and media
 
 on:
   push:
-    branches: [ci/contracts-c5-visual]
+    branches: [ci/contracts-c5-visual-r2]
 
 permissions:
   contents: read
