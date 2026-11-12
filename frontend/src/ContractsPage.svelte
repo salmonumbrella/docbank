@@ -166,6 +166,12 @@
   }
 </script>
 
+{#snippet newContract()}
+  <Button size="sm" tone="info" surface="solid" onclick={() => (form = {})}
+    ><PlusIcon size="14" aria-hidden="true" /> New contract</Button
+  >
+{/snippet}
+
 <DrawerShell
   title="Contracts"
   ariaLabel="Contracts"
@@ -185,11 +191,6 @@
         <RefreshCwIcon size="14" aria-hidden="true" />
       </IconButton>
     {/if}
-  {/snippet}
-  {#snippet newContract()}
-    <Button size="sm" tone="info" surface="solid" onclick={() => (form = {})}
-      ><PlusIcon size="14" aria-hidden="true" /> New contract</Button
-    >
   {/snippet}
 
   <div class="tool-body contracts-body">

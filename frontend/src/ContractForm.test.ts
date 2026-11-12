@@ -42,9 +42,11 @@ function serve(route: Route) {
 }
 const problem = (status: number, code: string, extra: object = {}) =>
   Response.json({ status, code, detail: code, ...extra }, { status });
-// catalog serves the active parties in pages of the requested size.
-function catalog(url: URL, rows: Party[]): Response | undefined {
-  if (url.pathname !== "/api/v1/parties") return undefined;
+// catalog serves the active parties in pages of the requested size; it
+// answers only the list, so a party create reaches the test's own route.
+function catalog(call: Call, rows: Party[]): Response | undefined {
+  const url = new URL(call.path, "http://localhost");
+  if (call.method !== "GET" || url.pathname !== "/api/v1/parties") return undefined;
   const limit = Number(url.searchParams.get("limit"));
   const offset = Number(url.searchParams.get("offset"));
   return Response.json({ items: rows.slice(offset, offset + limit), limit, offset });
@@ -109,7 +111,7 @@ describe("new contract", () => {
     const created = contract({ title: "Archive storage", status: "draft", revision: 1 });
     serve(
       (call, url) =>
-        catalog(url, [own, northwind]) ??
+        catalog(call, [own, northwind]) ??
         (call.method === "POST" && url.pathname === "/api/v1/contracts"
           ? Response.json(created, { status: 201 })
           : undefined),
@@ -141,7 +143,7 @@ describe("new contract", () => {
     const created = party({ party_id: "88888888-8888-4888-8888-888888888888", own: true });
     serve(
       (call, url) =>
-        catalog(url, [northwind]) ??
+        catalog(call, [northwind]) ??
         (call.method === "POST" && url.pathname === "/api/v1/parties"
           ? Response.json({ ...created, display_name: "Harbor Holdings" }, { status: 201 })
           : undefined),
@@ -162,7 +164,7 @@ describe("new contract", () => {
       display_name: "Zeta Holdings",
       own: true,
     });
-    serve((_, url) => catalog(url, [...many(1148), zeta, zenith]));
+    serve((call) => catalog(call, [...many(1148), zeta, zenith]));
     show();
     await search("counterparty", "Zenith");
     await fireEvent.mouseDown(await screen.findByRole("option", { name: "Zenith Storage Ltd" }));
@@ -178,12 +180,12 @@ describe("new contract", () => {
 
   it("reports a partial party list instead of offering to create a party", async () => {
     let failSecond = true;
-    serve((_, url) => {
+    serve((call, url) => {
       if (url.searchParams.get("offset") === "1000" && failSecond) {
         failSecond = false;
         return problem(500, "internal");
       }
-      return catalog(url, [...many(1000), zenith]);
+      return catalog(call, [...many(1000), zenith]);
     });
     show();
     await search("counterparty", "Zenith");
@@ -198,8 +200,8 @@ describe("new contract", () => {
 
   it("chooses the existing party when the name is taken", async () => {
     serve(
-      (call, url) =>
-        catalog(url, [northwind]) ??
+      (call) =>
+        catalog(call, [northwind]) ??
         (call.method === "POST"
           ? problem(409, "party_exists", { party_id: northwind.party_id })
           : undefined),
@@ -216,12 +218,12 @@ describe("new contract", () => {
 
   it("reloads the parties once to find an existing party created meanwhile", async () => {
     let rows = [northwind];
-    serve((call, url) => {
+    serve((call) => {
       if (call.method === "POST") {
         rows = [northwind, zenith];
         return problem(409, "party_exists", { party_id: zenith.party_id });
       }
-      return catalog(url, rows);
+      return catalog(call, rows);
     });
     show();
     await createInline("counterparty", "Zenith");
@@ -232,8 +234,8 @@ describe("new contract", () => {
 
   it("says when the existing party is no longer available", async () => {
     serve(
-      (call, url) =>
-        catalog(url, [northwind]) ??
+      (call) =>
+        catalog(call, [northwind]) ??
         (call.method === "POST"
           ? problem(409, "party_exists", { party_id: zenith.party_id })
           : undefined),
@@ -252,7 +254,7 @@ describe("edit contract", () => {
   const saved = (overrides: Partial<Contract>) => Response.json(contract(overrides));
 
   it("disables Save until something changes", async () => {
-    serve((_, url) => catalog(url, [northwind]));
+    serve((call) => catalog(call, [northwind]));
     show(contract());
     const save = screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
@@ -262,8 +264,8 @@ describe("edit contract", () => {
 
   it("patches only the changed fields at the contract revision", async () => {
     serve(
-      (call, url) =>
-        catalog(url, [northwind]) ??
+      (call) =>
+        catalog(call, [northwind]) ??
         (call.method === "PATCH"
           ? saved({ title: "Northwind lease", expires_on: null, revision: 5 })
           : undefined),
@@ -284,11 +286,11 @@ describe("edit contract", () => {
   });
 
   it("chains each party step on the revision the previous step returned", async () => {
-    serve((call, url) => {
+    serve((call) => {
       if (call.method === "PATCH") return saved({ title: "Northwind lease", revision: 5 });
       if (call.method === "DELETE") return saved({ title: "Northwind lease", revision: 6 });
       if (call.method === "PUT") return saved({ title: "Northwind lease", revision: 7 });
-      return catalog(url, [northwind, zenith]);
+      return catalog(call, [northwind, zenith]);
     });
     const props = show(contract());
     await fireEvent.input(titleInput(), { target: { value: "Northwind lease" } });
@@ -312,7 +314,7 @@ describe("edit contract", () => {
   });
 
   it("keeps a retired party listed and removable but never offers it", async () => {
-    serve((_, url) => catalog(url, [northwind]));
+    serve((call) => catalog(call, [northwind]));
     show(contract());
     expect(screen.getByRole("button", { name: "Remove Riverbend Analytics LLC" })).toBeTruthy();
     expect(screen.getAllByText("Retired")).toHaveLength(1);
@@ -321,10 +323,10 @@ describe("edit contract", () => {
   });
 
   it("stops on a stale first step, keeps the draft and loads the latest on request", async () => {
-    serve((call, url) => {
+    serve((call) => {
       if (call.method === "PATCH") return problem(412, "stale_revision");
       if (call.path === contractPath) return saved({ title: "Renamed elsewhere", revision: 6 });
-      return catalog(url, [northwind]);
+      return catalog(call, [northwind]);
     });
     show(contract());
     await fireEvent.input(titleInput(), { target: { value: "Northwind lease" } });
@@ -340,10 +342,10 @@ describe("edit contract", () => {
   });
 
   it("reports what was saved when a later step is stale", async () => {
-    serve((call, url) => {
+    serve((call) => {
       if (call.method === "PATCH") return saved({ title: "Northwind lease", revision: 5 });
       if (call.method === "PUT") return problem(412, "stale_revision");
-      return catalog(url, [northwind, zenith]);
+      return catalog(call, [northwind, zenith]);
     });
     show(contract());
     await fireEvent.input(titleInput(), { target: { value: "Northwind lease" } });
@@ -356,9 +358,9 @@ describe("edit contract", () => {
   });
 
   it("locks Save when Docbank does not confirm a step and never resends it", async () => {
-    serve((call, url) => {
+    serve((call) => {
       if (call.method === "PATCH") throw new TypeError("Failed to fetch");
-      return catalog(url, [northwind]);
+      return catalog(call, [northwind]);
     });
     show(contract());
     await fireEvent.input(titleInput(), { target: { value: "Northwind lease" } });

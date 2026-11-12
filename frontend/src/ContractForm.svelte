@@ -223,6 +223,8 @@
   }
 
   async function save(): Promise<void> {
+    // A locked form never sends again, even if a click reaches it.
+    if (saving || locked || unchanged) return;
     saving = true;
     alert = "";
     conflict = "";

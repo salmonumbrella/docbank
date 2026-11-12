@@ -64,7 +64,7 @@
     ),
   );
   const exactName = $derived(catalog.some((party) => fold(party.display_name) === fold(query)));
-  const adder = role === "own" ? "Add own entity" : "Add counterparty";
+  const adder = $derived(role === "own" ? "Add own entity" : "Add counterparty");
 
   function choose(value: string): boolean {
     note = "";
