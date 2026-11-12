@@ -142,6 +142,11 @@ jobs:
           trap 'rm -rf "$scratch"' EXIT
           cd frontend
           TMPDIR="$scratch" node node_modules/@playwright/test/cli.js test contracts-c4.screenshot.ts --config screenshots/playwright.config.ts --project chromium
+      - name: Record source and workflow pin
+        if: always()
+        run: |
+          mkdir -p .superpowers/contracts-c4-shots
+          printf 'workflow %s\nsource 93c3f0b5e347de899822d9d3ad82693d32df4072\n' "${{ github.sha }}" > .superpowers/contracts-c4-shots/pin.txt
       - if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
