@@ -2,11 +2,16 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/v2"
+	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -88,4 +93,97 @@ func TestSignatureRequestPreflightProblemIsDefinite(t *testing.T) {
 	require.ErrorContains(t, err, "Check the DocuSeal API path")
 	require.NotContains(t, err.Error(), "outcome unknown")
 	require.EqualValues(t, 1, posts.Load())
+}
+
+// A confirmed send remains identifiable even when its output cannot be written.
+func TestSignatureRequestConfirmedOutputFailure(t *testing.T) {
+	const contractID = "11111111-1111-4111-8111-111111111111"
+	const requestID = "22222222-2222-4222-8222-222222222222"
+	for _, asJSON := range []bool{false, true} {
+		t.Run(strconv.FormatBool(asJSON), func(t *testing.T) {
+			var posts atomic.Int32
+			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/v1/contracts/"+contractID+"/signature-requests" {
+					http.NotFound(w, r)
+					return
+				}
+				posts.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"1"`)
+				w.WriteHeader(http.StatusCreated)
+				v := store.SignatureRequest{SignatureRequestSummary: store.SignatureRequestSummary{RequestID: requestID, ContractID: contractID, State: "sent", Revision: 1, EndpointOrigin: "https://sign.example.test", TemplateName: "Example"}, Signers: []store.SignatureSigner{{Position: 0, Role: "Signer", Email: "signer@example.com", State: "awaiting"}}}
+				require.NoError(t, json.MarshalWrite(w, v))
+			})
+			writeErr := errors.New("synthetic output failure")
+			cmd := newSignatureRequestCommand()
+			cmd.SetOut(redactionFailedOutput{writeErr})
+			cmd.SetErr(io.Discard)
+			args := []string{contractID, "--revision", "1", "--template", "7", "--signer", "Signer=signer@example.com"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			cmd.SetArgs(args)
+			err := cmd.ExecuteContext(t.Context())
+			require.ErrorIs(t, err, writeErr)
+			require.EqualValues(t, 1, posts.Load())
+			require.ErrorContains(t, err, requestID)
+			require.ErrorContains(t, err, "confirmed")
+			require.ErrorContains(t, err, "sent")
+		})
+	}
+}
+
+// A full history page must point to the next offset without changing JSON output.
+func TestSignatureHistoryContinuation(t *testing.T) {
+	const contractID = "11111111-1111-4111-8111-111111111111"
+	const requestID = "22222222-2222-4222-8222-222222222222"
+	for _, tc := range []struct {
+		name                 string
+		limit, offset, count int
+		asJSON, wantHint     bool
+	}{
+		{"default", 50, 0, 50, false, true}, {"offset", 2, 7, 2, false, true}, {"short", 2, 0, 1, false, false}, {"json", 2, 7, 2, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/v1/contracts/"+contractID+"/signature-requests" {
+					http.NotFound(w, r)
+					return
+				}
+				require.Equal(t, strconv.Itoa(tc.limit), r.URL.Query().Get("limit"))
+				require.Equal(t, strconv.Itoa(tc.offset), r.URL.Query().Get("offset"))
+				items := make([]store.SignatureRequestSummary, tc.count)
+				for i := range items {
+					items[i] = store.SignatureRequestSummary{RequestID: requestID, ContractID: contractID, Revision: 1, State: "failed", TemplateName: "Example"}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				require.NoError(t, json.MarshalWrite(w, api.SignatureRequestPage{Items: items, Limit: tc.limit, Offset: tc.offset}))
+			})
+			cmd := newSignatureStatusCommand()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(io.Discard)
+			args := []string{contractID}
+			if tc.name != "default" {
+				args = append(args, "--limit", strconv.Itoa(tc.limit), "--offset", strconv.Itoa(tc.offset))
+			}
+			if tc.asJSON {
+				args = append(args, "--json")
+			}
+			cmd.SetArgs(args)
+			require.NoError(t, cmd.ExecuteContext(t.Context()))
+			if tc.wantHint {
+				require.Contains(t, out.String(), "more signature requests may exist")
+				require.Contains(t, out.String(), "--offset "+strconv.Itoa(tc.offset+tc.count))
+			} else {
+				require.NotContains(t, out.String(), "may exist")
+				require.NotContains(t, out.String(), "--offset")
+			}
+			if tc.asJSON {
+				var page api.SignatureRequestPage
+				require.NoError(t, json.Unmarshal(out.Bytes(), &page))
+				require.Len(t, page.Items, tc.count)
+			}
+		})
+	}
 }
