@@ -1411,7 +1411,9 @@
       ? ""
       : snapshotActive
         ? `frozen:${snapshot.state.firstPage?.snapshot_id ?? ""}:${snapshot.state.offset}`
-        : `live:${directory?.id ?? ""}:${activeQuery}:${activeTagID}`,
+        : directory
+          ? `live:${directory.id}:${activeQuery}:${activeTagID}`
+          : "",
   );
   let documentFacts = $state<DocumentFacts>();
   let factsRefresh = $state(0);
