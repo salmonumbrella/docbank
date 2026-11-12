@@ -229,3 +229,30 @@ func TestNoteTextUnparsedCurrentAndStrictByteLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Targets, 1, "reading must not publish a projection")
 }
+
+func TestNoteTextOffsetDistinguishesOmittedFromZero(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	const original = "# First\nfirst\n# Second\nsecond\n"
+	hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader(original))
+	require.NoError(t, err)
+	n, err := s.CreateFile(t.Context(), s.RootID(), "offset.md", hash, size, "text/markdown")
+	require.NoError(t, err)
+	base := "/api/v1/notes/" + strconv.FormatInt(n.ID, 10) + "/text?heading=Second"
+	resp, body := get(t, ts, base, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var result struct {
+		Text string `json:"text"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Equal(t, "# Second\nsecond\n", result.Text)
+	resp, body = get(t, ts, base+"&offset=0", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Contains(t, body, "range_invalid")
+	resp, body = get(t, ts, "/api/v1/notes/"+strconv.FormatInt(n.ID, 10)+"/text?offset=0", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Equal(t, original, result.Text)
+	resp, body = get(t, ts, "/api/v1/notes/"+strconv.FormatInt(n.ID, 10)+"/text?offset=-1", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}

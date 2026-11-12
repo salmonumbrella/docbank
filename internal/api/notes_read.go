@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -19,6 +20,20 @@ type noteReadRange struct {
 	LineStart int `json:"line_start"`
 	LineEnd   int `json:"line_end"`
 }
+
+// noteOffsetParam preserves whether the optional absolute offset was supplied.
+// Huma query parameters cannot themselves be pointers.
+type noteOffsetParam struct {
+	Value int
+	IsSet bool
+}
+
+func (noteOffsetParam) Schema(r huma.Registry) *huma.Schema {
+	return huma.SchemaFromType(r, reflect.TypeFor[int]())
+}
+
+func (p *noteOffsetParam) Receiver() reflect.Value      { return reflect.ValueOf(&p.Value).Elem() }
+func (p *noteOffsetParam) OnParamSet(isSet bool, _ any) { p.IsSet = isSet }
 
 type noteReadSource struct {
 	State  string `json:"state"`
@@ -153,13 +168,13 @@ func registerNoteTextRoute(api huma.API, d Deps) {
 		OperationID: "getNoteText", Method: http.MethodGet, Path: "/api/v1/notes/{node_id}/text",
 		Summary: "Read original Markdown note bytes",
 	}, func(ctx context.Context, input *struct {
-		NodeID    int64  `path:"node_id"`
-		VersionID string `query:"version_id"`
-		Heading   string `query:"heading" maxLength:"512"`
-		LineStart int    `query:"line_start" minimum:"1"`
-		LineEnd   int    `query:"line_end" minimum:"1"`
-		Offset    *int   `query:"offset" minimum:"0"`
-		MaxBytes  int    `query:"max_bytes" default:"262144" minimum:"1" maximum:"524288"`
+		NodeID    int64           `path:"node_id"`
+		VersionID string          `query:"version_id"`
+		Heading   string          `query:"heading" maxLength:"512"`
+		LineStart int             `query:"line_start" minimum:"1"`
+		LineEnd   int             `query:"line_end" minimum:"1"`
+		Offset    noteOffsetParam `query:"offset" minimum:"0"`
+		MaxBytes  int             `query:"max_bytes" default:"262144" minimum:"1" maximum:"524288"`
 	}) (*output, error) {
 		view, err := d.Store.NoteVersion(ctx, input.NodeID, input.VersionID)
 		if err != nil {
@@ -175,9 +190,13 @@ func registerNoteTextRoute(api huma.API, d Deps) {
 		if state != "ok" {
 			return nil, NewError(http.StatusUnprocessableEntity, "note_"+state, "Note structure is unavailable for these original bytes")
 		}
+		var offset *int
+		if input.Offset.IsSet {
+			offset = &input.Offset.Value
+		}
 		selected, err := processing.SelectNoteText(src, note, processing.NoteTextOptions{
 			Heading: input.Heading, LineStart: input.LineStart, LineEnd: input.LineEnd,
-			Offset: input.Offset, MaxBytes: input.MaxBytes,
+			Offset: offset, MaxBytes: input.MaxBytes,
 		})
 		if err != nil {
 			if errors.Is(err, processing.ErrNoteRange) {
