@@ -1,0 +1,24 @@
+name: Contracts C2 marker retry check
+on:
+  push:
+    branches: [ci/contracts-c2-marker-retry]
+permissions:
+  contents: read
+jobs:
+  retry:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Check workflow download retries
+        run: |
+          GOFLAGS="${GOFLAGS:+$GOFLAGS }-n" kit-retry 3 5 make lint-workflow-retries
+          make lint-workflow-retries
