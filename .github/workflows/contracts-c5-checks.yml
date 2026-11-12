@@ -2,13 +2,13 @@ name: Contracts C5 combined checks and media
 
 on:
   push:
-    branches: [ci/contracts-c5-final]
+    branches: [ci/contracts-c5-visual]
 
 permissions:
   contents: read
 
 env:
-  C5_SOURCE: dec4a15624443b4dc45d09188135ad0f9b879e69
+  C5_SOURCE: 3db24d891dbbb2119c3db09e437bc5dc8dee5b69
   C5_BASE: 3f9b41f373af8ff9f7852de4f65fe41bc74107cc
 
 jobs:

@@ -143,6 +143,16 @@ async function formGeometry(main: Locator) {
       label: field.querySelector("label, .tool-label")?.textContent?.trim() ?? "",
       ...box(field),
     }));
+    // Each picker beside its field: the root and closed trigger should span it.
+    const pickers = [...element.querySelectorAll(".contract-form .kit-typeahead")].map((root) => {
+      const trigger = root.querySelector(".kit-typeahead__trigger");
+      return {
+        label: root.closest(".tool-field")?.querySelector("label, .tool-label")?.textContent?.trim(),
+        field: box(root.closest(".tool-field")!),
+        root: box(root),
+        trigger: trigger ? box(trigger) : null,
+      };
+    });
     const sections = [...element.querySelectorAll(".contract-form > .tool-section")].map(
       (section) => ({ heading: section.querySelector("h3")?.textContent?.trim(), ...box(section) }),
     );
@@ -151,10 +161,24 @@ async function formGeometry(main: Locator) {
       scrollWidth: element.scrollWidth,
       clientWidth: element.clientWidth,
       fields,
+      pickers,
       sections,
       sectionGaps: sections.slice(1).map((section, index) => section.top - sections[index]!.bottom),
     };
   });
+}
+
+// pickersFill requires every closed picker to span its field, as the selects
+// and date pickers beside it do (kit typeaheads otherwise stop at 300px).
+function pickersFill(geometry: Awaited<ReturnType<typeof formGeometry>>) {
+  expect(geometry.pickers.length, "form pickers measured").toBeGreaterThanOrEqual(3);
+  for (const picker of geometry.pickers) {
+    for (const part of [picker.root, picker.trigger]) {
+      if (!part) continue;
+      expect(Math.abs(part.left - picker.field.left), picker.label).toBeLessThanOrEqual(1);
+      expect(Math.abs(part.right - picker.field.right), picker.label).toBeLessThanOrEqual(1);
+    }
+  }
 }
 
 test.describe.configure({ mode: "serial" });
@@ -333,6 +357,7 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
     await expect(main.getByRole("button", { name: "Remove Harbor Scanning Co" })).toBeVisible();
     const desktopForm = await formGeometry(main);
     await report("form-desktop-geometry", desktopForm);
+    pickersFill(desktopForm);
     await shot(page, "after-form-desktop-dark.png");
     await pause(1200);
     await point(main.getByRole("button", { name: "Create contract" }));
@@ -342,8 +367,10 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
     await shot(page, "after-created-desktop-dark.png");
     await pause();
 
-    await caption("Edit a contract that changes elsewhere");
     await point(main.getByRole("button", { name: "All contracts" }).first());
+    await expect(main.getByRole("table", { name: "Contracts" })).toBeVisible();
+    // Captions change once their screen is showing, never ahead of it.
+    await caption("Edit a contract that changes elsewhere");
     await point(main.getByRole("button", { name: "Show contract Northwind Storage - unit lease" }));
     await point(main.getByRole("button", { name: "Edit", exact: true }));
     await type(main.getByLabel("Title"), "Northwind Storage - unit 14 lease");
@@ -355,6 +382,11 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
       ),
     ).toBeVisible();
     await expect(main.getByLabel("Title")).toHaveValue("Northwind Storage - unit 14 lease");
+    // The save scrolled the form; bring its heading and the notice into view.
+    const heading = main.getByRole("heading", { name: /^Edit Northwind Storage/ });
+    await heading.evaluate((element) => element.scrollIntoView({ block: "start" }));
+    await expect(heading).toBeInViewport({ ratio: 1 });
+    await expect(main.getByText(/nothing was saved\.$/)).toBeInViewport({ ratio: 1 });
     await caption("Changed elsewhere: nothing was saved");
     await shot(page, "after-stale-desktop-dark.png");
     await pause();
@@ -364,10 +396,11 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
     await caption("Load latest shows the saved contract");
     await pause();
 
-    await caption("Link the shown version from the inspector");
     await point(main.getByRole("button", { name: "Cancel" }).first());
     await point(page.getByRole("button", { name: "All files", exact: true }));
     const folder = page.getByRole("cell", { name: "agreements", exact: true });
+    await expect(folder).toBeVisible();
+    await caption("Link the shown version from the inspector");
     await point(folder, false);
     await folder.dblclick();
     await point(page.getByRole("cell", { name: "lease-signed.pdf", exact: true }));
@@ -382,6 +415,27 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
     await point(page.getByRole("option", { name: /^Northwind Storage - unit lease/ }));
     await point(section.getByRole("combobox", { name: /^Role/ }));
     await point(page.getByRole("option", { name: "Signed", exact: true }));
+    // The stacked link controls each span the panel (checked layout).
+    const panelGeometry = await section.locator(".panel").evaluate((panel) => {
+      const box = (node: Element) => {
+        const rect = node.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      };
+      const root = panel.querySelector(".kit-typeahead")!;
+      const trigger = root.querySelector(".kit-typeahead__trigger");
+      return {
+        panel: box(panel),
+        typeahead: box(root),
+        trigger: trigger ? box(trigger) : null,
+        select: box(panel.querySelector(".kit-select-dropdown")!),
+      };
+    });
+    await report("inspector-panel-geometry", panelGeometry);
+    for (const part of [panelGeometry.typeahead, panelGeometry.trigger, panelGeometry.select]) {
+      if (!part) continue;
+      expect(Math.abs(part.left - panelGeometry.panel.left)).toBeLessThanOrEqual(1);
+      expect(Math.abs(part.right - panelGeometry.panel.right)).toBeLessThanOrEqual(1);
+    }
     await shot(page, "after-inspector-link-desktop-dark.png");
     await point(section.getByRole("button", { name: "Link", exact: true }));
     await expect(
@@ -421,8 +475,9 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
     await shot(page, "after-inspector-linked-desktop-dark.png");
     await pause();
 
-    await caption("The link appears on the contract");
     await point(page.getByRole("button", { name: "Contracts", exact: true }));
+    await expect(main.getByRole("table", { name: "Contracts" })).toBeVisible();
+    await caption("The link appears on the contract");
     await point(main.getByRole("button", { name: "Show contract Northwind Storage - unit lease" }));
     await expect(main.getByText("lease-signed.pdf")).toBeVisible();
     await shot(page, "after-detail-linked-desktop-dark.png");
@@ -460,6 +515,7 @@ test("mobile form: one column within 390px", async ({ browser }) => {
     await expect(main.getByRole("heading", { name: /^Edit / })).toBeVisible();
     const geometry = await formGeometry(main);
     await report("form-mobile-geometry", geometry);
+    pickersFill(geometry);
     expect(geometry.scrollWidth - geometry.clientWidth).toBe(0);
     const lefts = new Set(geometry.fields.map((field) => Math.round(field.left)));
     expect([...lefts], "every field shares one left edge").toHaveLength(1);
