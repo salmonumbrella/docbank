@@ -252,7 +252,7 @@ func personVisibleAssertionSQL(alias, hideLocked string) string {
 }
 
 func personVisibleActorSQL(alias, hideLocked string) string {
-	return alias + `.sensitive=0 AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
+	return alias + `.sensitive=0 AND ` + alias + `.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
 }
 
 func personDerivedExactIdentitySQL(alias string) string {
@@ -286,7 +286,7 @@ SELECT person_id,display_name,display_name_folded,origin,state,revision,created_
 		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
 		AND ($%[4]d=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
-			AND dp.sensitive=0 AND ($%[5]d=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
+			AND ` + personVisibleActorSQL("dp", "$%[5]d") + `))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
  FROM matches persons ORDER BY display_name_folded,person_id`
 
@@ -601,6 +601,25 @@ type visiblePersonContextKey struct{}
 
 func WithVisiblePeopleOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, visiblePersonContextKey{}, true)
+}
+
+// queryPeopleHiddenKey carries the Hidden lock decision from the owner read view.
+type queryPeopleHiddenKey struct{}
+
+func (s *Store) scopeQueryPeople(ctx context.Context, q metadataQuerier) (context.Context, error) {
+	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
+		return ctx, nil
+	}
+	_, err := s.hiddenSession(ctx, q)
+	if err != nil && !errors.Is(err, ErrHiddenLocked) {
+		return ctx, err
+	}
+	return context.WithValue(ctx, queryPeopleHiddenKey{}, errors.Is(err, ErrHiddenLocked)), nil
+}
+
+func queryPeopleHideLocked(ctx context.Context) bool {
+	locked, ok := ctx.Value(queryPeopleHiddenKey{}).(bool)
+	return !ok || locked
 }
 
 // visiblePersonByIDSQL is personVisibleSQL for the person bound as $1, with

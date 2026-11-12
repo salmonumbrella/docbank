@@ -3342,6 +3342,11 @@ export interface GPSBounds {
   west: string;
 }
 
+export interface PersonFilter {
+  person_id: string;
+  roles: string[];
+}
+
 export interface Filters {
   /** @nullable */
   aesthetics_max?: string | null;
@@ -3403,6 +3408,7 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
+  people?: PersonFilter[];
   person_ids?: string[];
   /** @nullable */
   rating_max?: number | null;
@@ -5484,6 +5490,15 @@ export const SavedQueryFiltersSchemaMediaFamiliesItem = {
   unknown: 'unknown',
 } as const;
 
+export interface SavedQueryPersonFilterSchema {
+  person_id: string;
+  /**
+     * @minItems 1
+     * @maxItems 64
+     */
+  roles: string[];
+}
+
 export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
 
 
@@ -5653,6 +5668,8 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
+  /** @maxItems 64 */
+  people?: SavedQueryPersonFilterSchema[];
   /** @maxItems 64 */
   person_ids?: string[];
   /**
@@ -6263,6 +6280,8 @@ export interface WorkspaceFacetValue {
   count: number;
   key: string;
   label: string;
+  /** @maxItems 10 */
+  roles?: string[];
   selected: boolean;
 }
 
@@ -8220,6 +8239,7 @@ export const SavedQueryRunRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  person_role: 'person_role',
 } as const;
 
 export type SavedQueryRunRequestPageSize = typeof SavedQueryRunRequestPageSize[keyof typeof SavedQueryRunRequestPageSize];
@@ -8234,7 +8254,7 @@ export const SavedQueryRunRequestPageSize = {
 export interface SavedQueryRunRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
   photos?: boolean;
@@ -8290,6 +8310,8 @@ export interface WorkspaceQueryRow {
   excerpt?: string;
   /** Display-file flag in a photo snapshot; absent in a document snapshot. */
   flag?: WorkspaceQueryRowFlag;
+  /** @maxItems 16 */
+  matched_roles?: string[];
   media_family: string;
   mime_type: string;
   modified_at: string;
@@ -8325,7 +8347,7 @@ export interface WorkspaceQueryResponse {
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets: WorkspaceQueryResponseFacetsItem[];
   fallback_reason?: string;
   generation: WorkspaceQueryGeneration;
@@ -9336,6 +9358,7 @@ export const WorkspaceQueryCreateRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  person_role: 'person_role',
 } as const;
 
 export type WorkspaceQueryCreateRequestPageSize = typeof WorkspaceQueryCreateRequestPageSize[keyof typeof WorkspaceQueryCreateRequestPageSize];
@@ -9352,7 +9375,7 @@ export interface WorkspaceQueryCreateRequest {
   readonly $schema?: string;
   /** Full date disclosure requires an API key */
   disclosure?: WorkspaceQueryCreateRequestDisclosure;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
   photos?: boolean;

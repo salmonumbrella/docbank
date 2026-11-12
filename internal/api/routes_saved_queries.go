@@ -254,6 +254,7 @@ func registerSavedQueryRunRoute(
 		IfMatch      string `header:"If-Match"`
 		Body         SavedQueryRunRequest
 	}) (*struct{ Body SavedQueryRunResult }, error) {
+		ctx = browserPeopleScope(ctx)
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err

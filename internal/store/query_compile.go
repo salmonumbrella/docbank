@@ -60,6 +60,7 @@ type CompiledQuery struct {
 	withoutSuggestion bool
 	predicate         compiledQueryFragment
 	positiveTextTerms []string
+	roleMatches       []compiledRoleMatch
 }
 
 // compileQuery resolves references and compiles one bounded query without
@@ -80,11 +81,36 @@ type queryCompiler struct {
 	photoMetadataDensity func(string) (bool, error)
 	pdfOnly              bool
 	photoHidden          bool
+	safePeople           bool
+	hideLocked           string
+	personNames          func(string) ([]string, error)
+	personPredicates     map[string]compiledQueryFragment
+	mentionPredicates    map[string]compiledQueryFragment
 }
 
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
+	c.personPredicates = make(map[string]compiledQueryFragment)
+	c.mentionPredicates = make(map[string]compiledQueryFragment)
+	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
+	c.hideLocked = "0"
+	if c.safePeople && queryPeopleHideLocked(ctx) {
+		c.hideLocked = "1"
+	}
+	mentionNames := make(map[string][]string)
+	if r, ok := resolver.(queryResolver); ok {
+		c.personNames = func(id string) ([]string, error) {
+			if names, ok := mentionNames[id]; ok {
+				return names, nil
+			}
+			names, err := r.personMentionNames(ctx, id)
+			if err == nil {
+				mentionNames[id] = names
+			}
+			return names, err
+		}
+	}
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
@@ -112,7 +138,11 @@ func (c queryCompiler) compile(
 		Query: resolved.Query, Dependencies: resolved.Dependencies, Timezone: zone, TimezoneDefaulted: defaulted, FullDisclosure: c.fullDisclosure,
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
-		positiveTextTerms: query.PositiveTextTerms(resolved),
+		positiveTextTerms: query.PositiveTextTermsWithMentions(resolved, mentionNames),
+	}
+	compiled.roleMatches, err = c.collectRoleMatches(resolved)
+	if err != nil {
+		return CompiledQuery{}, err
 	}
 	if _, err := compiled.bind("", nil); err != nil {
 		return CompiledQuery{}, err
@@ -225,6 +255,9 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")
 		}
+		if syntax.Field == "between" {
+			return c.compileBetween(expression)
+		}
 		return c.compileResolvedExpression(expression.Children[0], syntax.Field)
 	case query.ExpressionAnd, query.ExpressionOr:
 		if syntax.Kind == query.ExpressionAnd && field == "" {
@@ -312,7 +345,42 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
 		}
-		return c.compilePersonPredicate(expression.Dependency.ID), nil
+		return c.compilePersonPredicate(expression.Dependency.ID, nil), nil
+	case slices.Contains([]string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee"}, field):
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+		}
+		if expression.Dependency == nil {
+			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
+		}
+		roles, err := rolesForOperand(field, c.safePeople)
+		if err != nil {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, err.Error())
+		}
+		return c.compilePersonPredicate(expression.Dependency.ID, roles), nil
+	case field == "mentions":
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+		}
+		if expression.Dependency == nil || c.personNames == nil {
+			return compiledQueryFragment{}, errors.New("resolved mention lacks names")
+		}
+		if cached, ok := c.mentionPredicates[expression.Dependency.ID]; ok {
+			return cached, nil
+		}
+		names, err := c.personNames(expression.Dependency.ID)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+		parts := make([]compiledQueryFragment, 0, len(names))
+		for _, name := range names {
+			parts = append(parts, c.compileLexicalPredicate(quoteFTSOperand(name, false), true))
+		}
+		result := joinCompiledFragments(parts, ` OR `)
+		if c.mentionPredicates != nil {
+			c.mentionPredicates[expression.Dependency.ID] = result
+		}
+		return result, nil
 	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
@@ -385,7 +453,7 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 		return compilePDFPredicate(field, value, start, end)
 	}
 	if field == "person" {
-		return c.compilePersonPredicate(value), nil
+		return c.compilePersonPredicate(value, nil), nil
 	}
 	if isPhotoScalarField(field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
@@ -438,11 +506,21 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 }
 
 func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
+	var people []compiledQueryFragment
+	for _, entry := range filters.People {
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(start, end, "role operands apply to documents, not photos")
+		}
+		if c.safePeople && slices.Contains(entry.Roles, "blind_copy") {
+			return compiledQueryFragment{}, compileExpressionError(start, end, "bcc: is not available in browser sessions")
+		}
+		people = append(people, c.compilePersonPredicate(entry.PersonID, entry.Roles))
+	}
 	photo, err := c.compilePhotoFilters(filters, start, end)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	parts := []compiledQueryFragment{photo,
+	parts := []compiledQueryFragment{photo, joinCompiledFragments(people, ` AND `),
 		compileValuePredicates(filters.Paths, compilePathPredicate),
 		negateCompiledFragment(compileValuePredicates(filters.ExcludePaths, compilePathPredicate)),
 		compileValuePredicates(filters.CollectionIDs, compileCollectionPredicate),
@@ -699,4 +777,19 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {
 	return &query.ExpressionError{Offset: start, End: end, Message: message}
+}
+
+func (c queryCompiler) compileBetween(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
+	syntax := expression.Syntax
+	if c.photoDisplayMetadata {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+	}
+	if len(expression.Children) != 1 || len(expression.Children[0].Children) != 2 {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
+	}
+	children := expression.Children[0].Children
+	if children[0].Dependency == nil || children[1].Dependency == nil || children[0].Dependency.ID == children[1].Dependency.ID {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
+	}
+	return joinCompiledFragments([]compiledQueryFragment{c.compilePersonExceptCustodian(children[0].Dependency.ID), c.compilePersonExceptCustodian(children[1].Dependency.ID)}, ` AND `), nil
 }

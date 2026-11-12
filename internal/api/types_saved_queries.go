@@ -75,8 +75,14 @@ type savedQueryDateSchema struct {
 	Precisions []string `json:"precisions,omitempty" enum:"exact,day,coarse"`
 }
 
+type savedQueryPersonFilterSchema struct {
+	PersonID string   `json:"person_id" format:"uuid"`
+	Roles    []string `json:"roles" minItems:"1" maxItems:"64"`
+}
+
 type savedQueryFiltersSchema struct {
 	DocumentDate         *savedQueryDateSchema              `json:"document_date,omitempty"`
+	People               []savedQueryPersonFilterSchema     `json:"people,omitempty" maxItems:"64"`
 	RatingMin            *int64                             `json:"rating_min,omitempty" nullable:"true" minimum:"0" maximum:"5"`
 	RatingMax            *int64                             `json:"rating_max,omitempty" nullable:"true" minimum:"0" maximum:"5"`
 	Flags                []string                           `json:"flags,omitempty" maxItems:"64"`
