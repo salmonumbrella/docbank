@@ -24,7 +24,14 @@
       return { value: "Zone unavailable", floating: false };
     return formatWhen(when, zone);
   });
-  const team = $derived(people ? tablePeople(people) : undefined);
+  const settled = $derived(people?.state !== "pending" && people?.state !== "failed");
+  // A pending or failed derivation still shows the independent operator
+  // assertions; only derived edges and candidates wait for it.
+  const team = $derived(
+    people
+      ? tablePeople(settled ? people : { ...people, edges: [], unresolved: [] })
+      : undefined,
+  );
   const visible = $derived(team?.people.slice(0, 3) ?? []);
   const more = $derived((team?.people.length ?? 0) - visible.length);
 </script>
@@ -43,17 +50,16 @@
     </div>{:else if dates}<span class="fact-muted">—</span>{/if}
 </td>
 <td class="facts-cell col-facts">
-  {#if read?.people.status === "error" || people?.state === "failed"}<span class="fact-muted"
-      >Unavailable</span
-    >{:else if people?.state === "pending"}<span class="fact-muted">Pending</span
+  {#if read?.people.status === "error"}<span class="fact-muted">Unavailable</span
     >{:else if team}<div class="fact-people">
       {#if visible.length}<span class="avatar-stack"
           >{#each visible as person (person.id)}<span class="stack-item"
               ><Avatar name={person.name} colorKey={person.colorKey} size={20} /></span
             >{/each}</span
-        >{#if more > 0}<span class="fact-muted">+{more}</span>{/if}{:else if !team.review}<span
-          class="fact-muted">—</span
-        >{/if}
+        >{#if more > 0}<span class="fact-muted">+{more}</span>{/if}{/if}
+      {#if !settled}<span class="fact-muted"
+          >{people?.state === "pending" ? "Pending" : "Unavailable"}</span
+        >{:else if !visible.length && !team.review}<span class="fact-muted">—</span>{/if}
       {#if team.review}<Chip size="xs" tone="warning" uppercase={false}
           >{team.review} to review</Chip
         >{/if}

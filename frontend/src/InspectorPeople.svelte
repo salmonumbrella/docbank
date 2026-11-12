@@ -17,8 +17,16 @@
   } = $props();
 
   const people = $derived(read.status === "ready" ? read.value : undefined);
-  const rows = $derived(people ? roleRows(people) : []);
-  const pending = $derived(people ? pendingNames(people) : []);
+  const settled = $derived(people?.state !== "pending" && people?.state !== "failed");
+  // Operator assertions are independent of derivation, so they stay visible
+  // beside a pending or failed notice; derived edges and candidates do not.
+  const asserted = $derived(
+    people && !settled
+      ? roleRows({ ...people, edges: [], unresolved: [] }).filter((row) => row.people.length)
+      : [],
+  );
+  const rows = $derived(people && settled ? roleRows(people) : []);
+  const pending = $derived(people && settled ? pendingNames(people) : []);
   const found = $derived(rows.some((row) => row.people.length > 0) || pending.length > 0);
 </script>
 
@@ -31,10 +39,27 @@
       People couldn't be loaded.
       <Button size="sm" surface="soft" onclick={onretry}>Retry</Button>
     </p>
-  {:else if people?.state === "pending"}
-    <p class="fact-note" role="status">People are still being worked out.</p>
-  {:else if people?.state === "failed"}
-    <p class="fact-note" role="status">People couldn't be worked out for this version.</p>
+  {:else if !settled}
+    <p class="fact-note" role="status">
+      {people?.state === "pending"
+        ? "People are still being worked out."
+        : "People couldn't be worked out for this version."}
+    </p>
+    {#if asserted.length}
+      <dl class="people-grid">
+        {#each asserted as row (row.role)}
+          <div>
+            <dt>{row.label}</dt>
+            <dd>
+              {#each row.people as person (person.id)}<PersonChip
+                  {person}
+                  onselect={onperson}
+                />{/each}
+            </dd>
+          </div>
+        {/each}
+      </dl>
+    {/if}
   {:else}
     {#if !found}<p class="fact-note">No people found.</p>{/if}
     <dl class="people-grid">

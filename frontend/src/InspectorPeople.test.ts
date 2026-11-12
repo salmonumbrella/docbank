@@ -45,6 +45,27 @@ it("groups people by role, keeps asserted authors and pending names, never Bcc",
   expect(onperson).toHaveBeenCalledWith("p1");
 });
 
+it("keeps operator assertions beside pending and failed derivation notices", async () => {
+  const view = render(InspectorPeople, {
+    read: { status: "ready", value: { ...value, state: "pending" } },
+    onperson: vi.fn(),
+    onretry: vi.fn(),
+  });
+  expect(screen.getByText("People are still being worked out.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Teodor Vance" })).toBeTruthy();
+  expect(screen.queryByText("Mara Okonkwo-Fell")).toBeNull();
+  expect(screen.queryByText("needs review")).toBeNull();
+  await view.rerender({
+    read: { status: "ready", value: { ...value, state: "failed" } },
+    onperson: vi.fn(),
+    onretry: vi.fn(),
+  });
+  expect(screen.getByText("People couldn't be worked out for this version.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Teodor Vance" })).toBeTruthy();
+  // A derivation failure is the server's settled answer, so there is nothing to retry.
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+});
+
 it("shows pending and failed reads with a retry for that resource", async () => {
   const onretry = vi.fn();
   const view = render(InspectorPeople, {

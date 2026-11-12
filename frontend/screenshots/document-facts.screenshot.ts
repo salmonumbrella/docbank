@@ -59,7 +59,25 @@ const boardQuery = {
 // The new columns need a results region of at least 900 px beside the
 // inspector, which a 1440 px window does not leave; wide captures use 1920.
 const WIDE = { width: 1920, height: 1080 };
+// Producers record what each source wrote: the email Date header and the PDF
+// info dates both carry seconds, so both show at second precision.
+const EMAIL_SENT = "Mar 10, 2026, 11:40:00 PM EDT";
+const PDF_CREATED = "Mar 10, 2026, 11:30:00 PM (no zone)";
 const factsURL = /\/api\/v1\/versions\/([0-9a-f-]{36})\/(dates|people)(?:\?|$)/u;
+
+// The inspector scrolls inside its own panel beside the table, so a viewport
+// capture can clip the Dates and People sections below the preview. Align the
+// facts block with the panel's top, the same anchor on base and branch, and
+// leave the page and the table where they are. Stacked narrow layouts have no
+// inspector scroller and are captured as laid out.
+async function revealFacts(page: Page) {
+  await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>('aside[aria-label="Document inspector"]');
+    const rows = panel?.querySelector<HTMLElement>(".detail-rows");
+    if (!panel || !rows || !/(auto|scroll)/u.test(getComputedStyle(panel).overflowY)) return;
+    panel.scrollTop += rows.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+  });
+}
 
 // Attachments are named document-facts-<base|branch>-<state>-<wide|narrow>-<theme>.png;
 // wide is 1920×1080 and narrow 860×1100.
@@ -69,6 +87,7 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     document.documentElement.classList.toggle("dark", value === "dark");
     await document.fonts.ready;
   }, theme);
+  await revealFacts(page);
   // The JSON reporter embeds the body as base64 in the uploaded CI report.
   const body = await page.screenshot({ animations: "disabled" });
   await testInfo.attach(`document-facts-${proof}-${name}-${theme}.png`, {
@@ -257,7 +276,7 @@ test("shows document dates and people in the inspector and both tables", async (
       await expect(inspector.getByRole("heading", { name: "board-update.eml" })).toBeVisible();
       if (proof !== "branch") return;
       const dates = inspector.getByRole("region", { name: "Dates" });
-      await expect(dates.getByText("Mar 10, 2026, 11:40 PM EDT")).toBeVisible();
+      await expect(dates.getByText(EMAIL_SENT)).toBeVisible();
       await expect(dates.getByText("Times show in America/Toronto.")).toBeVisible();
       const people = inspector.getByRole("region", { name: "People" });
       for (const name of ["Mara Okonkwo-Fell", "Ines Albarran", "Teodor Vask"])
@@ -268,7 +287,7 @@ test("shows document dates and people in the inspector and both tables", async (
       else {
         await expect(header).toBeVisible();
         await expect(
-          liveRow("board-update.eml").getByText("Mar 10, 2026, 11:40 PM EDT"),
+          liveRow("board-update.eml").getByText(EMAIL_SENT),
         ).toBeVisible();
       }
     });
@@ -279,7 +298,7 @@ test("shows document dates and people in the inspector and both tables", async (
       await expect(inspector.getByRole("heading", { name: "board-minutes.pdf" })).toBeVisible();
       if (proof !== "branch") return;
       const dates = inspector.getByRole("region", { name: "Dates" });
-      await expect(dates.getByText("Mar 10, 2026, 11:30 PM (no zone)")).toBeVisible();
+      await expect(dates.getByText(PDF_CREATED)).toBeVisible();
       await expect(dates.getByText(/floating \(no zone\)/u).first()).toBeVisible();
       const people = inspector.getByRole("region", { name: "People" });
       await expect(people.getByRole("button", { name: "Jory Pellham" })).toBeVisible();
@@ -321,7 +340,7 @@ test("shows document dates and people in the inspector and both tables", async (
       ).toBeVisible();
       await capture(page, testInfo, "dates-loading-wide", "light");
       release();
-      await expect(inspector.getByText("Mar 10, 2026, 11:40 PM EDT")).toBeVisible();
+      await expect(inspector.getByText(EMAIL_SENT)).toBeVisible();
       await page.unroute(datesOf);
 
       // One endpoint failing leaves the other shown; Retry reads only that one.
@@ -339,18 +358,22 @@ test("shows document dates and people in the inspector and both tables", async (
       await expect(
         inspector
           .getByRole("region", { name: "Dates" })
-          .getByText("Mar 10, 2026, 11:30 PM (no zone)"),
+          .getByText(PDF_CREATED),
       ).toBeVisible();
       await capture(page, testInfo, "people-failed-wide", "light");
       const before = requested.length;
       await people.getByRole("button", { name: "Retry" }).click();
       await expect(people.getByText("L. Beerwijk")).toBeVisible();
-      expect(requested.slice(before)).toEqual([`${version["board-minutes.pdf"]}/people`]);
+      // Other rows' reads may still be queued; only this version's reads count.
+      expect(
+        requested.slice(before).filter((read) => read.startsWith(`${version["board-minutes.pdf"]}/`)),
+      ).toEqual([`${version["board-minutes.pdf"]}/people`]);
       await capture(page, testInfo, "people-retried-wide", "light");
       await page.unroute(peopleOf);
     }
 
     // A frozen result keeps the version it saved after the file changes.
+    const frozenStart = requested.length;
     const launch = new URL(issued);
     const fragment = new URLSearchParams(launch.hash.slice(1));
     fragment.set("query", JSON.stringify(boardQuery));
@@ -372,7 +395,7 @@ test("shows document dates and people in the inspector and both tables", async (
         intervals: [1_000],
       })
       .not.toBe(version["board-offsite.ics"]);
-    const before = requested.length;
+    const replaced = (await versions())["board-offsite.ics"];
     await frozenRow("board-offsite.ics").click();
     await captureStates(page, testInfo, "frozen-saved-version", async () => {
       await expect(inspector.getByRole("heading", { name: "board-offsite.ics" })).toBeVisible();
@@ -383,8 +406,11 @@ test("shows document dates and people in the inspector and both tables", async (
       await expect(inspector.getByText("Mar 16, 2026")).toHaveCount(0);
     });
     if (proof === "branch") {
-      const reads = requested.slice(before).filter((read) => read.endsWith("/dates"));
+      // The frozen row reads its saved version as soon as it renders, so count
+      // from the frozen page's load, and the replacement is never read.
+      const reads = requested.slice(frozenStart).filter((read) => read.endsWith("/dates"));
       expect(reads).toContain(`${version["board-offsite.ics"]}/dates`);
+      expect(reads).not.toContain(`${replaced}/dates`);
     }
 
     if (proof === "branch") {

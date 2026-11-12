@@ -91,6 +91,38 @@ it("marks floating values and empty, pending and failed reads", () => {
   expect(screen.getByText("Unavailable")).toBeTruthy();
 });
 
+it("keeps asserted people beside pending and failed people notices", () => {
+  const asserted = {
+    action: "assert",
+    assertion_id: "a1",
+    display_name: "Teodor Vance",
+    person_id: "p4",
+    role: "author",
+    note: "",
+    recorded_at: "2026-03-12T00:00:00Z",
+    revision: 1,
+  };
+  const { facts } = owner({
+    pending: {
+      dates: { status: "ready", value: threeClaims },
+      people: { status: "ready", value: people({ state: "pending", assertions: [asserted] }) },
+    },
+    failed: {
+      dates: { status: "ready", value: threeClaims },
+      people: { status: "ready", value: people({ state: "failed", assertions: [asserted] }) },
+    },
+  });
+  for (const [versionID, notice] of [
+    ["pending", "Pending"],
+    ["failed", "Unavailable"],
+  ]) {
+    render(DocumentFactCells, { target: row(), props: { versionID, facts, zone: toronto } });
+    expect(screen.getByRole("img", { name: "Teodor Vance" })).toBeTruthy();
+    expect(screen.getByText(notice!)).toBeTruthy();
+    cleanup();
+  }
+});
+
 it("uses the short zone-unavailable form for exact values", () => {
   const { facts } = owner({
     v: {
