@@ -70,6 +70,7 @@ vi.mock("./actionJournal.js", async (importOriginal) => {
 });
 
 import App from "./App.svelte";
+import { versionFactsResponse } from "./document-facts-test-fixtures.js";
 
 const vaultID = "11111111-1111-4111-8111-111111111111";
 const tag = {
@@ -390,6 +391,8 @@ it.each([
   let armed = false;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url.includes("/children?"))
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });

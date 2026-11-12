@@ -1,4 +1,5 @@
 import * as actions from "./action-events.js";
+import * as preview from "./queryPreview.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
@@ -6,6 +7,7 @@ import App from "./App.svelte";
 import { canonicalQuery, highlightSetFingerprint, type HighlightSet, type Query } from "./query.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import type { SnapshotPage, SnapshotRow } from "./snapshots.js";
+import { versionFactsResponse } from "./document-facts-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -954,6 +956,8 @@ it("resolves referenced import names when paging interrupts a pending read", asy
   const json = (value: unknown) => new Response(JSON.stringify(value));
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     if (url === `/api/v1/collections/${collectionID}`) {
       await pending;
       return json(collection);
@@ -1045,6 +1049,8 @@ it("keeps a tagged snapshot and its selection when the inspector removes the act
   let removed = false;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     requests.push(url);
     if (url.includes("/path?")) return json(root);
     if (url.includes("/children?"))
@@ -1262,4 +1268,294 @@ it("uses the inspector's confirmed revision for Tag selected during Advanced sea
   expect(screen.queryByText("stale_revision")).toBeNull();
   expect(frozen.revision).toBe(3);
   expect(within(screen.getByRole("region", { name: "Saved tags" })).getByText("None")).toBeTruthy();
+});
+
+it("checks a person chip's search first and acts only for the current selection and click", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const rows = [row(1), row(2)];
+  const page = snapshot(initialQuery, rows, {}, 2);
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const mara = "55555555-5555-4555-8555-555555555555";
+  const retired = "66666666-6666-4666-8666-666666666666";
+  const ines = "77777777-7777-4777-8777-777777777777";
+  const person = (person_id: string, display_name: string) => ({
+    action: "assert",
+    assertion_id: `a-${person_id}`,
+    display_name,
+    person_id,
+    role: "author",
+    note: "",
+    recorded_at: "",
+    revision: 1,
+  });
+  let down = false;
+  // A held preview waits until the test releases it.
+  const holding = new Set<string>();
+  const held = new Map<string, () => void>();
+  // Each person preview's own promise, observed through the real function.
+  // The spy's catch reaction registers before App awaits the same promise, so
+  // on settlement the catch job runs, then App's continuation, and only then
+  // does the derived promise resolve: awaiting it needs no timer.
+  const previews = new Map<string, Promise<unknown>>();
+  const realPreview = preview.previewQuery;
+  vi.spyOn(preview, "previewQuery").mockImplementation((...args) => {
+    const pending = realPreview(...args);
+    const id = args[1].text.slice("person:".length);
+    previews.set(
+      id,
+      pending.catch(() => {}),
+    );
+    return pending;
+  });
+  const release = async (id: string) => {
+    held.get(id)!();
+    held.delete(id);
+    await previews.get(id);
+  };
+  const searches: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.startsWith("/api/v1/nodes/1000/children"))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?") || url.startsWith("/api/v1/saved-queries?"))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    const facts = /^\/api\/v1\/versions\/([^/]+)\/(dates|people)$/.exec(url);
+    if (facts?.[2] === "dates")
+      return json({
+        state: "none",
+        claims: [],
+        content_version_id: facts[1],
+        diagnostics: [],
+        node_id: 1,
+      });
+    if (facts)
+      return json({
+        state: "published",
+        content_version_id: facts[1],
+        edges: [],
+        unresolved: [],
+        assertions: [
+          person(mara, "Mara Okonkwo-Fell"),
+          person(retired, "Retired Reviewer"),
+          person(ines, "Ines Albarran"),
+        ],
+      });
+    if (url === "/api/v1/queries/parse") {
+      const query = JSON.parse(String(init?.body));
+      if (query.text === initialQuery.text)
+        return json({ query, query_fingerprint: page.query_fingerprint, dependencies: [] });
+      const id = String(query.text).slice("person:".length);
+      if (holding.delete(id)) await new Promise<void>((resolve) => held.set(id, resolve));
+      if (id === retired)
+        return json({ code: "invalid_query", detail: "unknown person reference" }, 422);
+      if (down) return json({ detail: "query parser unavailable" }, 503);
+      const fingerprint = createHash("sha256").update(canonicalQuery(query)).digest("hex");
+      return json({ query, query_fingerprint: `sha256:${fingerprint}`, dependencies: [] });
+    }
+    if (url === "/api/v1/queries/highlights")
+      return json({ query_fingerprint: page.query_fingerprint, dependencies: [], terms: [] });
+    if (url === "/api/v1/workspace/queries") {
+      const { query } = JSON.parse(String(init?.body));
+      searches.push(query.text);
+      return json(snapshot(query, rows, {}, 2));
+    }
+    if (/^\/api\/v1\/nodes\/\d+\/tags\?/.test(url))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/audit/status?node_id="))
+      return json({ enabled: false, scopes: [] });
+    if (url === "/api/v1/renditions/text") {
+      const request = JSON.parse(String(init?.body));
+      return json({
+        state: "unconfigured",
+        source: { ...request, media_type: "application/pdf" },
+        profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
+    }
+    const node = /^\/api\/v1\/nodes\/(\d+)$/.exec(url);
+    if (node) {
+      const selected = row(Number(node[1]));
+      return json({
+        ...root,
+        id: selected.node_id,
+        parent_id: root.id,
+        kind: "file",
+        name: selected.name,
+        path: selected.path,
+        revision: selected.revision,
+        size: selected.size,
+        current_version_id: selected.content_version_id,
+        blob_hash: selected.blob_hash,
+        mime_type: selected.mime_type,
+      });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+  const unavailable =
+    "This historical person is no longer available for search. Their recorded attribution is still shown.";
+
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByText("Document 1 of 2");
+  const inspector = screen.getByRole("complementary", { name: "Document inspector" });
+  const chip = async (name: string) =>
+    fireEvent.click(await within(inspector).findByRole("button", { name }));
+  const select = async (index: number) => {
+    const target = screen.getByRole("cell", { name: `/records/report-${index}.pdf` });
+    await fireEvent.click(target.closest("tr")!, { detail: 1 });
+    await screen.findByText(`Document ${index} of 2`);
+  };
+  const clickHeld = async (id: string, name: string) => {
+    holding.add(id);
+    await chip(name);
+    await waitFor(() => expect(held.has(id)).toBe(true));
+  };
+
+  // A preview that settles after the frozen selection moved acts on nothing:
+  // neither a delayed success nor a delayed failure.
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await select(2);
+  await release(mara);
+  await clickHeld(retired, "Retired Reviewer");
+  await select(1);
+  await release(retired);
+  expect(searches).toEqual([initialQuery.text]);
+  expect(screen.queryByText(unavailable)).toBeNull();
+
+  // Current failures keep the document: 422 explains, others use the banner.
+  await chip("Retired Reviewer");
+  await screen.findByText(unavailable);
+  down = true;
+  await chip("Mara Okonkwo-Fell");
+  await screen.findByText("query parser unavailable");
+  expect(searches).toEqual([initialQuery.text]);
+  expect(screen.getByText("Document 1 of 2")).toBeTruthy();
+
+  // The newer of two pending clicks wins even when the older settles first.
+  down = false;
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await clickHeld(ines, "Ines Albarran");
+  await release(mara);
+  expect(searches).toEqual([initialQuery.text]);
+  await release(ines);
+  await waitFor(() => expect(searches).toEqual([initialQuery.text, `person:${ines}`]));
+
+  // A newer typed search or Advanced edit made while a check is pending wins.
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "budget" },
+  });
+  await release(mara);
+  expect(screen.getByRole("searchbox", { name: "Search documents" })).toHaveProperty(
+    "value",
+    "budget",
+  );
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Query syntax"), { target: { value: "minutes" } });
+  await release(mara);
+  expect(searches).toEqual([initialQuery.text, `person:${ines}`]);
+  expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe("minutes");
+});
+
+it("rereads facts on Refresh and drops the view's reads when leaving Documents", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const memo = {
+    ...root,
+    id: 3,
+    parent_id: root.id,
+    name: "memo.txt",
+    path: "/memo.txt",
+    kind: "file",
+    current_version_id: "11111111-1111-4111-8111-111111111111",
+    blob_hash: "a".repeat(64),
+    size: 74,
+    mime_type: "text/plain",
+  };
+  const listing = { items: [], total: 0, limit: 1000, offset: 0 };
+  // Facts reads for the inspected version, and whether each was later aborted.
+  const reads: { resource: string; signal?: AbortSignal | null }[] = [];
+  let hold = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const facts = /^\/api\/v1\/versions\/[^/]+\/(dates|people)$/.exec(url);
+    if (facts) {
+      reads.push({ resource: facts[1]!, signal: init?.signal });
+      if (hold) return new Promise<Response>(() => {});
+      return versionFactsResponse(url)!;
+    }
+    if (url === "/api/v1/path?path=%2F") return Response.json(root);
+    if (url.includes("/children?"))
+      return Response.json({ directory: root, items: [memo], total: 1, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?") || url.startsWith("/api/v1/nodes/3/tags?"))
+      return Response.json(listing);
+    if (url === "/api/v1/nodes/3") return Response.json(memo);
+    if (url.startsWith("/api/v1/audit/status?"))
+      return Response.json({ enabled: false, scopes: [] });
+    if (url.startsWith("/api/v1/trash?")) return Response.json(listing);
+    if (url.includes("processing-profiles")) return Response.json([]);
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "memo.txt" }));
+  await waitFor(() =>
+    expect(reads.map((read) => read.resource).sort()).toEqual(["dates", "people"]),
+  );
+  // The same view's owner already holds published facts, so only Refresh,
+  // which replaces the owner, reads them again.
+  hold = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(reads.length).toBeGreaterThanOrEqual(4));
+  const pending = reads.slice(2);
+  expect(pending.some((read) => read.signal && !read.signal.aborted)).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
+  await screen.findByRole("main", { name: "Trash" });
+  expect(pending.every((read) => read.signal?.aborted)).toBe(true);
 });

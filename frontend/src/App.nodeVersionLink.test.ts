@@ -5,6 +5,7 @@ import { storage, photo, photoMetadataResponse } from "./photo-test-fixtures.js"
 import { node as fileNode, root, version } from "./version-test-fixtures.js";
 import type { ContentVersion, Node } from "./generated/docbank.js";
 import { formatDate } from "./format.js";
+import { versionFactsResponse } from "./document-facts-test-fixtures.js";
 
 const oldID = "11111111-1111-4111-8111-111111111111";
 const currentID = "22222222-2222-4222-8222-222222222222";
@@ -47,6 +48,8 @@ function api(
 ) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     const overridden = override?.(url, init);
     if (overridden) return overridden;
     if (url === "/api/daemon/web-auth") return Response.json({ enabled: true });

@@ -1,8 +1,11 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
 import DocumentInspector from "./DocumentInspector.svelte";
 import type { ContentVersion, Node } from "./generated/docbank.js";
+import type { DocumentFacts } from "./documentFacts.svelte.js";
+import { edge, people, threeClaims, toronto } from "./document-facts-test-fixtures.js";
+import { selectedSourceFromNode } from "./selectedSource.js";
 
 const folder: Node = {
   id: 42,
@@ -350,4 +353,81 @@ it("offers redaction only for the live PDF with a usable source size", async () 
   expect(screen.getByRole("button", { name: "Redact PDF" }).hasAttribute("disabled")).toBe(true);
   await view.rerender({ ...props, source: { ...source, kind: "related" } });
   expect(screen.queryByRole("button", { name: "Redact PDF" })).toBeNull();
+});
+
+describe("dates and people", () => {
+  const versionA = fileProps.node.current_version_id;
+  const versionB = "22222222-2222-4222-8222-222222222222";
+  const fakeFacts = (reads: Record<string, unknown>) => {
+    const retained: string[] = [];
+    const facts = {
+      get: (id: string) =>
+        reads[id] ?? { dates: { status: "loading" }, people: { status: "loading" } },
+      retain: vi.fn((id: string) => {
+        retained.push(id);
+        return () => retained.splice(retained.indexOf(id), 1);
+      }),
+    } as unknown as DocumentFacts;
+    return { facts, retained };
+  };
+  const ready = {
+    dates: { status: "ready", value: threeClaims },
+    people: {
+      status: "ready",
+      value: people({ edges: [edge("author", "p1", "Mara Okonkwo-Fell")] }),
+    },
+  };
+
+  it("reads the selected source's version, not the node's current one", async () => {
+    const onperson = vi.fn();
+    // A frozen or duplicate selection can show a version other than the
+    // node's current one; the facts follow the selection.
+    const { facts, retained } = fakeFacts({ [versionB]: ready });
+    const selected = { ...fileProps.node, current_version_id: versionB };
+    render(DocumentInspector, {
+      ...fileProps,
+      source: selectedSourceFromNode(selected, fileProps.path),
+      facts,
+      timelineZone: toronto,
+      onperson,
+    });
+    expect(retained).toEqual([versionB]);
+    expect(screen.getByText("3 claims")).toBeTruthy();
+    expect(screen.getByText("Times show in America/Toronto.")).toBeTruthy();
+    for (const label of ["Path", "Modified", "Size"])
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    await fireEvent.click(screen.getByRole("button", { name: "Mara Okonkwo-Fell" }));
+    expect(onperson).toHaveBeenCalledWith("p1");
+  });
+
+  it("never shows the previous version's claims after the selection changes", async () => {
+    const { facts, retained } = fakeFacts({ [versionA]: ready });
+    const props = {
+      ...fileProps,
+      source: selectedSourceFromNode(fileProps.node, fileProps.path),
+      facts,
+      timelineZone: toronto,
+    };
+    const view = render(DocumentInspector, props);
+    const nodeB = { ...fileProps.node, id: 43, current_version_id: versionB };
+    await view.rerender({ ...props, node: nodeB, source: selectedSourceFromNode(nodeB, "/b.txt") });
+    await tick();
+    expect(retained).toEqual([versionB]);
+    expect(screen.queryByText("3 claims")).toBeNull();
+    expect(screen.getByLabelText("Loading dates")).toBeTruthy();
+  });
+
+  it("shows neither section for a folder, even beside a file source", () => {
+    const { facts, retained } = fakeFacts({ [versionA]: ready });
+    render(DocumentInspector, {
+      ...fileProps,
+      node: folder,
+      path: "/Records",
+      source: selectedSourceFromNode(fileProps.node, fileProps.path),
+      facts,
+    });
+    expect(retained).toEqual([]);
+    expect(screen.queryByRole("region", { name: "Dates" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "People" })).toBeNull();
+  });
 });

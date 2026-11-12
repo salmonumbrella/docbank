@@ -1,6 +1,6 @@
 // Which optional columns a results table has room for. Names keep at least
-// MIN_NAME pixels, and columns drop in a fixed order as the table narrows: Type
-// first (the icon says it too), then Match, then Modified.
+// MIN_NAME pixels, and columns drop in a fixed order as the table narrows:
+// facts first, then Type (the icon says it too), Match, and Modified.
 const CHECKBOX = 44;
 const SIZE = 76;
 const ACTIONS = 44;
@@ -8,8 +8,10 @@ const MIN_NAME = 200;
 const MODIFIED = 170;
 const MATCH = 88;
 const TYPE = 90;
+const DOCUMENT_DATE = 170;
+const PEOPLE = 120;
 
-export type ResultColumns = { modified: boolean; match: boolean; type: boolean };
+export type ResultColumns = { modified: boolean; match: boolean; type: boolean; facts: boolean };
 
 export function resultColumns(
   width: number,
@@ -20,5 +22,7 @@ export function resultColumns(
   if (modified) room -= MODIFIED;
   const match = extras.match && room >= MATCH;
   if (match) room -= MATCH;
-  return { modified, match, type: room >= TYPE };
+  const type = room >= TYPE;
+  if (type) room -= TYPE;
+  return { modified, match, type, facts: width >= 900 && room >= DOCUMENT_DATE + PEOPLE };
 }
