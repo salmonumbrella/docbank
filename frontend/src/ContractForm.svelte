@@ -422,6 +422,9 @@
 <style>
   .contract-form {
     gap: var(--space-7);
+    /* Kit typeaheads stop at 300px; here they fill their field like the
+       selects and date pickers beside them, party pickers included. */
+    --typeahead-max-width: none;
   }
   .title {
     display: flex;

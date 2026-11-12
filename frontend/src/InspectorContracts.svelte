@@ -321,6 +321,8 @@
   .panel {
     display: grid;
     gap: var(--space-4);
+    /* The stacked controls fill the panel; kit typeaheads stop at 300px. */
+    --typeahead-max-width: none;
   }
   .panel :global(.kit-typeahead),
   .panel :global(.kit-select-dropdown) {
