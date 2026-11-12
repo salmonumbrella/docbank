@@ -217,3 +217,19 @@ func TestTaxDocumentExportRejectsCorruptPin(t *testing.T) {
 	require.Error(t, s.ExportMetadata(ctx, &out))
 	assert.Zero(t, out.Len())
 }
+
+func TestTaxDocumentExportDetectsLostUniqueIndex(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "duplicate.txt", fakeHash("ab"), 1, "text/plain")
+	require.NoError(t, err)
+	linked, err := s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source"})
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `DROP INDEX tax_documents_null_event`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO tax_record_documents (`+taxDocumentColumns+`) SELECT $1,record_id,event_id,node_id,content_version_id,content_sha256,role,form_code,note,recorded_at,retired_at FROM tax_record_documents WHERE link_id=$2`, "11111111-1111-4111-8111-111111111111", linked.Document.LinkID)
+	require.NoError(t, err)
+	var out bytes.Buffer
+	require.Error(t, s.ExportMetadata(ctx, &out))
+	assert.Zero(t, out.Len())
+}
