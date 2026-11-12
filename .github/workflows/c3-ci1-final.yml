@@ -1,0 +1,25 @@
+name: C3 CI1 final focused
+on:
+  push:
+    branches: [bootstrap/contracts-c3-ci1-final-20261112]
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Document CLI and display
+        run: go test -tags fts5 ./cmd/docbank -run '^(TestContractDocumentCLI|TestContractShowIncludesDocumentEvidence)$' -count=1
