@@ -1,0 +1,66 @@
+name: Tax T2 schema source focused checks
+
+on:
+  push:
+    branches: [build/tax-t2-schema-focused]
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Released 48 and party-only 49 source layouts
+        run: go test -tags fts5 ./internal/store -run '^(TestTaxSchema49PartyOnlySourceReceipt|TestEveryReleasedSchemaFixtureUpgrades|TestUpgradeReleasedV0170KeepsOperationalState)$' -count=1
+      - name: Tax storage and metadata
+        run: go test -tags fts5 ./internal/store ./internal/taxrecord -run '^TestTax' -count=1
+      - name: SQLite tax and metadata native contracts
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$/(organization|metadata-export)$/(TaxAccountLifecycle|TaxRecordLifecycle|MetadataExportRecovery|MetadataExportFailures)$' -count=1
+  postgres:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: PostgreSQL tax and metadata native contracts
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres$/(organization|metadata-export)$/(TaxAccountLifecycle|TaxRecordLifecycle|MetadataExportRecovery|MetadataExportFailures)$' -count=1
