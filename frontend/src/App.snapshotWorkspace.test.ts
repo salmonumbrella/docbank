@@ -1263,3 +1263,140 @@ it("uses the inspector's confirmed revision for Tag selected during Advanced sea
   expect(frozen.revision).toBe(3);
   expect(within(screen.getByRole("region", { name: "Saved tags" })).getByText("None")).toBeTruthy();
 });
+
+it("checks a person chip's search first and keeps the document when it cannot run", async () => {
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=synthetic&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(initialQuery))}`,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const page = snapshot(initialQuery, [row(1)], {}, 1);
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const active = "55555555-5555-4555-8555-555555555555";
+  const retired = "66666666-6666-4666-8666-666666666666";
+  const person = (person_id: string, display_name: string) => ({
+    action: "assert",
+    assertion_id: `a-${person_id}`,
+    display_name,
+    person_id,
+    role: "author",
+    note: "",
+    recorded_at: "",
+    revision: 1,
+  });
+  let parse: "ok" | "unavailable" | "down" = "unavailable";
+  const searches: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const version = row(1).content_version_id;
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url.startsWith("/api/v1/nodes/1000/children"))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?") || url.startsWith("/api/v1/saved-queries?"))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === `/api/v1/versions/${version}/dates`)
+      return json({
+        state: "none",
+        claims: [],
+        content_version_id: version,
+        diagnostics: [],
+        node_id: 1,
+      });
+    if (url === `/api/v1/versions/${version}/people`)
+      return json({
+        state: "published",
+        content_version_id: version,
+        edges: [],
+        unresolved: [],
+        assertions: [person(active, "Mara Okonkwo-Fell"), person(retired, "Retired Reviewer")],
+      });
+    if (url === "/api/v1/queries/parse") {
+      const query = JSON.parse(String(init?.body));
+      if (query.text === initialQuery.text)
+        return json({ query, query_fingerprint: page.query_fingerprint, dependencies: [] });
+      if (parse === "unavailable")
+        return json({ code: "invalid_query", detail: "unknown person reference" }, 422);
+      if (parse === "down") return json({ detail: "query parser unavailable" }, 503);
+      const fingerprint = createHash("sha256").update(canonicalQuery(query)).digest("hex");
+      return json({ query, query_fingerprint: `sha256:${fingerprint}`, dependencies: [] });
+    }
+    if (url === "/api/v1/queries/highlights")
+      return json({ query_fingerprint: page.query_fingerprint, dependencies: [], terms: [] });
+    if (url === "/api/v1/workspace/queries") {
+      const { query } = JSON.parse(String(init?.body));
+      searches.push(query.text);
+      return json(snapshot(query, [row(1)], {}, 1));
+    }
+    if (/^\/api\/v1\/nodes\/\d+\/tags\?/.test(url))
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/audit/status?node_id="))
+      return json({ enabled: false, scopes: [] });
+    if (url === "/api/v1/renditions/text") {
+      const request = JSON.parse(String(init?.body));
+      return json({
+        state: "unconfigured",
+        source: { ...request, media_type: "application/pdf" },
+        profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
+    }
+    if (url === "/api/v1/nodes/1")
+      return json({
+        ...root,
+        id: 1,
+        parent_id: root.id,
+        kind: "file",
+        name: row(1).name,
+        path: row(1).path,
+        revision: row(1).revision,
+        size: row(1).size,
+        current_version_id: version,
+        blob_hash: row(1).blob_hash,
+        mime_type: row(1).mime_type,
+      });
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+  await screen.findByText("Document 1 of 1");
+  expect(searches).toEqual([initialQuery.text]);
+  const inspector = screen.getByRole("complementary", { name: "Document inspector" });
+  await fireEvent.click(await within(inspector).findByRole("button", { name: "Retired Reviewer" }));
+  await screen.findByText(
+    "This historical person is no longer available for search. Their recorded attribution is still shown.",
+  );
+  parse = "down";
+  await fireEvent.click(within(inspector).getByRole("button", { name: "Mara Okonkwo-Fell" }));
+  await screen.findByText("query parser unavailable");
+  // Neither failure ran a search or closed the document.
+  expect(searches).toEqual([initialQuery.text]);
+  expect(screen.getByText("Document 1 of 1")).toBeTruthy();
+  parse = "ok";
+  await fireEvent.click(within(inspector).getByRole("button", { name: "Mara Okonkwo-Fell" }));
+  await waitFor(() => expect(searches).toEqual([initialQuery.text, `person:${active}`]));
+});
