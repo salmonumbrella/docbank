@@ -23,17 +23,32 @@ const mara = '"Mara Okonkwo-Fell" <mara@okonkwo.example.test>';
 const ines = '"Ines Albarran" <ines@albarran.example.test>';
 const teodor = '"Teodor Vask" <teodor@vask.example.test>';
 const hidden = '"Private Reviewer" <reviewer@private.example.test>';
+// The ordinary email has no Bcc. Docbank attaches a Bcc recipient to the sent
+// event as a sensitive actor, and safe disclosure then drops that whole event
+// (document.EventHasSensitiveEvidence), so its safe sent date needs no Bcc.
 const email = [
   `From: ${mara}`,
   `To: ${ines}`,
   `Cc: ${teodor}`,
-  `Bcc: ${hidden}`,
   "Date: Tue, 10 Mar 2026 23:40:00 -0400",
   "Subject: Board update",
   "",
   "Board update for the March meeting.",
   "",
 ].join("\r\n");
+// The privacy fixture: the same send time with a Bcc, outside the board search.
+const hiddenAddress = "reviewer@private.example.test";
+const reviewEmail = [
+  `From: ${mara}`,
+  `To: ${ines}`,
+  `Bcc: ${hidden}`,
+  "Date: Tue, 10 Mar 2026 23:40:00 -0400",
+  "Subject: Reviewer note",
+  "",
+  "A synthetic note with a blind-copy recipient.",
+  "",
+].join("\r\n");
+const SENT_AT = "2026-03-11T03:40:00Z";
 const calendar = (start: string, end: string) =>
   [
     "BEGIN:VCALENDAR",
@@ -167,8 +182,11 @@ test("shows document dates and people in the inspector and both tables", async (
       );
     const board = path.join(scratch, "board");
     const bulk = path.join(scratch, "bulk");
+    const privateDir = path.join(scratch, "private");
     await mkdir(board);
     await mkdir(bulk);
+    await mkdir(privateDir);
+    await writeFile(path.join(privateDir, "reviewer-note.eml"), reviewEmail, { mode: 0o600 });
     await writeFile(path.join(board, "board-update.eml"), email, { mode: 0o600 });
     await writeFile(path.join(board, "board-offsite.ics"), calendar("20260309", "20260312"));
     await fixture("pdf", path.join(board, "board-minutes.pdf"));
@@ -180,6 +198,7 @@ test("shows document dates and people in the inspector and both tables", async (
     started = true; // add may start the daemon even if the command fails.
     await run("add", board, "--dest", "/");
     await run("add", bulk, "--dest", "/");
+    await run("add", privateDir, "--dest", "/");
 
     let issued = new URL(await run("web", "--no-browser"));
     let session = new URLSearchParams(issued.hash.slice(1)).get("web_session") ?? "";
@@ -279,7 +298,12 @@ test("shows document dates and people in the inspector and both tables", async (
           return text.length > 300 ? `${text.slice(0, 300)}…` : value;
         };
         const stat = await probe(async () => {
-          const node = (await cli("document", "stat", `/board/${name}`, "--json")) as {
+          const node = (await cli(
+            "document",
+            "stat",
+            `${name === "reviewer-note.eml" ? "/private" : "/board"}/${name}`,
+            "--json",
+          )) as {
             id?: number;
             current_version_id?: string;
             source_metadata?: {
@@ -377,6 +401,142 @@ test("shows document dates and people in the inspector and both tables", async (
       await expectFacts("board-offsite.ics", "dates", (facts) =>
         claim(facts, "started", { state: "date", date: "2026-03-09" }),
       );
+
+      // Privacy, proved on an email that has a Bcc. Authenticated non-browser
+      // reads (the CLI's daemonconn.Ensure client with the runtime record's
+      // API key) of the exact version's full and safe dates are bracketed by
+      // reads of the retained event head taken while the daemon is stopped.
+      // The closure must hold: the same head before and after, full showing
+      // exactly the retained events, safe exactly those without sensitive
+      // evidence, and the sent event carrying a sensitive blind_copy actor from
+      // the same metadata generation. Nothing here carries credentials.
+      const privatePath = "/private/reviewer-note.eml";
+      const privateNode = JSON.parse(await run("document", "stat", privatePath, "--json")) as {
+        current_version_id: string;
+      };
+      const privateVersion = privateNode.current_version_id;
+      type CliDates = {
+        content_version_id: string;
+        state: string;
+        claims: {
+          event_id: string;
+          evidence_id: string;
+          date_kind: string;
+          when: { at?: string };
+        }[];
+      };
+      const datesOf = async (full: boolean) =>
+        JSON.parse(
+          await run("document", "dates", privatePath, "--json", ...(full ? ["--full"] : [])),
+        ) as CliDates;
+      const sentIn = (dates: CliDates) =>
+        dates.claims.find((item) => item.date_kind === "sent" && item.when.at === SENT_AT);
+      let waited: CliDates | undefined;
+      try {
+        await expect
+          .poll(
+            async () => {
+              waited = await datesOf(true);
+              return waited.state === "published" && !!sentIn(waited);
+            },
+            { timeout: 60_000, intervals: [1_000] },
+          )
+          .toBe(true);
+      } catch (error) {
+        throw new Error(`${privatePath} full dates never had sent: ${JSON.stringify(waited)}`, {
+          cause: error,
+        });
+      }
+      type Head = {
+        version_id: string;
+        events: {
+          event_id: string;
+          evidence_id: string;
+          date_kind: string;
+          utc_key: string;
+          safe: boolean;
+          actors: { role: string; sensitive: boolean; evidence_id: string }[];
+        }[];
+      } & Record<string, unknown>;
+      const restart = async () => {
+        started = true;
+        issued = new URL(await run("web", "--no-browser"));
+        session = new URLSearchParams(issued.hash.slice(1)).get("web_session") ?? "";
+      };
+      await stop();
+      const before = JSON.parse(await fixture("head", vault, privateVersion)) as Head;
+      await restart();
+      const full = await datesOf(true);
+      const safe = await datesOf(false);
+      const fullAgain = await datesOf(true);
+      await stop();
+      const after = JSON.parse(await fixture("head", vault, privateVersion)) as Head;
+      await restart();
+      const witness = { version: privateVersion, before, full, safe, fullAgain, after };
+      await testInfo.attach("document-facts-branch-privacy-witness.json", {
+        body: JSON.stringify(witness, null, 2),
+        contentType: "application/json",
+      });
+      const identities = (items: { event_id: string; evidence_id: string }[]) =>
+        items.map((item) => `${item.event_id}/${item.evidence_id}`).sort();
+      // Everything in a head except its events: the generation, checksum,
+      // inputs digest, epochs, publication time and metadata sources.
+      const fence = (head: Head) =>
+        JSON.stringify(Object.entries(head).filter(([key]) => key !== "events"));
+      const retainedSent = before.events.find(
+        (item) => item.date_kind === "sent" && item.utc_key === SENT_AT,
+      );
+      const closure = {
+        exactVersion: [
+          before.version_id,
+          after.version_id,
+          full.content_version_id,
+          safe.content_version_id,
+          fullAgain.content_version_id,
+        ].every((id) => id === privateVersion),
+        sameHead:
+          fence(before) === fence(after) &&
+          JSON.stringify(identities(before.events)) === JSON.stringify(identities(after.events)),
+        published: [full, safe, fullAgain].every((item) => item.state === "published"),
+        fullIsRetained:
+          JSON.stringify(identities(full.claims)) === JSON.stringify(identities(before.events)) &&
+          JSON.stringify(identities(fullAgain.claims)) ===
+            JSON.stringify(identities(before.events)),
+        safeIsRetainedSafe:
+          JSON.stringify(identities(safe.claims)) ===
+          JSON.stringify(identities(before.events.filter((item) => item.safe))),
+        sentRetainedWithBcc:
+          !!retainedSent &&
+          !retainedSent.safe &&
+          retainedSent.actors.some(
+            (actor) =>
+              actor.role === "blind_copy" &&
+              actor.sensitive &&
+              actor.evidence_id === retainedSent.evidence_id,
+          ),
+        sentFullOnly:
+          !!retainedSent &&
+          sentIn(full)?.event_id === retainedSent.event_id &&
+          !safe.claims.some((item) => item.event_id === retainedSent.event_id),
+      };
+      if (!Object.values(closure).every(Boolean))
+        throw new Error(`privacy closure failed: ${JSON.stringify(closure)}`);
+      // The browser session's own safe payloads for that version: people with
+      // the sender and no Bcc name or address, dates published without sent.
+      version["reviewer-note.eml"] = privateVersion;
+      await expectFacts(
+        "reviewer-note.eml",
+        "people",
+        (facts) =>
+          edge(facts, "sender", "Mara Okonkwo-Fell") &&
+          !JSON.stringify(facts).includes("Private Reviewer") &&
+          !JSON.stringify(facts).includes(hiddenAddress),
+      );
+      await expectFacts(
+        "reviewer-note.eml",
+        "dates",
+        (facts) => facts.state === "published" && !claim(facts, "sent", { at: SENT_AT }),
+      );
     }
 
     // Count facts reads as the browser makes them.
@@ -449,6 +609,25 @@ test("shows document dates and people in the inspector and both tables", async (
       if (!narrow)
         await expect(liveRow("board-minutes.pdf").getByText("1 to review")).toBeVisible();
     });
+
+    if (proof === "branch") {
+      // The Bcc email's safe surfaces: the sent date is absent and the Bcc
+      // recipient's name and address appear nowhere in the inspector's facts
+      // or the table, while From and To still show. The raw email viewer is a
+      // separate, owner-only view of the message and is not checked here.
+      await browse("private");
+      await liveRow("reviewer-note.eml").click();
+      const dates = inspector.getByRole("region", { name: "Dates" });
+      const people = inspector.getByRole("region", { name: "People" });
+      await expect(dates.getByText("Times show in America/Toronto.")).toBeVisible();
+      await expect(people.getByRole("button", { name: "Mara Okonkwo-Fell" })).toBeVisible();
+      await expect(dates.getByText(EMAIL_SENT)).toHaveCount(0);
+      for (const surface of [people, dates, liveRow("reviewer-note.eml")])
+        for (const text of ["Private Reviewer", hiddenAddress])
+          await expect(surface.getByText(text)).toHaveCount(0);
+      await expect(page.getByRole("img", { name: "Private Reviewer" })).toHaveCount(0);
+      await browse("board");
+    }
 
     // Civil all-day dates have no time.
     await liveRow("board-offsite.ics").click();
