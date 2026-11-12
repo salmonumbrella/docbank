@@ -95,11 +95,15 @@ The HTTP API exposes `/api/v1/contracts` and individual contracts at
 revision in `If-Match`; a stale revision fails without changing that operation.
 The contract ETag carries the aggregate revision for `If-Match` and does not
 change when a linked party is renamed or the date-derived status changes.
-The web app's browser session may only read: `GET /api/v1/contracts` with
-`status`, `type`, `expiring_before`, `as_of`, `limit` and `offset`, each at
-most once, and `GET /api/v1/contracts/{contract_id}` with a canonical UUID and
-an optional `as_of`. Writes, `q`, `party_id`, and party and document link
-routes require the API key.
+The web app's browser session may read `GET /api/v1/contracts` with `status`,
+`type`, `expiring_before`, `q`, `as_of`, `limit` and `offset`, each at most
+once, `GET /api/v1/contracts/{contract_id}` with a canonical UUID and an
+optional `as_of`, `GET /api/v1/parties` with `limit` and `offset`, and
+`GET /api/v1/nodes/{node_id}/contracts`. It may create and edit contracts,
+create parties, attach and detach contract parties with one `role`, and link
+or unlink documents with one `role` and an explicit `content_version_id`.
+Deleting contracts, editing or retiring parties, `party_id`, and the party
+`kind`, `own` and `include_retired` filters require the API key.
 
 Contract party links use `PUT` and `DELETE` on
 `/api/v1/contracts/{contract_id}/parties/{party_id}?role=own|counterparty`.
@@ -143,8 +147,7 @@ existing backup rules omit their document bytes.
 
 ## In the web app
 
-**Contracts** in the Documents sidebar opens the register at `/contracts`. The
-page reads contracts; create, edit and link them with the CLI.
+**Contracts** in the Documents sidebar opens the register at `/contracts`.
 
 The table shows each agreement's title, type, counterparties, status, start
 date and expiry date, sorted by title. Filter it by status, including
@@ -165,3 +168,31 @@ linked version in the document reader, never a later version of the file. An
 older version is marked **Older version**. An unavailable link shows its
 recorded hash and size and cannot be opened. **All contracts** returns to the
 table with your filters.
+
+**New contract** opens an empty form, and **Edit** on a contract opens the same
+form with its current values. Choose own entities and counterparties from your
+active parties, or type a new name and choose **Create party "…"**. A new party
+in **Own entities** is created as one of your own entities. If the name already
+exists, that party is chosen instead. A party list that fails part-way offers
+**Retry** and does not offer to create a party until every party has loaded.
+Retired parties stay on a contract until you remove them but are never offered.
+
+A new contract and its parties are saved together. An edit saves the changed
+fields first, then each party change, each step at the revision the previous
+one returned. If the contract changed elsewhere before the first step, nothing
+is saved and the form keeps your edits; **Load latest** replaces them with the
+saved contract. If a later step fails, the form names the steps that were saved
+and those that were not. If Docbank does not answer, saving is disabled until
+you load the latest contract, so a change is never sent twice.
+
+### Contracts in the document inspector
+
+Select a file to see the **Contracts** section of the inspector, above History.
+It lists each contract linked to that file, with the role of each linked
+version, **Older version** for an earlier version and **Unavailable** for a
+version that can no longer be read. **Link to contract** searches the register
+by title; choose a contract and a role, then **Link**. The link records the
+exact version the inspector shows, which may be an older version or a snapshot
+version rather than the current file. **Unlink** removes only that version's
+link after you confirm. Linking is unavailable until the current view is
+refreshed or when the inspector is not showing an exact file version.

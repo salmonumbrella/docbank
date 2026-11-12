@@ -1,6 +1,12 @@
 import { APIError } from "./api-transport.js";
 import { readExactSource } from "./attachments.js";
-import type { Contract, ContractDocument, ListContractsParams } from "./generated/docbank.js";
+import type {
+  Contract,
+  ContractDocument,
+  ContractParty,
+  ListContractsParams,
+  PatchContractRequest,
+} from "./generated/docbank.js";
 import type { RelatedSelectedSource } from "./selectedSource.js";
 
 export const contractPageSize = 100;
@@ -33,6 +39,14 @@ export const contractStatusOptions = [
   { value: "", label: "Any status" },
   ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
 ];
+// Stored statuses: Expired is only ever derived from the expiry date.
+export const editableStatusOptions = contractStatusOptions.filter(
+  (option) => option.value && option.value !== "expired",
+);
+export const documentRoleOptions = Object.entries(roleLabels).map(([value, label]) => ({
+  value,
+  label,
+}));
 export const expiryOptions: { value: string; label: string }[] = [
   { value: "0", label: "Any expiry" },
   { value: "30", label: "Within 30 days" },
@@ -174,4 +188,85 @@ export async function contractDocumentSource(
       throw new Error("This linked document no longer matches its saved version.", { cause });
     throw cause;
   }
+}
+
+// After contractTypeLabel, whose patterns it needs at module load.
+export const suggestedTypeOptions = suggestedTypes.map((name) => ({
+  name,
+  label: contractTypeLabel(name),
+}));
+
+export function revisionFence(revision: number): { "If-Match": string } {
+  return { "If-Match": `"${revision}"` };
+}
+
+const draftFields = [
+  "title",
+  "contract_type",
+  "status",
+  "starts_on",
+  "expires_on",
+  "signed_on",
+  "summary",
+  "purpose",
+  "consideration",
+  "termination",
+] as const;
+export type ContractDraft = Pick<Contract, (typeof draftFields)[number] | "parties">;
+
+export function draftFrom(contract?: Contract): ContractDraft {
+  return {
+    title: contract?.title ?? "",
+    contract_type: contract?.contract_type ?? "",
+    status: contract?.status ?? "draft",
+    starts_on: contract?.starts_on ?? null,
+    expires_on: contract?.expires_on ?? null,
+    signed_on: contract?.signed_on ?? null,
+    summary: contract?.summary ?? "",
+    purpose: contract?.purpose ?? "",
+    consideration: contract?.consideration ?? "",
+    termination: contract?.termination ?? "",
+    parties: contract ? [...contract.parties] : [],
+  };
+}
+
+// contractPatch sends only changed fields; a cleared date is null and a
+// cleared type or term is the empty string, as the API expects.
+export function contractPatch(base: Contract, draft: ContractDraft): PatchContractRequest {
+  const patch: Record<string, string | null> = {};
+  for (const field of draftFields) if (draft[field] !== base[field]) patch[field] = draft[field];
+  return patch as PatchContractRequest;
+}
+
+const partyKey = (party: ContractParty) => `${party.role}:${party.party_id}`;
+// partyChanges lists detaches before attaches, so a party can move between
+// roles without both roles held at once.
+export function partyChanges(
+  base: ContractParty[],
+  draft: ContractParty[],
+): { attach: boolean; party: ContractParty }[] {
+  const before = new Set(base.map(partyKey));
+  const after = new Set(draft.map(partyKey));
+  return [
+    ...base.filter((party) => !after.has(partyKey(party))).map((party) => ({ attach: false, party })),
+    ...draft.filter((party) => !before.has(partyKey(party))).map((party) => ({ attach: true, party })),
+  ];
+}
+
+// unconfirmed is true when Docbank may have applied a write it never
+// answered: no response, an aborted request, or a server failure.
+export function unconfirmed(cause: unknown): boolean {
+  return !(cause instanceof APIError) || cause.status === 0 || cause.status >= 500;
+}
+
+const problemSentences: Record<string, string> = {
+  party_retired: "A chosen party has been retired. Remove it and choose another.",
+  party_not_own: "An own entity must be one of your own parties.",
+  not_file: "Only files can be linked to a contract.",
+  audit_mutation_unsupported:
+    "This vault records audits; contract changes aren't available here yet.",
+};
+export function contractProblem(cause: unknown): string {
+  if (cause instanceof APIError && problemSentences[cause.code]) return problemSentences[cause.code]!;
+  return cause instanceof Error ? cause.message : String(cause);
 }

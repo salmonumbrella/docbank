@@ -20,6 +20,7 @@
   import InspectorHeader from "./InspectorHeader.svelte";
   import InspectorDetails from "./InspectorDetails.svelte";
   import TechnicalDetails from "./TechnicalDetails.svelte";
+  import InspectorContracts from "./InspectorContracts.svelte";
   import InspectorHistory from "./InspectorHistory.svelte";
   import CopyValue from "./CopyValue.svelte";
   import { pdfRedactionAction } from "./documentReader.js";
@@ -352,6 +353,9 @@
     </section>
   {/if}
   {#if kind === "file" && node && session && onauthfailure}
+    {#key `${source?.key}:${authorizationRevision}`}
+      <InspectorContracts {session} {node} {source} {actionsDisabled} {onauthfailure} />
+    {/key}
     <InspectorHistory
       {session}
       {node}

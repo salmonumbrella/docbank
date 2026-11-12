@@ -27,14 +27,18 @@
     session,
     contractID,
     asOf,
+    notice = "",
     onauthfailure,
     onback,
+    onedit,
   }: {
     session: string;
     contractID: string;
     asOf: string;
+    notice?: string;
     onauthfailure: (cause: unknown) => void;
     onback: (id: string) => void;
+    onedit?: (contract: Contract) => void;
   } = $props();
 
   let contract = $state<Contract | null>(null);
@@ -182,7 +186,9 @@
           >{contractStatusLabel(current.effective_status)}</Chip
         >
       </div>
+      {#if onedit}<Button size="sm" onclick={() => onedit(current)}>Edit</Button>{/if}
     </div>
+    {#if notice}<p class="tool-muted" role="status">{notice}</p>{/if}
     <InspectorDetails
       label="Contract details"
       facts={[

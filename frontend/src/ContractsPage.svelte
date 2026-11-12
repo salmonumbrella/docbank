@@ -1,10 +1,12 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
+  import PlusIcon from "@lucide/svelte/icons/plus";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import { Button, Chip, IconButton, SelectDropdown, Spinner, Table } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import DrawerShell from "./DrawerShell.svelte";
   import ContractDetail from "./ContractDetail.svelte";
+  import ContractForm from "./ContractForm.svelte";
   import { APIError } from "./api-transport.js";
   import { listContracts, type Contract } from "./generated/docbank.js";
   import {
@@ -41,6 +43,9 @@
   let seenTypes = $state<string[]>([]);
   let selectedID = $state<string | null>(null);
   let detailRevision = $state(0);
+  // form holds the contract being edited, or no contract for a new one.
+  let form = $state<{ contract?: Contract } | null>(null);
+  let notice = $state("");
   let generation = 0;
   let controller: AbortController | undefined;
 
@@ -145,8 +150,17 @@
     void reload(false);
   }
 
+  function saved(contract: Contract): void {
+    form = null;
+    notice = "Contract saved.";
+    selectedID = contract.contract_id;
+    detailRevision += 1;
+    void reload(false);
+  }
+
   async function back(id: string): Promise<void> {
     selectedID = null;
+    notice = "";
     await tick();
     document.querySelector<HTMLElement>(`[data-contract-id="${CSS.escape(id)}"]`)?.focus();
   }
@@ -159,19 +173,35 @@
   onclose={() => {}}
 >
   {#snippet actions()}
-    <IconButton
-      size="sm"
-      ariaLabel="Refresh contracts"
-      title="Refresh"
-      disabled={loading}
-      onclick={() => void reload(true)}
+    {#if !form}
+      {@render newContract()}
+      <IconButton
+        size="sm"
+        ariaLabel="Refresh contracts"
+        title="Refresh"
+        disabled={loading}
+        onclick={() => void reload(true)}
+      >
+        <RefreshCwIcon size="14" aria-hidden="true" />
+      </IconButton>
+    {/if}
+  {/snippet}
+  {#snippet newContract()}
+    <Button size="sm" tone="info" surface="solid" onclick={() => (form = {})}
+      ><PlusIcon size="14" aria-hidden="true" /> New contract</Button
     >
-      <RefreshCwIcon size="14" aria-hidden="true" />
-    </IconButton>
   {/snippet}
 
   <div class="tool-body contracts-body">
-    {#if selectedID}
+    {#if form}
+      <ContractForm
+        {session}
+        contract={form.contract}
+        {onauthfailure}
+        onsaved={saved}
+        oncancel={() => (form = null)}
+      />
+    {:else if selectedID}
       {#if error}
         <div class="tool-heading">
           <p class="tool-error" role="alert">{error}</p>
@@ -183,8 +213,13 @@
           {session}
           contractID={selectedID}
           {asOf}
+          {notice}
           {onauthfailure}
           onback={(id) => void back(id)}
+          onedit={(contract) => {
+            notice = "";
+            form = { contract };
+          }}
         />
       {/key}
     {:else}
@@ -244,9 +279,10 @@
           >
         </div>
       {:else if rows.length === 0}
-        <p class="tool-muted">
-          No contracts yet. Register one with <code>docbank contract create "&lt;title&gt;"</code>.
-        </p>
+        <div class="tool-heading">
+          <p class="tool-muted">No contracts yet.</p>
+          {@render newContract()}
+        </div>
       {:else}
         <Table bare unsorted ariaLabel="Contracts" class="contracts">
           <thead>

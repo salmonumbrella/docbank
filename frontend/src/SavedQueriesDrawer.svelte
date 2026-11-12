@@ -437,17 +437,6 @@
     align-items: center;
     gap: var(--space-4);
   }
-  textarea {
-    width: 100%;
-    box-sizing: border-box;
-    resize: vertical;
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font: inherit;
-  }
   #query-json {
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);

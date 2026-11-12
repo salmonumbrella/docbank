@@ -7,6 +7,7 @@ export interface Problem {
   position?: unknown;
   errors?: unknown;
   redaction?: unknown;
+  party_id?: string;
 }
 
 export class APIError extends Error {
@@ -17,6 +18,7 @@ export class APIError extends Error {
     readonly position?: unknown,
     readonly errors: string[] = [],
     readonly redaction?: unknown,
+    readonly partyID?: string,
   ) {
     super(message);
     this.name = "APIError";
@@ -110,6 +112,7 @@ async function send(
       problem.position,
       errors,
       problem.redaction,
+      typeof problem.party_id === "string" ? problem.party_id : undefined,
     );
     requestSessionByError.set(error, session);
     throw error;

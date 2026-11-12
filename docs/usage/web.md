@@ -1224,6 +1224,7 @@ accepts that credential for the following operations:
 | List, create, rename, star, set covers, duplicate, or delete photo albums; add or remove members | Existing-album writes require the inspected revision. Membership requests accept up to 1,000 IDs per request or a complete live query without a total member cap. Removing members or deleting albums keeps the photos. See [Albums](photos.md#albums). |
 | Prepare, edit, or undo photo metadata (`POST /api/v1/photos/authored/prepare`, `/api/v1/photos/authored/edit`, `/api/v1/photos/authored/{receipt_id}/undo`) | Edits bind up to 1,000 live files to their asset, file and node revisions. Each edit target may also supply `content_version_id`, which fences the asset's displayed version whichever member is edited. A replaced version or a different display file returns HTTP 412 `stale_revision`. Fields and keywords share one transaction and receipt. Undo requires matching revisions; hidden photos also require an unlocked Hidden view. |
 | Search, rename, or merge people; read and draw photo faces; name or clear a face | Rename and merge require the person revisions and apply only to people the browser can list. See [People in Photos](people.md#people-in-photos). Naming a face can create its person. Standalone person creation requires the API key. Face edits require the face revision. Drawing creates a box. The browser can mark an existing person or create a person by name in a whole photo and clear whole-photo marks. Person links open a filtered Library or, from unlocked Hidden, a filtered Hidden view. Hidden face reads and edits require an unlock. |
+| Read contracts and parties; create and edit contracts; create parties; link or unlink a document version | Edits and links require the contract revision. Links name the exact version the inspector shows. Deleting contracts and editing or retiring parties require the API key. See [Contracts in the web app](contracts.md#in-the-web-app). |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
 | Create and page a frozen query snapshot | Uses complete validated query intent. Handles remain bound to this session and daemon lifetime. |
 | Apply a tag to an exact frozen population | Requires captured node revisions and confirmation. Retries preserve the original operation identities. |
@@ -1239,7 +1240,7 @@ need through `POST /api/v1/nodes`, which makes directories only. The daemon inde
 caller-declared hash and size, as it does for other remote writers.
 
 These permissions do not allow emptying trash, document mutations other than
-the revision-checked tag workflows above, audit enrollment, backup creation,
+the revision-checked tag and contract workflows above, audit enrollment, backup creation,
 restore, maintenance, configuration changes, or access to general API
 endpoints. A browser session never receives the master API key. See the
 [HTTP API](../architecture/http-api.md) for the route and credential contracts.
