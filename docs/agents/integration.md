@@ -266,6 +266,14 @@ curl --fail-with-body \
   "$DOCBANK_URL/api/v1/nodes/1/children?limit=500&offset=0"
 ```
 
+### Read authored Markdown notes
+
+Use the authenticated [note routes](../architecture/http-api.md#authored-markdown-notes)
+to list notes, read original text or headings, and inspect links. Keep the
+returned content version and absolute byte offsets when continuing a read.
+Follow cursors even when a link page is empty. Source state reflects stored
+watch observations; it is not a live filesystem check.
+
 ### Search current documents
 
 Inspect `truncated` before treating search results as complete.

@@ -64,6 +64,7 @@ func registerNoteRoutes(api huma.API, d Deps, cursors *documentQueryService) {
 	registerNoteTextRoute(api, d)
 	registerNoteOutlineRoute(api, d, cursors)
 	registerNoteListRoute(api, d, cursors)
+	registerNoteLinksRoute(api, d, cursors)
 	type byPathInput struct {
 		Path string `query:"path" required:"true"`
 	}

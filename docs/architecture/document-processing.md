@@ -145,7 +145,10 @@ remain valid regardless of their combined size.
 
 Restore rebuilds note structure from restored original blobs before publishing
 the target vault. A bad note's terminal classification does not fail restore.
-Historical versions do not acquire note cache rows. The current read routes
+Text and outline reads parse an uncached current original on demand. Historical
+reads always parse the selected original without publishing cache rows. Link
+resolution uses current placement rather than cached relative paths, so moves
+do not require a worker pass before path-like links can resolve. The read routes
 are described in the [HTTP note contract](http-api.md#authored-markdown-notes).
 
 ## Keep policy and result identities separate

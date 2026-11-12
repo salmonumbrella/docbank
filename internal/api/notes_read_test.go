@@ -112,3 +112,32 @@ func TestNoteListFiltersBeforePaging(t *testing.T) {
 	require.Len(t, result.Items, 1)
 	require.Equal(t, "/c.md", result.Items[0].Path)
 }
+
+func TestNoteLinksResolveCurrentOriginal(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	for _, test := range []struct{ name, src string }{
+		{"target.md", "# Target\n"},
+		{"source.md", "# Source\n[[target]]\n"},
+	} {
+		hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader(test.src))
+		require.NoError(t, err)
+		n, err := s.CreateFile(ctx, s.RootID(), test.name, hash, size, "text/markdown")
+		require.NoError(t, err)
+		if test.name == "source.md" {
+			resp, body := get(t, ts, "/api/v1/notes/"+strconv.FormatInt(n.ID, 10)+"/links?direction=outgoing", nil)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var got struct {
+				Links []struct {
+					State      string  `json:"state"`
+					TargetPath *string `json:"target_path"`
+				} `json:"links"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(body), &got))
+			require.Len(t, got.Links, 1)
+			require.Equal(t, "resolved", got.Links[0].State)
+			require.Equal(t, new("/target.md"), got.Links[0].TargetPath)
+		}
+	}
+}

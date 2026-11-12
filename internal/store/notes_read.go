@@ -30,7 +30,7 @@ func (s *Store) NoteVersion(ctx context.Context, nodeID int64, versionID string)
 		if err != nil {
 			return err
 		}
-		if !IsNoteCandidate(view.Node) || view.Node.Size > MaxNoteBytes {
+		if !IsNoteCandidate(view.Node) {
 			return ErrNotFound
 		}
 		view.FilenameTitle, _ = splitSuffix(view.Node.Name)

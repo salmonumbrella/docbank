@@ -208,6 +208,65 @@ func checkNoteList(t *testing.T, newStore func(*testing.T) *Store) {
 	require.False(t, page.HasNext)
 }
 
+func checkNoteVersion(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	ctx := t.Context()
+	n := createNoteFixture(t, s, s.RootID(), "history.md", "old", "text/markdown")
+	other := createNoteFixture(t, s, s.RootID(), "other.md", "other", "text/markdown")
+	_, current, err := s.ReplaceContent(ctx, n.ID, UnconditionalRev, fmt.Sprintf("%x", sha256.Sum256([]byte("large"))), MaxNoteBytes+1, "text/markdown")
+	require.NoError(t, err)
+	view, err := s.NoteVersion(ctx, n.ID, n.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, n.CurrentVersionID, view.Version.ID)
+	require.Equal(t, current.ID, view.Node.CurrentVersionID)
+	_, err = s.NoteVersion(ctx, n.ID, "")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.NoteVersion(ctx, other.ID, n.CurrentVersionID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func checkNoteLinks(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	ctx := t.Context()
+	target := createNoteFixture(t, s, s.RootID(), "target.md", "# Target\n", "text/markdown")
+	publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], "# Target\n", notemarkdown.Recipe)
+	src := "# Source\n[[target]]\n[missing](missing.md)\n"
+	source := createNoteFixture(t, s, s.RootID(), "source.md", src, "text/markdown")
+	publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], src, notemarkdown.Recipe)
+	page, err := s.NoteLinks(ctx, source.ID, "outgoing", "", nil, nil, nil, nil, nil, 50)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	require.Equal(t, "resolved", page.Items[0].State)
+	require.Equal(t, new("/target.md"), page.Items[0].TargetPath)
+	require.Equal(t, "missing", page.Items[1].State)
+	incoming, err := s.NoteLinks(ctx, target.ID, "incoming", "", nil, nil, nil, nil, nil, 50)
+	require.NoError(t, err)
+	require.Len(t, incoming.Items, 1)
+	require.Equal(t, "/source.md", incoming.Items[0].SourcePath)
+	// The target's aliases may come from its current original before a worker
+	// publishes its parse. Incoming lookup must still resolve that target.
+	aliasSource := createNoteFixture(t, s, s.RootID(), "alias-source.md", "[[fresh alias]]\n", "text/markdown")
+	publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], "[[fresh alias]]\n", notemarkdown.Recipe)
+	incoming, err = s.NoteLinks(ctx, target.ID, "incoming", "", nil, []string{"fresh alias"}, nil, nil, nil, 50)
+	require.NoError(t, err)
+	require.Len(t, incoming.Items, 2)
+	require.Contains(t, []string{incoming.Items[0].SourcePath, incoming.Items[1].SourcePath}, "/"+aliasSource.Name)
+	bulk, err := notemarkdown.Parse(ctx, []byte(strings.Repeat("[x](missing.md)\n", 101)), notemarkdown.Limits{})
+	require.NoError(t, err)
+	first, err := s.NoteLinks(ctx, source.ID, "unresolved", source.CurrentVersionID, bulk.Links, nil, nil, nil, nil, 100)
+	require.NoError(t, err)
+	require.Len(t, first.Items, 100)
+	require.NotNil(t, first.Next)
+	last, err := s.NoteLinks(ctx, source.ID, "unresolved", source.CurrentVersionID, bulk.Links, nil, nil, nil, first.Next, 100)
+	require.NoError(t, err)
+	require.Len(t, last.Items, 1)
+	require.Nil(t, last.Next)
+}
+
 func checkNoteMoveAndPresence(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()

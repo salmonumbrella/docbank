@@ -65,7 +65,29 @@ Suffix matching is case-insensitive. Oversize Markdown candidates count as
 failed after classification. `last_error` is a bounded failure code from the
 latest failed current note, without source text or a host path.
 
-Both routes are read-only and use the ordinary API authentication. See
+`GET /api/v1/notes` lists current notes with optional `under_path`, `recursive`,
+`source_present`, modified-time bounds and up to eight repeatable `field=key:value`
+filters. Filters apply before paging. Sort by `path`, `modified_at` or `title`,
+in either direction; pages contain at most 250 notes. Nonrecursive results
+also include filtered counts for direct child folders.
+
+`GET /api/v1/notes/{node_id}/outline` returns up to 200 headings per page.
+`GET /api/v1/notes/{node_id}/text` reads the retained original, selecting an
+optional heading or inclusive line range. Byte offsets are absolute and the
+byte limit is at most 524,288; chunks end at UTF-8 boundaries. A limit too
+small for the next character returns `range_invalid`. Both routes accept an
+optional retained `version_id`; the version must belong to the node. Text
+responses include stored watch state and `in_sync` against the current head.
+Ambiguous headings return `heading_ambiguous` with up to five candidate paths.
+
+`GET /api/v1/notes/{node_id}/links` resolves outgoing, incoming or unresolved
+links within the nearest watch collection, or `/` outside watched collections.
+It uses current paths and only present, non-excluded notes. Exact paths precede
+wikilink stem and alias matches; ambiguity is reported with up to five paths.
+Pages contain at most 100 results and may be empty while a continuation remains.
+Signed cursors expire after 15 minutes and are bound to their query or version.
+
+These routes are read-only and use the ordinary API authentication. See
 [note derivation](document-processing.md#authored-markdown-notes) for rebuilds,
 eligibility and failure handling.
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 )
 
 const (
@@ -144,6 +145,23 @@ func (e exclusions) match(sourceRoot, sourcePath string) bool {
 func (e exclusions) matchRelative(rel string) bool {
 	rel = filepath.Clean(rel)
 	return e.matchNameAndRelative(filepath.Base(rel), rel)
+}
+
+// WatchExcluded compiles the watcher's existing exclusion rules for queries
+// over virtual paths relative to that watch's destination.
+func WatchExcluded(w config.WatchConfig) (func(string) bool, error) {
+	e, err := compileExclusions(w.Exclude, w.EffectiveExcludePatterns())
+	if err != nil {
+		return nil, err
+	}
+	return func(rel string) bool {
+		for p := filepath.FromSlash(rel); p != "." && p != ""; p = filepath.Dir(p) {
+			if e.matchRelative(p) {
+				return true
+			}
+		}
+		return false
+	}, nil
 }
 
 func (e exclusions) matchNameAndRelative(name, rel string) bool {
