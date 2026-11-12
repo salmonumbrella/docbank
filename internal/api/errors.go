@@ -82,6 +82,15 @@ func installErrorFormatter() {
 		}
 		return e
 	}
+	huma.NewErrorWithContext = func(ctx huma.Context, status int, msg string, errs ...error) huma.StatusError {
+		if op := ctx.Operation(); op != nil {
+			switch op.OperationID {
+			case "listRecordTypes", "getRecordType", "activateRecordType", "deactivateRecordType", "listRecords", "getRecord", "createRecord", "updateRecord", "retireRecord":
+				return NewError(status, "invalid_record", "invalid record request")
+			}
+		}
+		return huma.NewError(status, msg, errs...)
+	}
 }
 
 func privateMediaValidation(detail *huma.ErrorDetail) bool {

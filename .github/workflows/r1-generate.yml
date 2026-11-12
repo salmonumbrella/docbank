@@ -183,6 +183,11 @@ jobs:
       - name: Check workflow retries and timing suppressions
         if: always()
         run: make lint-workflow-retries check-timing-suppressions
+      # Huma checker loads tracked Go sources from the Git index.
+      - name: Stage downloaded generated artifacts for Huma
+        if: always()
+        run: |
+          git add internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts internal/store/testdata/schema-contracts/000049-f16644bb4084c3ff99e244d5adf26e9d963e8676ccf3269504e4b94aa8e1a154-record-types.schema
       - name: Check Huma contract
         if: always()
         run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...

@@ -2,7 +2,7 @@ package recordtype
 
 import (
 	_ "embed"
-	"encoding/json"
+	"encoding/json/v2"
 )
 
 //go:embed contract.json

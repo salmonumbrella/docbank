@@ -30,6 +30,8 @@ func TestContractValidation(t *testing.T) {
 		{"invalid label", func(r *Record) { r.Fields = map[string]any{"contract_type": "Bad label"} }},
 		{"long terms", func(r *Record) { r.Fields = map[string]any{"summary": strings.Repeat("x", 8193)} }},
 		{"year zero", func(r *Record) { r.Fields = map[string]any{"signed_on": "0000-01-01"} }},
+		{"empty date", func(r *Record) { r.Fields = map[string]any{"signed_on": ""} }},
+		{"empty date endpoint", func(r *Record) { r.Fields = map[string]any{"term": map[string]any{"end": ""}} }},
 		{"invalid date", func(r *Record) { r.Fields = map[string]any{"signed_on": "2026-02-30"} }},
 		{"reversed term", func(r *Record) {
 			r.Fields = map[string]any{"term": map[string]any{"start": "2026-03-01", "end": "2026-02-01"}}
@@ -43,6 +45,24 @@ func TestContractValidation(t *testing.T) {
 				t.Fatal("expected rejection")
 			}
 		})
+	}
+}
+
+func TestRecordTextLimitAfterNormalization(t *testing.T) {
+	def, _ := Builtin("contract")
+	r := Record{Title: "Example", Status: "draft", Note: strings.Repeat("e\u0301", 2731)}
+	if _, err := NormalizeRecord(def, r); err != nil {
+		t.Fatal(err)
+	}
+	r.Note = strings.Repeat("é", 4097)
+	if _, err := NormalizeRecord(def, r); err == nil {
+		t.Fatal("expected normalized length rejection")
+	}
+	r.Note = ""
+	r.Fields = map[string]any{"contract_type": ""}
+	got, err := NormalizeRecord(def, r)
+	if err != nil || len(got.Fields) != 0 {
+		t.Fatalf("empty optional label: %#v, %v", got.Fields, err)
 	}
 }
 

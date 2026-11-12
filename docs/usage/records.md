@@ -36,7 +36,8 @@ stored directly. The optional `contract_type` label uses lowercase ASCII
 letters, digits, and underscores. Dates use `YYYY-MM-DD`. The term may have a
 start, an end, or both; the start cannot follow the end. The optional `summary`,
 `purpose`, `consideration`, `termination`, and note each have an 8,192-byte
-limit.
+limit after NFC normalization. Raw text input is limited to 64 KiB before normalization.
+Empty date strings are invalid; use null through the API or `--clear` to clear a date.
 
 Edit a record with `docbank record edit <id> --set summary='Revised terms'`.
 Use `--clear term.end` to clear a date endpoint; editing one endpoint preserves the other. `--title`, `--status`, and

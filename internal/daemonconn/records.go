@@ -2,9 +2,8 @@ package daemonconn
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -73,7 +72,7 @@ func (c *Connection) ListRecords(ctx context.Context, opts RecordListOptions) (a
 	for _, v := range opts.Fields {
 		k, value, ok := strings.Cut(v, "=")
 		if !ok {
-			return api.RecordPage{}, fmt.Errorf("expected field=value")
+			return api.RecordPage{}, errors.New("expected field=value")
 		}
 		raw, err := json.Marshal(value)
 		if err != nil {

@@ -21,7 +21,7 @@ func (e *ValidationError) Error() string { return fmt.Sprintf("%s: %s", e.Field,
 func invalid(field, reason string) error { return &ValidationError{Field: field, Reason: reason} }
 
 func NormalizeRecord(def Definition, r Record) (Record, error) {
-	if !utf8.ValidString(r.Title) || strings.IndexFunc(r.Title, unicode.IsControl) >= 0 {
+	if !ValidTitleQuery(r.Title) {
 		return Record{}, invalid("title", "invalid title")
 	}
 	r.Title = norm.NFC.String(strings.TrimSpace(r.Title))
@@ -64,7 +64,7 @@ func NormalizeRecord(def Definition, r Record) (Record, error) {
 			if !ok {
 				return Record{}, invalid(id, "invalid value")
 			}
-			if s == "" {
+			if s == "" && f.Type != "date" {
 				continue
 			}
 			if f.Type == "long_text" || f.Type == "text" {
@@ -93,7 +93,7 @@ func NormalizeRecord(def Definition, r Record) (Record, error) {
 				if k != "start" && k != "end" {
 					return Record{}, invalid(id, "invalid date range")
 				}
-				if v == nil || v == "" {
+				if v == nil {
 					continue
 				}
 				s, ok := v.(string)
@@ -118,11 +118,17 @@ func NormalizeRecord(def Definition, r Record) (Record, error) {
 	return r, nil
 }
 
+// ValidTitleQuery rejects input that cannot occur in a title.
+func ValidTitleQuery(s string) bool {
+	return utf8.ValidString(s) && strings.IndexFunc(s, unicode.IsControl) < 0
+}
+
 func normalizeLong(field, s string) (string, error) {
-	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
-	if !utf8.ValidString(s) || len(s) > 8192 {
+	// Bound raw input before allocating; the contract limit applies after NFC.
+	if len(s) > 64<<10 || !utf8.ValidString(s) {
 		return "", invalid(field, "invalid text")
 	}
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
 	for _, c := range s {
 		if unicode.IsControl(c) && c != '\n' && c != '\t' {
 			return "", invalid(field, "invalid text")
