@@ -23,7 +23,7 @@ func TestTimelineBrowserAllowlist(t *testing.T) {
 
 func TestTimelinePageWhenAndCitation(t *testing.T) {
 	minute := 570
-	page := store.TimelineDayPage{Items: []store.TimelineItem{{NodeID: 7, VersionID: "version", BlobHash: "hash", Rule: "date-kind-switch", AxisMinute: &minute, Event: document.DocumentEventV1{EventID: "event", DateKind: "sent", Precision: "minute", DateValue: "2026-03-11T09:30", TimezoneKind: "omitted", ClaimBasis: "source_asserted"}}}, DateOnly: []store.TimelineItem{{EndDate: "2026-03-12", Event: document.DocumentEventV1{DateKind: "started", Precision: "date", DateValue: "2026-03-10"}}}, MonthOnly: []store.TimelineItem{{Event: document.DocumentEventV1{DateKind: "created", Precision: "month", DateValue: "2026-03"}}}}
+	page := store.TimelineDayPage{Items: []store.TimelineItem{{NodeID: 7, VersionID: "11111111-1111-4111-8111-111111111111", BlobHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Rule: "date-kind-switch", AxisMinute: &minute, Event: document.DocumentEventV1{EventID: "event", DateKind: "sent", Precision: "minute", DateValue: "2026-03-11T09:30", TimezoneKind: "omitted", ClaimBasis: "source_asserted"}}}, DateOnly: []store.TimelineItem{{EndDate: "2026-03-12", Event: document.DocumentEventV1{DateKind: "started", Precision: "date", DateValue: "2026-03-10"}}}, MonthOnly: []store.TimelineItem{{Event: document.DocumentEventV1{DateKind: "created", Precision: "month", DateValue: "2026-03"}}}}
 	out := timelinePageAPI("vault", "2026-03-11", page)
 	raw, err := json.Marshal(out)
 	require.NoError(t, err)
@@ -36,12 +36,15 @@ func TestTimelinePageWhenAndCitation(t *testing.T) {
 	require.EqualValues(t, 570, when["axis_minute"])
 	require.NotContains(t, when, "at")
 	require.Equal(t, "date-kind-switch", when["placed_by"].(map[string]any)["rule"])
-	require.Equal(t, map[string]any{"vault_uid": "vault", "node_id": float64(7), "content_version_id": "version", "content_sha256": "hash"}, item["citation"])
+	require.Equal(t, map[string]any{"vault_uid": "vault", "node_id": float64(7), "content_version_id": "11111111-1111-4111-8111-111111111111", "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, item["citation"])
 	date := value["date_only"].([]any)[0].(map[string]any)["when"].(map[string]any)
 	require.Equal(t, "2026-03-10", date["date"])
 	require.Equal(t, "2026-03-12", date["end_date"])
 	require.NotContains(t, date, "axis_minute")
 	require.NotContains(t, date, "at")
+	ended := timelinePageAPI("vault", "2026-03-12", store.TimelineDayPage{DateOnly: []store.TimelineItem{{Event: document.DocumentEventV1{DateKind: "ended", Precision: "date", DateValue: "2026-03-12"}}}}).DateOnly[0].When
+	require.Equal(t, "2026-03-12", ended.Date)
+	require.Empty(t, ended.EndDate)
 	coarse := value["month_only"].([]any)[0].(map[string]any)["when"].(map[string]any)
 	require.Equal(t, "2026-03", coarse["period"])
 	require.NotContains(t, coarse, "day")
