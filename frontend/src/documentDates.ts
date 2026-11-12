@@ -71,20 +71,24 @@ function formatClock(
     .join("");
 }
 
-export function formatWhen(
-  when: WhenV1 & { end_date?: string },
-  zone: TimelineZone,
-  locale = "en-US",
-) {
-  const floating = when.state === "floating";
-  // Civil dates and periods carry no zone, so they get no zone note.
-  const zoneNote = floating
+// Civil dates and periods carry no zone, so they get no zone note.
+function sourceZoneNote(when: WhenV1): string {
+  return when.state === "floating"
     ? "floating (no zone)"
     : when.state !== "exact"
       ? ""
       : when.zone_state === "unknown"
         ? "source zone not recorded"
         : when.source_zone || "source zone not recorded";
+}
+
+export function formatWhen(
+  when: WhenV1 & { end_date?: string },
+  zone: TimelineZone,
+  locale = "en-US",
+) {
+  const floating = when.state === "floating";
+  const zoneNote = sourceZoneNote(when);
   if (when.state === "exact") {
     if (!zone?.supported)
       return {
@@ -144,8 +148,8 @@ export function formatWhen(
   return { value: floating ? `${value} (no zone)` : value, zoneNote, floating };
 }
 
-export function claimMeta(claim: VersionDateClaim, zone: TimelineZone): string {
-  const { zoneNote } = formatWhen(claim.when, zone);
+export function claimMeta(claim: VersionDateClaim, _zone: TimelineZone): string {
+  const zoneNote = sourceZoneNote(claim.when);
   return [
     claimBasisLabel(claim),
     precisionLabel(claim.when.precision),
