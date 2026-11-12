@@ -33,6 +33,10 @@
   import { basename, formatBytes, formatDate } from "./format.js";
   import IconAction from "./IconAction.svelte";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import InspectorDates from "./InspectorDates.svelte";
+  import InspectorPeople from "./InspectorPeople.svelte";
+  import type { DocumentFacts } from "./documentFacts.svelte.js";
+  import type { TimelineZone } from "./timelineConfig.js";
 
   let {
     node,
@@ -66,6 +70,9 @@
     onhistory,
     ontags,
     onremovetag,
+    facts,
+    timelineZone,
+    onperson,
   }: {
     node?: Node;
     path: string;
@@ -98,6 +105,9 @@
     onhistory: () => void;
     ontags?: () => void;
     onremovetag?: (tag: Tag) => void;
+    facts?: DocumentFacts;
+    timelineZone?: TimelineZone;
+    onperson?: (id: string) => void;
   } = $props();
   let pdfMetadata = $state<api.SourceMetadata>();
   $effect(() => {
@@ -199,6 +209,13 @@
   }
   const name = $derived(snapshot?.name ?? basename(path));
   const kind = $derived(snapshot ? "file" : (node?.kind ?? "file"));
+  // Dates and people belong to the exact version shown: the live current
+  // version, or the frozen row's saved content_version_id.
+  const factVersion = $derived(kind === "file" ? source?.versionID : undefined);
+  $effect(() => {
+    if (facts && factVersion) return facts.retain(factVersion);
+  });
+  const factRead = $derived(facts && factVersion ? facts.get(factVersion) : undefined);
   // A result shows what it saved beside what the document is now only when they differ.
   const diverged = $derived.by(() => {
     if (!snapshot) return false;
@@ -316,6 +333,18 @@
         </section>{/if}
     {:else}
       {@render currentTags()}
+    {/if}
+    {#if facts && factVersion && factRead}
+      <InspectorDates
+        read={factRead.dates}
+        zone={timelineZone}
+        onretry={() => facts.retry(factVersion, "dates")}
+      />
+      <InspectorPeople
+        read={factRead.people}
+        onperson={(id) => onperson?.(id)}
+        onretry={() => facts.retry(factVersion, "people")}
+      />
     {/if}
     {#if pdfAvailable}
       <TechnicalDetails summary="Security" open={pdfFlagged} facts={pdfRows} />

@@ -14,6 +14,19 @@ const kindLabels: Record<string, string> = {
   authored: "Authored",
   document_date: "Document date",
   vault_recorded: "Recorded in vault",
+  sent: "Sent",
+  received: "Received",
+  created: "Created",
+  modified: "Modified",
+  captured: "Captured",
+  started: "Started",
+  ended: "Ended",
+  printed: "Printed",
+  accessed: "Accessed",
+  produced: "Produced",
+  exported: "Exported",
+  imported: "Imported",
+  observed: "Observed",
 };
 export const precisionLabel = (p: string) => precisionLabels[p] ?? p;
 export const dateKindLabel = (k: string) => kindLabels[k] ?? k;
@@ -37,11 +50,14 @@ export function formatWhen(
   locale = "en-US",
 ) {
   const floating = when.state === "floating";
+  // Civil dates and periods carry no zone, so they get no zone note.
   const zoneNote = floating
     ? "floating (no zone)"
-    : when.zone_state === "unknown"
-      ? "source zone not recorded"
-      : when.source_zone || "source zone not recorded";
+    : when.state !== "exact"
+      ? ""
+      : when.zone_state === "unknown"
+        ? "source zone not recorded"
+        : when.source_zone || "source zone not recorded";
   if (when.state === "exact") {
     if (!zone?.supported)
       return {
@@ -89,5 +105,7 @@ export function claimMeta(claim: VersionDateClaim, zone: TimelineZone): string {
       ? "Docbank observed"
       : claim.claim_basis.replaceAll("_", " "),
     zoneNote,
-  ].join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import type { Attachment } from "svelte/attachments";
 import { APIError } from "./api-transport.js";
 import {
@@ -10,6 +11,7 @@ import {
 export type FactRead<T> = { status: "idle" | "loading" | "ready" | "error"; value?: T };
 type Resource = "dates" | "people";
 type Facts = { dates: FactRead<VersionDates>; people: FactRead<VersionPeople> };
+const idle: Facts = { dates: { status: "idle" }, people: { status: "idle" } };
 type Entry = {
   facts: Facts;
   rows: number;
@@ -23,7 +25,7 @@ export class DocumentFacts {
   private values = $state<Record<string, Facts>>({});
   private entries = new Map<string, Entry>();
   private elements = new Map<Element, { id: string; visible: boolean }>();
-  private observer: IntersectionObserver;
+  private observer?: IntersectionObserver;
   private active = 0;
   private stopped = false;
 
@@ -31,59 +33,73 @@ export class DocumentFacts {
     private session: string,
     private onauthfailure: (cause: unknown) => void,
   ) {
-    this.observer = new IntersectionObserver((changes) => {
-      for (const change of changes) {
-        const row = this.elements.get(change.target);
-        if (!row || row.visible === change.isIntersecting) continue;
-        row.visible = change.isIntersecting;
-        this.interest(row.id, "rows", change.isIntersecting ? 1 : -1);
-      }
+    // Without IntersectionObserver no row is ever visible, so rows fetch nothing.
+    if (typeof IntersectionObserver === "function")
+      this.observer = new IntersectionObserver((changes) => {
+        for (const change of changes) {
+          const row = this.elements.get(change.target);
+          if (!row || row.visible === change.isIntersecting) continue;
+          row.visible = change.isIntersecting;
+          this.interest(row.id, "rows", change.isIntersecting ? 1 : -1);
+        }
+        this.pump();
+      });
+  }
+
+  // Reading never creates state, so templates and deriveds may call it.
+  get(versionID: string): Facts {
+    return this.values[versionID] ?? idle;
+  }
+
+  // Effects call retain; untrack keeps the read statuses out of their dependencies.
+  retain(versionID: string): () => void {
+    untrack(() => {
+      this.interest(versionID, "retained", 1);
       this.pump();
     });
-  }
-
-  get(versionID: string): Facts {
-    return this.entry(versionID).facts;
-  }
-
-  retain(versionID: string): () => void {
-    this.interest(versionID, "retained", 1);
-    this.pump();
     let released = false;
     return () => {
       if (!released) {
         released = true;
-        this.interest(versionID, "retained", -1);
-        this.pump();
+        untrack(() => {
+          this.interest(versionID, "retained", -1);
+          this.pump();
+        });
       }
     };
   }
 
   observeRow(versionID: string | undefined): Attachment<HTMLElement> {
     return (element) => {
-      if (!versionID || this.stopped) return;
+      const observer = this.observer;
+      if (!versionID || this.stopped || !observer) return;
       const row = { id: versionID, visible: false };
+      untrack(() => this.entry(versionID));
       this.elements.set(element, row);
-      this.observer.observe(element);
+      observer.observe(element);
       return () => {
-        this.observer.unobserve(element);
+        observer.unobserve(element);
         this.elements.delete(element);
-        if (row.visible) this.interest(versionID, "rows", -1);
-        this.pump();
+        untrack(() => {
+          if (row.visible) this.interest(versionID, "rows", -1);
+          this.pump();
+        });
       };
     };
   }
 
   retry(versionID: string, resource: Resource): void {
-    const entry = this.entry(versionID);
-    if (entry.facts[resource].status === "error") entry.facts[resource] = { status: "idle" };
-    this.pump();
+    untrack(() => {
+      const entry = this.entry(versionID);
+      if (entry.facts[resource].status === "error") entry.facts[resource] = { status: "idle" };
+      this.pump();
+    });
   }
 
   dispose(): void {
     if (this.stopped) return;
     this.stopped = true;
-    this.observer.disconnect();
+    this.observer?.disconnect();
     this.elements.clear();
     for (const entry of this.entries.values())
       for (const controller of Object.values(entry.controllers)) controller.abort();

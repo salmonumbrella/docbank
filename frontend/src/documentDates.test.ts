@@ -33,6 +33,10 @@ it("keeps floating and civil dates independent of the configured zone", () => {
 it("labels known precision and date kinds", () => {
   expect(precisionLabel("fraction")).toBe("to the second");
   expect(dateKindLabel("vault_recorded")).toBe("Recorded in vault");
+  expect(dateKindLabel("captured")).toBe("Captured");
+  expect(
+    formatWhen(when({ state: "date", precision: "date", date: "2026-03-10" }), undefined).zoneNote,
+  ).toBe("");
   expect(dateKindLabel("other")).toBe("other");
 });
 
