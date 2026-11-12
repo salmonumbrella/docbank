@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"reflect"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
@@ -90,13 +91,13 @@ func (c *Connection) TaxRecord(ctx context.Context, id string, reveal bool) (api
 	if err != nil {
 		return out, safeTaxError(err)
 	}
-	data, err := readTaxReceiptLimit(ctx, response, false, append(append([]string{}, recordFields...), "events", "balance"), recordNullable, maxTaxReceiptBytes)
+	data, err := readTaxReceiptLimit(ctx, response, false, append(append([]string{}, recordFields...), "events", "balance", "documents", "evidence"), recordNullable, maxTaxReceiptBytes)
 	if err != nil {
 		return out, safeTaxError(err)
 	}
 	var raw map[string]jsontext.Value
-	var events []jsontext.Value
-	if json.Unmarshal(data, &raw) != nil || !taxMembers(raw["balance"], []string{"outstanding_minor", "currency", "other_currency_events"}, map[string]bool{"outstanding_minor": true}) || json.Unmarshal(raw["events"], &events) != nil || events == nil || json.Unmarshal(data, &out) != nil {
+	var events, documents, unmet []jsontext.Value
+	if json.Unmarshal(data, &raw) != nil || !taxMembers(raw["balance"], []string{"outstanding_minor", "currency", "other_currency_events"}, map[string]bool{"outstanding_minor": true}) || json.Unmarshal(raw["events"], &events) != nil || events == nil || json.Unmarshal(raw["documents"], &documents) != nil || documents == nil || !taxMembers(raw["evidence"], []string{"state", "unmet"}, nil) || json.Unmarshal(data, &out) != nil {
 		return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
 	}
 	if _, err = validateTaxRecordResponse(&out.TaxRecord, response, id); err != nil {
@@ -112,7 +113,7 @@ func (c *Connection) TaxRecord(ctx context.Context, id string, reveal bool) (api
 		}
 		previous = e.RecordRevision
 		seen[e.EventID] = true
-		facts = append(facts, taxrecord.EventFact{Kind: e.Kind, OccurredOn: e.OccurredOn, SetsState: e.SetsState, AmountMinor: e.AmountMinor, Currency: e.Currency, Note: e.Note, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
+		facts = append(facts, taxrecord.EventFact{EventID: e.EventID, Kind: e.Kind, OccurredOn: e.OccurredOn, SetsState: e.SetsState, AmountMinor: e.AmountMinor, Currency: e.Currency, Note: e.Note, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
 	}
 	state, err := taxrecord.StateFromEvents(out.Kind, facts)
 	if err != nil || state != out.State {
@@ -121,6 +122,32 @@ func (c *Connection) TaxRecord(ctx context.Context, id string, reveal bool) (api
 	balance, err := taxrecord.CalculateBalance(taxrecord.RecordValues{Direction: out.Direction, AmountMinor: out.AmountMinor, Currency: out.Currency}, facts)
 	if err != nil || balance.Currency != out.Balance.Currency || balance.OtherCurrencyEvents != out.Balance.OtherCurrencyEvents || (balance.OutstandingMinor == nil) != (out.Balance.OutstandingMinor == nil) || (balance.OutstandingMinor != nil && *balance.OutstandingMinor != *out.Balance.OutstandingMinor) {
 		return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
+	}
+	var evidenceRaw map[string]jsontext.Value
+	if json.Unmarshal(raw["evidence"], &evidenceRaw) != nil || json.Unmarshal(evidenceRaw["unmet"], &unmet) != nil || unmet == nil {
+		return api.TaxRecordDetail{}, safeTaxError(invalidDocumentReceipt())
+	}
+	links := make([]taxrecord.EvidenceLink, 0, len(documents))
+	var previousLink string
+	for i, document := range out.Documents {
+		if !taxMembers(documents[i], documentFields, documentNullable) || !validTaxDocument(document, id) || document.LinkID <= previousLink {
+			return api.TaxRecordDetail{}, safeTaxError(invalidDocumentReceipt())
+		}
+		previousLink = document.LinkID
+		links = append(links, taxrecord.EvidenceLink{Role: document.Role, EventID: document.EventID, Live: document.Live})
+	}
+	for _, requirement := range unmet {
+		if !taxMembers(requirement, []string{"requires", "event_id"}, map[string]bool{"event_id": true}) {
+			return api.TaxRecordDetail{}, safeTaxError(invalidDocumentReceipt())
+		}
+	}
+	expected := taxrecord.EvaluateEvidence(facts, links)
+	got := make([]taxrecord.EvidenceRequirement, 0, len(out.Evidence.Unmet))
+	for _, r := range out.Evidence.Unmet {
+		got = append(got, taxrecord.EvidenceRequirement{Requires: r.Requires, EventID: r.EventID})
+	}
+	if out.Evidence.State != expected.State || !reflect.DeepEqual(got, expected.Unmet) {
+		return api.TaxRecordDetail{}, safeTaxError(invalidDocumentReceipt())
 	}
 	return out, nil
 }

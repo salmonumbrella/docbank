@@ -151,3 +151,9 @@ returns complete references. Empty references stay empty; masking follows the
 account identifier rule. Events and records share a revision: advance, add and
 void inspect once unless `--revision` is supplied, then send one fenced write
 without retry. Retired records are read-only. Document evidence is not available.
+
+## Link documents and inspect evidence
+
+Attach an existing file to a record with `docbank tax link add RECORD_ID --node-id NODE_ID --role return`. Roles are `return`, `assessment`, `settlement`, `source`, `working_paper`, `correspondence`, `registration` and `other`. Add `--event-id EVENT_ID` to associate a link with an event; a settlement link must name its payment or refund to satisfy that event. Add `--content-version-id VERSION_ID` to pin the exact version and its copied hash. `docbank tax link remove RECORD_ID LINK_ID` retires the link. These writes use the record revision fence, and audited vaults refuse them like other tax writes.
+
+Record detail lists links, their current path and evidence gaps. A link is live while it is unretired and its file exists outside trash. A pin is intact while that exact version still belongs to the file and matches its recorded hash. Pruning a pinned version leaves a live link that satisfies evidence, but marks it not intact. Trash makes it non-live and reserves its duplicate slot; restore can make it live again. Purge leaves a dangling link and frees its slot. Reimporting equal bytes does not reconnect it. Moving or renaming a file changes its path without changing the tax revision. Retired links remain in history. Return and assessment evidence are required once per surviving claim; each surviving payment or refund needs its own settlement link. Event references remain masked unless detail explicitly requests reveal.

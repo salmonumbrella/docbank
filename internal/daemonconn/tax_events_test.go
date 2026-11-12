@@ -24,7 +24,7 @@ func TestTaxEventClientContracts(t *testing.T) {
 		w.Header().Set("ETag", `"2"`)
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "true", r.URL.Query().Get("reveal"))
-		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + eventFixture + `],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`))
+		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + eventFixture + `],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0},"documents":[],"evidence":{"state":"not_applicable","unmet":[]}}`))
 	}))
 	t.Cleanup(server.Close)
 	c := New(server.URL, "")
@@ -117,7 +117,7 @@ func TestTaxCashDetailRejectsWrongBalance(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("ETag", `"2"`)
-			_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + event + `],"balance":{"outstanding_minor":` + amount + `,"currency":"USD","other_currency_events":0}}`))
+			_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + event + `],"balance":{"outstanding_minor":` + amount + `,"currency":"USD","other_currency_events":0},"documents":[],"evidence":{"state":"missing","unmet":[{"requires":"settlement","event_id":"33333333-3333-4333-8333-333333333333"}]}}`))
 		}))
 		detail, err := New(server.URL, "").TaxRecord(t.Context(), id, false)
 		if amount == "113400" {

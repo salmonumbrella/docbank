@@ -1,8 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/taxrecord"
+	"strings"
 	"testing"
 )
 
@@ -38,3 +41,170 @@ func checkTaxDocumentLinksLifecycle(t *testing.T, open func(*testing.T) *Store) 
 	assert.Equal(t, "missing", d.Evidence.State)
 }
 func TestTaxDocumentLinksLifecycle(t *testing.T) { checkTaxDocumentLinksLifecycle(t, newTestStore) }
+
+func TestTaxDocumentLifecycleEvidence(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	filed, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
+	require.NoError(t, err)
+	n, err := s.CreateFile(ctx, s.RootID(), "synthetic.txt", fakeHash("a2"), 1, "text/plain")
+	require.NoError(t, err)
+	linked, err := s.LinkTaxDocument(ctx, r.RecordID, filed.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return", ContentVersionID: &n.CurrentVersionID})
+	require.NoError(t, err)
+	moved, _, err := s.Move(ctx, n.ID, s.RootID(), "renamed.txt", n.Revision)
+	require.NoError(t, err)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	require.Len(t, d.Documents, 1)
+	assert.Equal(t, new("/renamed.txt"), d.Documents[0].Path)
+	assert.True(t, d.Documents[0].Intact)
+	assert.Equal(t, linked.Record.Revision, d.Record.Revision)
+	trashed, _, err := s.Trash(ctx, moved.ID, moved.Revision)
+	require.NoError(t, err)
+	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.False(t, d.Documents[0].Live)
+	assert.Nil(t, d.Documents[0].Path)
+	assert.Equal(t, "missing", d.Evidence.State)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, linked.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return"})
+	require.Error(t, err)
+	_, _, err = s.Restore(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.True(t, d.Documents[0].Live)
+	assert.Equal(t, "complete", d.Evidence.State)
+	assert.Equal(t, linked.Record.Revision, d.Record.Revision)
+}
+func TestTaxDocumentMetadataRoundTrip(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "evidence.txt", fakeHash("a3"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source"})
+	require.NoError(t, err)
+	var data bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &data))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(data.Bytes())))
+	var restored bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &restored))
+	assert.Equal(t, data.String(), restored.String())
+}
+
+func checkTaxDocumentEvidenceAndDuplicates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	party, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Synthetic slots", Own: true})
+	require.NoError(t, err)
+	r, err := s.CreateTaxRecord(ctx, TaxRecordInput{FilerPartyID: &party.PartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "filing", Title: "Slots"})
+	require.NoError(t, err)
+	n, err := s.CreateFile(ctx, s.RootID(), "slots.txt", fakeHash("a4"), 1, "text/plain")
+	require.NoError(t, err)
+	e, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"})
+	require.NoError(t, err)
+	first, err := s.LinkTaxDocument(ctx, r.RecordID, e.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source"})
+	require.NoError(t, err)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, first.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source", ContentVersionID: &n.CurrentVersionID})
+	require.ErrorIs(t, err, ErrExists)
+	second, err := s.LinkTaxDocument(ctx, r.RecordID, first.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source", EventID: &e.Event.EventID})
+	require.NoError(t, err)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, second.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source", EventID: &e.Event.EventID})
+	require.ErrorIs(t, err, ErrExists)
+	removed, err := s.RetireTaxDocument(ctx, r.RecordID, first.Document.LinkID, second.Record.Revision)
+	require.NoError(t, err)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, removed.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source"})
+	require.NoError(t, err)
+}
+func TestTaxDocumentDuplicateNullableSlots(t *testing.T) {
+	checkTaxDocumentEvidenceAndDuplicates(t, newTestStore)
+}
+func TestTaxDocumentLinkRevisionAndRelations(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "one.txt", fakeHash("a5"), 1, "text/plain")
+	require.NoError(t, err)
+	other, err := s.CreateFile(ctx, s.RootID(), "two.txt", fakeHash("a6"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision+1, TaxDocumentInput{NodeID: n.ID, Role: "return"})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return", ContentVersionID: &other.CurrentVersionID})
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	bad := "11111111-1111-4111-8111-111111111111"
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return", EventID: &bad})
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, r.Revision, d.Record.Revision)
+	assert.Empty(t, d.Documents)
+}
+
+func TestTaxDocumentPruneAndPurge(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	filed, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
+	require.NoError(t, err)
+	n, err := s.CreateFile(ctx, s.RootID(), "prune.txt", fakeHash("a7"), 1, "text/plain")
+	require.NoError(t, err)
+	original := n.CurrentVersionID
+	linked, err := s.LinkTaxDocument(ctx, r.RecordID, filed.Record.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return", ContentVersionID: &original})
+	require.NoError(t, err)
+	n, _, err = s.ReplaceContent(ctx, n.ID, n.Revision, fakeHash("a8"), 1, "text/plain")
+	require.NoError(t, err)
+	pruned, err := s.PruneContentVersions(ctx, n.ID, n.Revision, VersionPruneSelector{VersionIDs: []string{original}}, true)
+	require.NoError(t, err)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	require.Len(t, d.Documents, 1)
+	assert.True(t, d.Documents[0].Live)
+	assert.True(t, d.Documents[0].Pinned)
+	assert.False(t, d.Documents[0].Intact)
+	assert.Equal(t, "complete", d.Evidence.State)
+	assert.Equal(t, linked.Record.Revision, d.Record.Revision)
+	trashed, _, err := s.Trash(ctx, n.ID, pruned.Node.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Nil(t, d.Documents[0].NodeID)
+	assert.Equal(t, &original, d.Documents[0].ContentVersionID)
+	assert.False(t, d.Documents[0].Live)
+	assert.Equal(t, "missing", d.Evidence.State)
+	assert.Equal(t, linked.Record.Revision, d.Record.Revision)
+	_ = trashed
+}
+func TestTaxDocumentMetadataInvalidRollback(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "invalid.txt", fakeHash("a9"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source"})
+	require.NoError(t, err)
+	var data bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &data))
+	bad := strings.Replace(data.String(), `"role":"source"`, `"role":"invented"`, 1)
+	require.NotEqual(t, data.String(), bad)
+	target := newTestStore(t)
+	require.Error(t, target.ImportMetadata(ctx, strings.NewReader(bad)))
+	_, err = target.GetTaxRecord(ctx, r.RecordID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestTaxDocumentExportRejectsCorruptPin(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	n, err := s.CreateFile(ctx, s.RootID(), "pin.txt", fakeHash("aa"), 1, "text/plain")
+	require.NoError(t, err)
+	link, err := s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "source", ContentVersionID: &n.CurrentVersionID})
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE tax_record_documents SET content_sha256=$1 WHERE link_id=$2`, fakeHash("bb"), link.Document.LinkID)
+	require.NoError(t, err)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.False(t, d.Documents[0].Intact)
+	var out bytes.Buffer
+	require.Error(t, s.ExportMetadata(ctx, &out))
+	assert.Zero(t, out.Len())
+}

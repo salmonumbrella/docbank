@@ -794,7 +794,7 @@ references, and active-name uniqueness. Audited vaults refuse party mutations.
 
 ### Tax authority
 
-Schema 50 stores tax accounts and records; schema 51 adds dated events. An
+Schema 50 stores tax accounts and records; schema 51 adds dated events; schema 52 adds document links. Link liveness and evidence are derived from current node and version authority, while dangling and pruned links remain in metadata. An
 advance or note appends an event and advances its parent revision atomically.
 Voiding retains the event and reason and recalculates state from the latest
 non-void state event by append revision, not occurrence date. Account and

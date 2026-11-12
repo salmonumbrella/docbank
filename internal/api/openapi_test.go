@@ -1062,3 +1062,35 @@ func TestTaxEventOpenAPIContract(t *testing.T) {
 	assert.Contains(t, detail.Properties, "balance")
 	assert.Nil(t, doc.Paths["/api/v1/tax/records/{record_id}/events/{event_id}"])
 }
+
+func TestTaxDocumentOpenAPIContract(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	for _, tc := range []struct{ path, id, status string }{
+		{"/api/v1/tax/records/{record_id}/documents", "linkTaxDocument", "201"},
+		{"/api/v1/tax/records/{record_id}/documents/{link_id}/retire", "retireTaxDocument", "200"},
+	} {
+		item := doc.Paths[tc.path]
+		require.NotNil(t, item)
+		require.NotNil(t, item.Post)
+		assert.Equal(t, tc.id, item.Post.OperationID)
+		assert.Contains(t, item.Post.Responses, tc.status)
+		found := false
+		for _, p := range item.Post.Parameters {
+			if p.In == "header" && p.Name == "If-Match" {
+				found = p.Required
+			}
+			assert.NotEqual(t, "reveal", p.Name)
+		}
+		assert.True(t, found)
+	}
+	detail := doc.Components.Schemas.Map()["TaxRecordDetail"]
+	require.NotNil(t, detail)
+	assert.Contains(t, detail.Properties, "documents")
+	assert.Contains(t, detail.Properties, "evidence")
+	request := doc.Components.Schemas.Map()["LinkTaxDocumentRequest"]
+	require.NotNil(t, request)
+	assert.Contains(t, request.Required, "node_id")
+	assert.Contains(t, request.Required, "role")
+	assert.NotContains(t, request.Properties, "content_sha256")
+	assert.NotContains(t, request.Properties, "recorded_at")
+}

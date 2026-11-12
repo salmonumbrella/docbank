@@ -571,6 +571,7 @@ GRANT INSERT, UPDATE(filer_party_id, authority_party_id, title, country, subdivi
     lead_days, state, direction, amount_minor, currency, note, revision, updated_at, retired_at)
     ON documents.tax_records TO docbank_runtime;
 GRANT INSERT, UPDATE(voided_at, void_reason) ON documents.tax_events TO docbank_runtime;
+GRANT INSERT, UPDATE(retired_at) ON documents.tax_record_documents TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
 GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
     display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;

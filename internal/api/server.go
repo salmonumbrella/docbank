@@ -427,6 +427,8 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/tax/records/{record_id}/advance", http.MethodPost},
 		{"/api/v1/tax/records/{record_id}/events", http.MethodPost},
 		{"/api/v1/tax/records/{record_id}/events/{event_id}/void", http.MethodPost},
+		{"/api/v1/tax/records/{record_id}/documents", http.MethodPost},
+		{"/api/v1/tax/records/{record_id}/documents/{link_id}/retire", http.MethodPost},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

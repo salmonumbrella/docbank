@@ -26,13 +26,13 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"period_note", "b"}, {"due_note", "b"}, {"lead_days", "b"}, {taxCurrencyField, "b"},
 	{"effective_start", "b"}, {"effective_end", "b"}, {taxNoteField, "b"}, {"filer", "q"},
 	{"taxkind", "q"}, {"include_retired", "q"}, {packageLimitParameter, "q"}, {"offset", "q"},
-	{"reveal", "q"}, {"account_id", "b"},
+	{"reveal", "q"}, {"account_id", "b"}, {"node_id", "b"}, {"event_id", "b"}, {"content_version_id", "b"}, {"role", "b"}, {"link_id", "p"},
 	{"title", "b"}, {"kind", "bq"}, {"form_code", "b"}, {"tax_year", "b"},
 	{"period_start", "b"}, {"period_end", "b"}, {"due_date", "b"},
 	{"direction", "b"}, {taxAmountField, "b"}, {"state", "bq"}, {"year", "q"}, {"record_id", "p"}, {"event_id", "p"}, {"occurred_on", "b"}, {"reference", "b"}, {"reason", "b"},
 }
 var taxDiagnosticPairs = map[string]string{
-	"invalid value": "filer", "required": "filer_party_id",
+	"invalid value": "filer node_id event_id content_version_id", "required": "filer_party_id",
 	"invalid length or text": "country subdivision currency tax_kind identifier period_note due_note note title form_code reference reason",
 	"control character":      "tax_kind identifier period_note due_note note title form_code reference reason",
 	"invalid country":        "country", "invalid subdivision": "subdivision", "invalid currency": taxCurrencyField,
@@ -45,6 +45,7 @@ var taxDiagnosticPairs = map[string]string{
 	"amount required when currency changes": taxAmountField, "amount required": taxAmountField, "zero required": taxAmountField,
 	"unknown amount must be null": taxAmountField, "invalid length": taxAmountField, "invalid precision": taxAmountField,
 	"invalid decimal or overflow": taxAmountField, "overflow": taxAmountField, "invalid cash sum": taxAmountField,
+	"unknown role": "role", "invalid pin": "content_version_id content_sha256",
 	"unsupported event": "kind state", "requires amount": taxCurrencyField, "unsupported amount": taxAmountField,
 }
 

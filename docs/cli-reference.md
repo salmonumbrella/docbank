@@ -124,6 +124,8 @@ docbank tax record retire <record-id> [--revision N] [--json]
 docbank tax record advance <record-id> --state STATE --occurred-on DATE [flags]
 docbank tax event add <record-id> --kind note|payment|refund --occurred-on DATE [--amount AMOUNT --currency CODE] [flags]
 docbank tax event void <record-id> <event-id> --reason REASON [--revision N] [--json]
+docbank tax link add <record-id> --node-id ID --role ROLE [--event-id ID] [--content-version-id ID] [--form-code CODE] [--note NOTE] [--revision N] [--json]
+docbank tax link remove <record-id> <link-id> [--revision N] [--json]
 ```
 
 Add accepts `--account`, `--filer`, `--authority`,

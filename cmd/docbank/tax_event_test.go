@@ -31,7 +31,7 @@ func TestTaxCLIEventRevision(t *testing.T) {
 				if r.Method == http.MethodGet {
 					reads++
 					w.Header().Set("ETag", `"1"`)
-					_, _ = w.Write([]byte(strings.TrimSuffix(taxRecordTestReceipt, "}") + `,"events":[],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`))
+					_, _ = w.Write([]byte(strings.TrimSuffix(taxRecordTestReceipt, "}") + `,"events":[],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0},"documents":[],"evidence":{"state":"not_applicable","unmet":[]}}`))
 					return
 				}
 				writes++
@@ -59,7 +59,7 @@ func TestTaxCLIEventReveal(t *testing.T) {
 			e = strings.Replace(e, "****1234", "private-synthetic-1234", 1)
 		}
 		record := strings.Replace(strings.Replace(taxRecordTestReceipt, `"revision":1`, `"revision":2`, 1), `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"2026-01-01T00:00:00Z"`, 1)
-		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + e + `],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`))
+		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + e + `],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0},"documents":[],"evidence":{"state":"not_applicable","unmet":[]}}`))
 	})
 	out, err := runCLI(t, "tax", "record", "show", id)
 	require.NoError(t, err)
@@ -125,7 +125,11 @@ func TestTaxCLICashRefundVoidAndPrivacy(t *testing.T) {
 			event = strings.Replace(event, "****1234", secret, 1)
 		}
 		w.Header().Set("ETag", fmt.Sprintf(`"%d"`, revision))
-		_, _ = w.Write([]byte(strings.TrimSuffix(parent, "}") + `,"events":[` + event + `,` + refund + `],"balance":{"outstanding_minor":` + strconv.Itoa(amount) + `,"currency":"USD","other_currency_events":1}}`))
+		missing := `{"requires":"settlement","event_id":"` + refundID + `"}`
+		if !voided {
+			missing = `{"requires":"settlement","event_id":"` + payID + `"},` + missing
+		}
+		_, _ = w.Write([]byte(strings.TrimSuffix(parent, "}") + `,"events":[` + event + `,` + refund + `],"balance":{"outstanding_minor":` + strconv.Itoa(amount) + `,"currency":"USD","other_currency_events":1},"documents":[],"evidence":{"state":"missing","unmet":[` + missing + `]}}`))
 	})
 	out, err := runCLI(t, "tax", "event", "add", id, "--kind", "payment", "--occurred-on", "2026-01-01", "--amount", "100.00", "--currency", "USD", "--reference", secret, "--revision", "1")
 	require.NoError(t, err)

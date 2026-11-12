@@ -80,7 +80,13 @@ func (s *Store) LinkTaxDocument(ctx context.Context, id string, revision int64, 
 			return ErrTaxRetired
 		}
 		n, err := nodeByIDTx(ctx, tx, in.NodeID)
-		if err != nil || n.Kind != nodeKindFile || n.TrashedAt != nil {
+		if errors.Is(err, ErrNotFound) {
+			return &taxrecord.FieldError{Field: "node_id", Reason: "invalid value"}
+		}
+		if err != nil {
+			return err
+		}
+		if n.Kind != nodeKindFile || n.TrashedAt != nil {
 			return &taxrecord.FieldError{Field: "node_id", Reason: "invalid value"}
 		}
 		v := taxrecord.DocumentValues{EventID: in.EventID, ContentVersionID: in.ContentVersionID, Role: in.Role, FormCode: in.FormCode, Note: in.Note}
@@ -110,7 +116,11 @@ func (s *Store) LinkTaxDocument(ctx context.Context, id string, revision int64, 
 			return err
 		}
 		var exists bool
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_record_documents WHERE record_id=$1 AND node_id=$2 AND role=$3 AND retired_at IS NULL AND ((event_id IS NULL AND $4 IS NULL) OR event_id=$4))`, id, n.ID, v.Role, v.EventID).Scan(&exists)
+		if v.EventID == nil {
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_record_documents WHERE record_id=$1 AND node_id=$2 AND role=$3 AND retired_at IS NULL AND event_id IS NULL)`, id, n.ID, v.Role).Scan(&exists)
+		} else {
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_record_documents WHERE record_id=$1 AND node_id=$2 AND role=$3 AND retired_at IS NULL AND event_id=$4)`, id, n.ID, v.Role, *v.EventID).Scan(&exists)
+		}
 		if err != nil {
 			return err
 		}

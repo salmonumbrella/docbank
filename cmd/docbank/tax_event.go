@@ -20,7 +20,18 @@ func printTaxRecordDetail(cmd *cobra.Command, d api.TaxRecordDetail) error {
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "outstanding minor: %v\tcurrency: %s\tother currency events: %d\n", taxValue(d.Balance.OutstandingMinor), d.Balance.Currency, d.Balance.OtherCurrencyEvents); err != nil {
 		return fmt.Errorf("print tax balance: %w", err)
 	}
-	return printTaxEvents(cmd, d.Events)
+	if err := printTaxEvents(cmd, d.Events); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "evidence: %s\n", d.Evidence.State); err != nil {
+		return err
+	}
+	for _, missing := range d.Evidence.Unmet {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "missing: %s\tevent: %v\n", missing.Requires, taxValue(missing.EventID)); err != nil {
+			return err
+		}
+	}
+	return printTaxDocuments(cmd, d.Documents)
 }
 func printTaxEvents(cmd *cobra.Command, events []api.TaxEvent) error {
 	for _, e := range events {
