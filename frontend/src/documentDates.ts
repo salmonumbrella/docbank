@@ -85,7 +85,9 @@ export function claimMeta(claim: VersionDateClaim, zone: TimelineZone): string {
   return [
     claimBasisLabel(claim),
     precisionLabel(claim.when.precision),
-    claim.claim_basis.replaceAll("_", " "),
+    claim.claim_basis === "docbank_observed"
+      ? "Docbank observed"
+      : claim.claim_basis.replaceAll("_", " "),
     zoneNote,
   ].join(" · ");
 }
