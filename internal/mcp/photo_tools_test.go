@@ -402,8 +402,7 @@ func TestPhotoMCPCreateUsesDaemonRouteAndReturnsTimestamps(t *testing.T) {
 	result, err := executePhotoWriteTool(t.Context(), lease, "create_photo_asset", validator,
 		[]byte(`{"node_id":7,"role":"raw"}`))
 	require.NoError(t, err)
-	structured, ok := result.StructuredContent.(map[string]any)
-	require.True(t, ok)
+	structured := structuredMap(t, result.StructuredContent)
 	assert.Equal(t, createdAt, structured["created_at"])
 	assert.Equal(t, createdAt, structured["updated_at"])
 	assert.Equal(t, map[string]any{"rating": false, "flag": true}, structured["agreement"])
