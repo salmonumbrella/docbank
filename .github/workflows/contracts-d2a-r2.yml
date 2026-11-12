@@ -1,0 +1,194 @@
+name: Contracts D2a exact-source checkpoint
+on:
+  push:
+    branches: [ci/contracts-d2a-r2-2fdf41ace]
+permissions:
+  contents: read
+jobs:
+  checkpoint:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - name: Render integrated API without generated client dependency
+        id: render
+        run: |
+          cp internal/api/openapi.yaml /tmp/import-openapi.yaml
+          cp internal/apiclient/client.gen.go /tmp/import-client.go
+          cp frontend/src/generated/docbank.ts /tmp/import-client.ts
+          cp frontend/src/generated/photoSourceExtensions.ts /tmp/import-photo.ts
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+              "os"
+              "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+              out, err := api.OpenAPIYAML()
+              if err != nil { panic(err) }
+              if _, err := os.Stdout.Write(out); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi > internal/api/openapi.yaml
+          make generate-photo-policy
+          go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+          npm --prefix frontend run generate:api
+          cmp /tmp/import-openapi.yaml internal/api/openapi.yaml
+          cmp /tmp/import-client.go internal/apiclient/client.gen.go
+          cmp /tmp/import-client.ts frontend/src/generated/docbank.ts
+          cmp /tmp/import-photo.ts frontend/src/generated/photoSourceExtensions.ts
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: contracts-d2a-generated-2fdf41ace-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts
+      - name: CGO 1 API provider daemon and CLI
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 1
+        run: go test -v -tags fts5 ./internal/docusealclient ./internal/api ./internal/daemonconn ./cmd/docbank -run 'Signature|Submission|TestEnsureDiscoveryRejectsProtocolMismatch'
+      - name: CGO 1 service cancellation
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 1
+        run: go test -v -tags fts5 ./internal/contractsign -run '^TestSignature(CancellationSettlesAfterCallerCancellation|RequestRejectsCaseCollidingTemplateRoles)$'
+      - name: CGO 1 store and SQLite parity
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go test -v -tags fts5 ./internal/store -run 'TestSignature|TestBackendContractsSQLite/organization/Signature'
+          go test -v -tags fts5 ./internal/store -run '^TestBackendContractsSQLite/metadata-export/MetadataExportRecovery'
+      - name: CGO 0 API provider daemon and CLI
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 0
+        run: go test -v -tags fts5 ./internal/docusealclient ./internal/api ./internal/daemonconn ./cmd/docbank -run 'Signature|Submission|TestEnsureDiscoveryRejectsProtocolMismatch'
+      - name: CGO 0 service cancellation
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 0
+        run: go test -v -tags fts5 ./internal/contractsign -run '^TestSignature(CancellationSettlesAfterCallerCancellation|RequestRejectsCaseCollidingTemplateRoles)$'
+      - name: CGO 0 store and SQLite parity
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 0
+        run: |
+          go test -v -tags fts5 ./internal/store -run 'TestSignature|TestBackendContractsSQLite/organization/Signature'
+          go test -v -tags fts5 ./internal/store -run '^TestBackendContractsSQLite/metadata-export/MetadataExportRecovery'
+      - name: Native PostgreSQL operations and metadata
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+        run: |
+          go test -v -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/organization/Signature'
+          go test -v -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/metadata-export/(MetadataExportRecovery|MetadataBackupAuthority|MetadataRetainedCatalogs)'
+          go test -v -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/enrollment/AuditEnrollmentCatalogs'
+          make backend-coverage
+      - name: Generated-source drift
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        run: |
+          cp internal/api/openapi.yaml /tmp/d2a-openapi.yaml
+          cp internal/apiclient/client.gen.go /tmp/d2a-client.go
+          cp frontend/src/generated/docbank.ts /tmp/d2a-client.ts
+          cp frontend/src/generated/photoSourceExtensions.ts /tmp/d2a-photo.ts
+          make generate-api
+          npm --prefix frontend run generate:api
+          cmp /tmp/d2a-openapi.yaml internal/api/openapi.yaml
+          cmp /tmp/d2a-client.go internal/apiclient/client.gen.go
+          cmp /tmp/d2a-client.ts frontend/src/generated/docbank.ts
+          cmp /tmp/d2a-photo.ts frontend/src/generated/photoSourceExtensions.ts
+      - name: Restore pinned uv archive
+        if: ${{ !cancelled() }}
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .vercel-tools/downloads
+          key: release-uv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/vercel-install-docs.sh') }}
+      - name: Strict documentation build
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        run: |
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+      - name: Build documentation
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        run: make docs-build
+
+  lint:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-lint
+          extra-path: ~/.cache/golangci-lint
+      - name: Reject timing suppressions
+        run: make check-timing-suppressions
+      - name: Run golangci-lint
+        uses: step-security/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          skip-cache: true
+      - name: Run golangci-lint for Windows
+        if: ${{ !cancelled() }}
+        env:
+          GOOS: windows
+        run: ./custom-gcl run ./...
+      - name: Run golangci-lint for macOS
+        if: ${{ !cancelled() }}
+        env:
+          GOOS: darwin
+        run: ./custom-gcl run ./...
+
+  workflow-retry-check:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - name: Check workflow download retries
+        run: |
+          GOFLAGS="${GOFLAGS:+$GOFLAGS }-n" kit-retry 3 5 make lint-workflow-retries
+          make lint-workflow-retries
