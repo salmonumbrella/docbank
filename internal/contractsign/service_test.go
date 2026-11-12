@@ -36,7 +36,8 @@ func TestSignatureCancellationSettlesAfterCallerCancellation(t *testing.T) {
 			return
 		}
 		assert.Len(t, body, 3)
-		assert.Equal(t, float64(7), body["template_id"])
+		templateID, ok := body["template_id"].(float64)
+		assert.True(t, ok && templateID == 7, "template ID must be exactly 7")
 		assert.Equal(t, true, body["send_email"])
 		items, ok := body["submitters"].([]any)
 		if !assert.True(t, ok) || !assert.Len(t, items, 2) {
@@ -139,7 +140,7 @@ func TestSignatureRequestRejectsCaseCollidingTemplateRoles(t *testing.T) {
 		{Role: "Signer", Name: "First", Email: "first@example.com"},
 		{Role: "signer", Name: "Second", Email: "second@example.com"},
 	})
-	assert.ErrorIs(t, err, store.ErrInvalidSignatureRequest)
+	require.ErrorIs(t, err, store.ErrInvalidSignatureRequest)
 	assert.Zero(t, admissions.Load())
 	assert.Zero(t, posts.Load())
 	requests, err := s.ListSignatureRequests(t.Context(), contract.ContractID, 10, 0)

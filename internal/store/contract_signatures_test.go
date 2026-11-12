@@ -93,7 +93,6 @@ func checkSignatureTerminalHistoryDeletion(t *testing.T, open func(*testing.T) *
 	var signers int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM contract_signature_signers WHERE request_id=$1`, req.RequestID).Scan(&signers))
 	require.Zero(t, signers)
-
 }
 
 // An uncertain result stays open and remains visible in paginated local history.
