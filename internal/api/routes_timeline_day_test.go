@@ -23,7 +23,7 @@ func TestTimelineBrowserAllowlist(t *testing.T) {
 
 func TestTimelinePageWhenAndCitation(t *testing.T) {
 	minute := 570
-	page := store.TimelineDayPage{Items: []store.TimelineItem{{NodeID: 7, VersionID: "version", BlobHash: "hash", Rule: "date-kind-switch", AxisMinute: &minute, Event: document.DocumentEventV1{EventID: "event", DateKind: "sent", Precision: "minute", DateValue: "2026-03-10T09:30", TimezoneKind: "omitted", ClaimBasis: "source_asserted"}}}, DateOnly: []store.TimelineItem{{EndDate: "2026-03-12", Event: document.DocumentEventV1{DateKind: "created", Precision: "date", DateValue: "2026-03-10"}}}, MonthOnly: []store.TimelineItem{{Event: document.DocumentEventV1{DateKind: "created", Precision: "month", DateValue: "2026-03"}}}}
+	page := store.TimelineDayPage{Items: []store.TimelineItem{{NodeID: 7, VersionID: "version", BlobHash: "hash", Rule: "date-kind-switch", AxisMinute: &minute, Event: document.DocumentEventV1{EventID: "event", DateKind: "sent", Precision: "minute", DateValue: "2026-03-11T09:30", TimezoneKind: "omitted", ClaimBasis: "source_asserted"}}}, DateOnly: []store.TimelineItem{{EndDate: "2026-03-12", Event: document.DocumentEventV1{DateKind: "started", Precision: "date", DateValue: "2026-03-10"}}}, MonthOnly: []store.TimelineItem{{Event: document.DocumentEventV1{DateKind: "created", Precision: "month", DateValue: "2026-03"}}}}
 	out := timelinePageAPI("vault", "2026-03-11", page)
 	raw, err := json.Marshal(out)
 	require.NoError(t, err)
@@ -64,6 +64,9 @@ func TestTimelineWhenContractExamples(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
 			tc.event.EventID, tc.event.DateKind, tc.event.ClaimBasis = "evt-55", "created", "source_asserted"
+			if tc.end != "" {
+				tc.event.DateKind = "started"
+			}
 			item := store.TimelineItem{TimelinePlacement: store.TimelinePlacement{AxisMinute: tc.minute, Rule: "primary-rule/v1"}, Event: tc.event, EndDate: tc.end}
 			page := timelinePageAPI("vault", "2026-03-10", store.TimelineDayPage{Items: []store.TimelineItem{item}})
 			actual, err := json.Marshal(page.Items[0].When)
@@ -73,7 +76,7 @@ func TestTimelineWhenContractExamples(t *testing.T) {
 			var got, want map[string]any
 			require.NoError(t, json.Unmarshal(actual, &got))
 			require.NoError(t, json.Unmarshal(fixture, &want))
-			want["placed_by"] = map[string]any{"source": "created", "rule": "primary-rule/v1", "fallback": false, "event_id": "evt-55", "claim_basis": "source_asserted"}
+			want["placed_by"] = map[string]any{"source": string(tc.event.DateKind), "rule": "primary-rule/v1", "fallback": false, "event_id": "evt-55", "claim_basis": "source_asserted"}
 			require.Equal(t, want, got)
 		})
 	}

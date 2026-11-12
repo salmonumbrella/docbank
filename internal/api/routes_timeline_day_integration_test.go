@@ -110,11 +110,14 @@ func TestTimelineHTTPBoundariesAndEcho(t *testing.T) {
 
 func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Web.TimelineTimezone = "UTC" })
+	var version string
 	for i := range 2 {
 		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("report-%d.pdf", i), testHash(fmt.Sprintf("timeline-%d", i)), 1, "application/pdf")
 		require.NoError(t, err)
+		version = node.CurrentVersionID
 		pdf := fpdf.New("P", "mm", "A4", "")
 		pdf.SetCreationDate(time.Date(2026, 3, 10, 9, i, 0, 0, time.UTC))
+		pdf.SetModificationDate(time.Date(2026, 3, 10, 10, i, 0, 0, time.UTC))
 		pdf.AddPage()
 		var encoded bytes.Buffer
 		require.NoError(t, pdf.Output(&encoded))
@@ -138,6 +141,10 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 		_, err = s.PublishDocumentEvents(t.Context(), target, store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, raw)
 		require.NoError(t, err)
 	}
+	person, err := s.CreatePerson(t.Context(), "Synthetic Blind Recipient", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: version, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
+	require.NoError(t, err)
 	headers := map[string]string{"X-Api-Key": testAPIKey}
 	request := `{"query":{},"date":"2026-03-10","limit":1,"date_kinds":["created"]}`
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, request)
@@ -167,4 +174,33 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &counts))
 	require.Len(t, counts.Days, 1)
 	require.EqualValues(t, 2, counts.Days[0].Count)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{},"date":"2026-03-10","date_kinds":["modified"]}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var switched api.TimelineDayResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &switched))
+	require.Len(t, switched.Items, 2)
+	require.Equal(t, "date-kind-switch", switched.Items[0].When.PlacedBy.Rule)
+	createSavedQuery(t, ts.URL, "ZoneScope", `{"timezone":"UTC"}`)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{"syntax":"advanced","text":"saved:ZoneScope"},"date":"2026-03-10","timezone":"UTC"}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var saved api.TimelineDayResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &saved))
+	require.Equal(t, "UTC", saved.Timezone)
+	require.False(t, saved.TimezoneDefaulted)
+	resp, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	web := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token}
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", web, `{"query":{},"date":"2026-03-10","limit":500}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NotContains(t, body, person.PersonID)
+	require.NotContains(t, body, "Synthetic Blind Recipient")
+	resp, _ = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day?disclosure=full", web, request)
+	require.NotEqual(t, http.StatusOK, resp.StatusCode)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{},"date":"2026-03-10","limit":500}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NotContains(t, body, person.PersonID)
 }
