@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/internal/recordtype"
 )
@@ -170,9 +172,13 @@ func (s *Store) CreateRecord(ctx context.Context, id string, input recordtype.Re
 	})
 	return out, err
 }
-func readRecord(ctx context.Context, q recordQueryer, id string) (Record, error) {
+func readRecord(ctx context.Context, q recordQueryer, id string, lock bool) (Record, error) {
 	var r Record
-	err := q.QueryRowContext(ctx, `SELECT record_id,type_id,title,note,status,revision,created_at,updated_at,retired_at FROM records WHERE record_id=$1`, id).Scan(&r.ID, &r.TypeID, &r.Title, &r.Note, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &r.RetiredAt)
+	query := `SELECT record_id,type_id,title,note,status,revision,created_at,updated_at,retired_at FROM records WHERE record_id=$1`
+	if lock {
+		query += ` FOR UPDATE`
+	}
+	err := q.QueryRowContext(ctx, query, id).Scan(&r.ID, &r.TypeID, &r.Title, &r.Note, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &r.RetiredAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -212,12 +218,12 @@ func readRecord(ctx context.Context, q recordQueryer, id string) (Record, error)
 	return r, nil
 }
 func (s *Store) GetRecord(ctx context.Context, id string) (Record, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return Record{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	r, err := readRecord(ctx, tx, id)
+	r, err := readRecord(ctx, tx, id, false)
 	if err != nil {
 		return Record{}, err
 	}
@@ -252,7 +258,7 @@ func writeRecordValues(ctx context.Context, tx *sql.Tx, r Record) error {
 func (s *Store) UpdateRecord(ctx context.Context, id string, revision int64, patch RecordPatch) (Record, error) {
 	var out Record
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		current, err := readRecord(ctx, tx, id)
+		current, err := readRecord(ctx, tx, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -320,7 +326,7 @@ func (s *Store) UpdateRecord(ctx context.Context, id string, revision int64, pat
 func (s *Store) RetireRecord(ctx context.Context, id string, revision int64) (Record, error) {
 	var out Record
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		current, err := readRecord(ctx, tx, id)
+		current, err := readRecord(ctx, tx, id, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -367,15 +373,99 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 	if !ok {
 		return nil, 0, ErrNotFound
 	}
+	if err := validateRecordListOptions(def, opts); err != nil {
+		return nil, 0, err
+	}
 	if err := validatePage(opts.Limit, opts.Offset); err != nil {
 		return nil, 0, fmt.Errorf("%w: %w", ErrInvalidRecord, err)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	args := []any{}
+	bind := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
+	where := []string{"r.type_id=" + bind(opts.TypeID), "r.retired_at IS NULL"}
+	if opts.Query != "" {
+		q := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(asciiLower(opts.Query))
+		where = append(where, "LOWER(r.title) LIKE "+bind("%"+q+"%")+" ESCAPE '!'")
+	}
+	// Each shipped derived status has a stored-state admission list and a date selector.
+	effective := "r.status"
+	if opts.Status != "" {
+		for _, d := range def.Status.Derived {
+			if d.Retired {
+				continue
+			}
+			parts := strings.Split(d.WhenPast, ".")
+			if len(parts) != 2 || parts[1] != "end" {
+				continue
+			}
+			var from []string
+			for _, status := range d.OnlyFrom {
+				from = append(from, bind(status))
+			}
+			if len(from) == 0 {
+				continue
+			}
+			effective = "CASE WHEN r.status IN (" + strings.Join(from, ",") + ") AND EXISTS (SELECT 1 FROM record_values ev WHERE ev.record_id=r.record_id AND ev.field_id=" + bind(parts[0]) + " AND ev.value_date_end < " + bind(opts.AsOf) + ") THEN " + bind(d.ID) + " ELSE " + effective + " END"
+		}
+		where = append(where, "("+effective+")="+bind(opts.Status))
+	}
+	keys := make([]string, 0, len(opts.Fields))
+	for k := range opts.Fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, field := range keys {
+		v := opts.Fields[field]
+		clauses := []string{"fv.record_id=r.record_id", "fv.field_id=" + bind(field)}
+		switch x := v.(type) {
+		case string:
+			col := "value_text"
+			for _, f := range def.Fields {
+				if f.ID == field && f.Type == "date" {
+					col = "value_date"
+				}
+			}
+			clauses = append(clauses, "fv."+col+"="+bind(x))
+		case map[string]any:
+			for _, part := range []struct{ key, col string }{{"start", "value_date"}, {"end", "value_date_end"}} {
+				if v, ok := x[part.key]; ok {
+					clauses = append(clauses, "fv."+part.col+"="+bind(v))
+				} else {
+					clauses = append(clauses, "fv."+part.col+" IS NULL")
+				}
+			}
+		}
+		where = append(where, "EXISTS (SELECT 1 FROM record_values fv WHERE "+strings.Join(clauses, " AND ")+")")
+	}
+	for _, filter := range []struct {
+		values map[string]string
+		op     string
+	}{{opts.Before, "<"}, {opts.After, ">"}} {
+		keys = keys[:0]
+		for k := range filter.values {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, path := range keys {
+			parts := strings.Split(path, ".")
+			col := "value_date"
+			if len(parts) == 2 && parts[1] == "end" {
+				col = "value_date_end"
+			}
+			where = append(where, "EXISTS (SELECT 1 FROM record_values dv WHERE dv.record_id=r.record_id AND dv.field_id="+bind(parts[0])+" AND dv."+col+filter.op+bind(filter.values[path])+")")
+		}
+	}
+	predicate := strings.Join(where, " AND ")
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT record_id FROM records WHERE type_id=$1 AND retired_at IS NULL ORDER BY title,record_id`, opts.TypeID)
+	var total int
+	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM records r WHERE "+predicate, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	limit, offset := bind(opts.Limit), bind(opts.Offset)
+	rows, err := tx.QueryContext(ctx, "SELECT r.record_id FROM records r WHERE "+predicate+" ORDER BY r.title,r.record_id LIMIT "+limit+" OFFSET "+offset, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -395,56 +485,19 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 	if err = rows.Close(); err != nil {
 		return nil, 0, err
 	}
-	var result []Record
-	total := 0
+	var out []Record
 	for _, id := range ids {
-		r, e := readRecord(ctx, tx, id)
+		r, e := readRecord(ctx, tx, id, false)
 		if e != nil {
 			return nil, 0, e
 		}
 		r.EffectiveStatus = recordtype.EffectiveStatus(def, r.Status, r.Fields, opts.AsOf)
-		if opts.Status != "" && r.EffectiveStatus != opts.Status {
-			continue
-		}
-		if opts.Query != "" && !strings.Contains(asciiLower(r.Title), asciiLower(opts.Query)) {
-			continue
-		}
-		matches := true
-		for field, value := range opts.Fields {
-			if !reflect.DeepEqual(r.Fields[field], value) {
-				matches = false
-				break
-			}
-		}
-		if !matches {
-			continue
-		}
-		for field, date := range opts.Before {
-			v := recordDate(r.Fields, field)
-			if v == "" || v >= date {
-				matches = false
-				break
-			}
-		}
-		for field, date := range opts.After {
-			v := recordDate(r.Fields, field)
-			if v == "" || v <= date {
-				matches = false
-				break
-			}
-		}
-		if !matches {
-			continue
-		}
-		if total >= opts.Offset && len(result) < opts.Limit {
-			result = append(result, r)
-		}
-		total++
+		out = append(out, r)
 	}
-	if err := tx.Commit(); err != nil {
+	if err = tx.Commit(); err != nil {
 		return nil, 0, err
 	}
-	return result, total, nil
+	return out, total, nil
 }
 func recordDate(fields map[string]any, path string) string {
 	parts := strings.Split(path, ".")
@@ -466,4 +519,53 @@ func asciiLower(s string) string {
 		}
 	}
 	return string(b)
+}
+
+func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions) error {
+	validDate := func(s string) bool {
+		d, err := time.Parse("2006-01-02", s)
+		return err == nil && d.Format("2006-01-02") == s
+	}
+	if !validDate(opts.AsOf) {
+		return fmt.Errorf("%w: invalid as_of", ErrInvalidRecord)
+	}
+	if opts.Status != "" {
+		found := false
+		for _, v := range def.Status.Values {
+			if v.ID == opts.Status && !v.Retired {
+				found = true
+			}
+		}
+		for _, v := range def.Status.Derived {
+			if v.ID == opts.Status && !v.Retired {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("%w: invalid status", ErrInvalidRecord)
+		}
+	}
+	for id, value := range opts.Fields {
+		normalized, err := recordtype.NormalizeRecord(def, recordtype.Record{Title: "x", Status: "draft", Fields: map[string]any{id: value}})
+		if err != nil || len(normalized.Fields) != 1 || !reflect.DeepEqual(normalized.Fields[id], value) {
+			return fmt.Errorf("%w: invalid field selector", ErrInvalidRecord)
+		}
+	}
+	for _, selectors := range []map[string]string{opts.Before, opts.After} {
+		for path, date := range selectors {
+			if !validDate(date) {
+				return fmt.Errorf("%w: invalid date selector", ErrInvalidRecord)
+			}
+			found := false
+			for _, f := range def.Fields {
+				if !f.Retired && ((f.Type == "date" && path == f.ID) || (f.Type == "date_range" && (path == f.ID+".start" || path == f.ID+".end"))) {
+					found = true
+				}
+			}
+			if !found {
+				return fmt.Errorf("%w: invalid date field", ErrInvalidRecord)
+			}
+		}
+	}
+	return nil
 }

@@ -816,6 +816,8 @@ func restoreV41SourceState(ctx context.Context, source metadataQuerier, target *
 }
 
 // restoreV48SourceState preserves local observations and processing state on upgrade.
+// Lexical stream membership is reconstructed by metadata import with new stream
+// IDs; copying source rows would detach the restored generation heads.
 func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	if err := restoreV41SourceState(ctx, source, target); err != nil {
 		return err
@@ -825,7 +827,7 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 			"vault_change_head", "vault_changes", "watch_source_absences",
 			"photo_xmp_unsettled", "photo_xmp_unsettled_pending",
 			"photo_description_explicit_waiters", "photo_face_scans",
-			"photo_suggestions", "rendition_lexical_stream_builds", "vector_membership_epochs",
+			"photo_suggestions", "vector_membership_epochs",
 		})
 	})
 }

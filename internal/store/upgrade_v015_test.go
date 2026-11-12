@@ -268,6 +268,17 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				node := createReleasedFixtureFile(t, legacy, "released.jpg", fakeHash("e5"), 8, "image/jpeg")
 				seedReleasedPhotoAsset(t, db, node.ID)
 				seedReleasedMtime(t, db, node.ID, "2024-03-05T10:00:00Z")
+				if version == 48 {
+					_, err := db.ExecContext(t.Context(), `INSERT OR REPLACE INTO main.vault_change_head(singleton,epoch) VALUES(1,'synthetic-epoch')`)
+					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT INTO main.vault_changes(seq,kind,node_id,node_revision) VALUES(900,'fixture',1,1)`)
+					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT OR REPLACE INTO vector_membership_epochs(vector_space_id,revision) VALUES('synthetic-space',17)`)
+					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, node.CurrentVersionID, "synthetic-detector")
+					require.NoError(t, err)
+				}
+
 				definition, err := legacy.CreateSavedQuery(t.Context(), "Released", "", SavedQueryKindQuery, []byte(`{}`))
 				require.NoError(t, err)
 				first := uuid.New().String()
@@ -294,6 +305,18 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 					current, err := s.CurrentProcessingIncarnation(t.Context())
 					require.NoError(t, err)
 					assert.Equal(t, incarnation, current, "an in-place upgrade keeps the installation identity")
+				}
+				if version == 48 {
+					var epoch string
+					var changes, revision, scans int
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT epoch FROM vault_change_head WHERE singleton=1`).Scan(&epoch))
+					require.Equal(t, "synthetic-epoch", epoch)
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vault_changes WHERE seq=900 AND kind='fixture'`).Scan(&changes))
+					require.Equal(t, 1, changes)
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision FROM vector_membership_epochs WHERE vector_space_id='synthetic-space'`).Scan(&revision))
+					require.Equal(t, 17, revision)
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_face_scans WHERE content_version_id=? AND detector_fingerprint='synthetic-detector'`, node.CurrentVersionID).Scan(&scans))
+					require.Equal(t, 1, scans)
 				}
 				firstRun := persistedSavedQueryRun(t, s, first)
 				secondRun := persistedSavedQueryRun(t, s, second)

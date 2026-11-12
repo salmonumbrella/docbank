@@ -41,3 +41,41 @@ func checkRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 }
 
 func TestRecordLifecycle(t *testing.T) { checkRecordLifecycle(t, newTestStore) }
+
+func TestRecordListRejectsInvalidSelectors(t *testing.T) {
+	s := newTestStore(t)
+	for _, opts := range []RecordListOptions{
+		{TypeID: "contract", AsOf: "2026-02-30", Limit: 100},
+		{TypeID: "contract", AsOf: "2026-01-01", Status: "not_a_status", Limit: 100},
+		{TypeID: "contract", AsOf: "2026-01-01", Fields: map[string]any{"not_a_field": "x"}, Limit: 100},
+		{TypeID: "contract", AsOf: "2026-01-01", Before: map[string]string{"term.end": "2026-02-30"}, Limit: 100},
+		{TypeID: "contract", AsOf: "2026-01-01", Before: map[string]string{"summary": "2026-01-01"}, Limit: 100},
+	} {
+		_, _, err := s.ListRecords(t.Context(), opts)
+		require.ErrorIs(t, err, ErrInvalidRecord)
+	}
+}
+
+func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, err := s.ActivateRecordType(ctx, "contract", 0)
+	require.NoError(t, err)
+	for _, input := range []recordtype.Record{
+		{Title: "A", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "service"}},
+		{Title: "B", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-02"}, "contract_type": "service"}},
+		{Title: "C", Status: "draft", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "lease"}},
+	} {
+		_, err = s.CreateRecord(ctx, "contract", input)
+		require.NoError(t, err)
+	}
+	page, total, err := s.ListRecords(ctx, RecordListOptions{TypeID: "contract", Status: "expired", AsOf: "2026-01-02", Limit: 1})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, page, 1)
+	require.Equal(t, "A", page[0].Title)
+	page, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Fields: map[string]any{"contract_type": "service"}, Before: map[string]string{"term.end": "2026-01-02"}, Limit: 1})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, "A", page[0].Title)
+}
