@@ -158,7 +158,10 @@ it("keeps facts correct as the last interest leaves and returns", async () => {
 
 it("cleans inactive scheduling state and retries errors when interest returns", async () => {
   const facts = new DocumentFacts("session", vi.fn());
-  const internals = facts as unknown as { entries: Map<string, unknown>; values: Record<string, unknown> };
+  const internals = facts as unknown as {
+    entries: Map<string, unknown>;
+    values: Record<string, unknown>;
+  };
   const element = document.createElement("div");
   const detach = facts.observeRow("never-visible")(element);
   expect(internals.entries.size).toBe(0);
