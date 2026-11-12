@@ -29124,11 +29124,11 @@ type AdvanceTaxRecordHeaders struct {
 }
 
 type LinkTaxDocumentHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type RetireTaxDocumentHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type AddTaxEventHeaders struct {

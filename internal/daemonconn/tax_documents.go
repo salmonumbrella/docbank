@@ -55,7 +55,7 @@ func (c *Connection) LinkTaxDocument(ctx context.Context, id string, revision in
 		return api.TaxDocumentMutation{}, errors.New("invalid tax document input")
 	}
 	var response *http.Response
-	_, err := c.apiWithResponse(&response).LinkTaxDocument(runtime.WithStreamingResponse(ctx), &apiclient.LinkTaxDocumentRequestOptions{PathParams: &apiclient.LinkTaxDocumentPath{RecordID: id}, Header: &apiclient.LinkTaxDocumentHeaders{IfMatch: new(revisionIfMatch(revision))}, Body: &in})
+	_, err := c.apiWithResponse(&response).LinkTaxDocument(runtime.WithStreamingResponse(ctx), &apiclient.LinkTaxDocumentRequestOptions{PathParams: &apiclient.LinkTaxDocumentPath{RecordID: id}, Header: &apiclient.LinkTaxDocumentHeaders{IfMatch: revisionIfMatch(revision)}, Body: &in})
 	if err != nil {
 		return api.TaxDocumentMutation{}, taxMutationFailure(mutationRequestError(response, err), "record")
 	}
@@ -73,7 +73,7 @@ func (c *Connection) RetireTaxDocument(ctx context.Context, recordID, linkID str
 		return api.TaxDocumentMutation{}, errors.New("invalid tax document ID or revision")
 	}
 	var response *http.Response
-	_, err := c.apiWithResponse(&response).RetireTaxDocument(runtime.WithStreamingResponse(ctx), &apiclient.RetireTaxDocumentRequestOptions{PathParams: &apiclient.RetireTaxDocumentPath{RecordID: recordID, LinkID: linkID}, Header: &apiclient.RetireTaxDocumentHeaders{IfMatch: new(revisionIfMatch(revision))}})
+	_, err := c.apiWithResponse(&response).RetireTaxDocument(runtime.WithStreamingResponse(ctx), &apiclient.RetireTaxDocumentRequestOptions{PathParams: &apiclient.RetireTaxDocumentPath{RecordID: recordID, LinkID: linkID}, Header: &apiclient.RetireTaxDocumentHeaders{IfMatch: revisionIfMatch(revision)}})
 	if err != nil {
 		return api.TaxDocumentMutation{}, taxMutationFailure(mutationRequestError(response, err), "record")
 	}

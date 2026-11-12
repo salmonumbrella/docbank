@@ -34786,6 +34786,7 @@ paths:
             type: string
         - in: header
           name: If-Match
+          required: true
           schema:
             type: string
       requestBody:
@@ -34831,6 +34832,7 @@ paths:
             type: string
         - in: header
           name: If-Match
+          required: true
           schema:
             type: string
       responses:

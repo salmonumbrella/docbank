@@ -11166,11 +11166,11 @@ export type AdvanceTaxRecordHeaders = {
 };
 
 export type LinkTaxDocumentHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type RetireTaxDocumentHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type AddTaxEventHeaders = {
@@ -23001,7 +23001,7 @@ export const getLinkTaxDocumentUrl = (recordId: string,) => {
  */
 export const linkTaxDocument = async (recordId: string,
     linkTaxDocumentRequest: NonReadonly<LinkTaxDocumentRequest>,
-    headers?: LinkTaxDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxDocumentMutation> => {
+    headers: LinkTaxDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxDocumentMutation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -23042,7 +23042,7 @@ export const getRetireTaxDocumentUrl = (recordId: string,
  */
 export const retireTaxDocument = async (recordId: string,
     linkId: string,
-    headers?: RetireTaxDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxDocumentMutation> => {
+    headers: RetireTaxDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxDocumentMutation> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
