@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -256,5 +257,39 @@ func TestSignatureRequestInvalidInputDoesNotDisclosePrivateValues(t *testing.T) 
 			require.NotContains(t, body, secret)
 		}
 		require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	}
+}
+
+func TestSignatureRequestMalformedBodyIsPrivate(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var c api.Contract
+	require.NoError(t, json.Unmarshal([]byte(body), &c))
+	path := "/api/v1/contracts/" + c.ContractID + "/signature-requests"
+	for _, tc := range []struct {
+		name, contentType, raw string
+		status                 int
+	}{
+		{"malformed", "application/json", `{"signers":[{"name":"private-name"}`, 422},
+		{"wrong type", "application/json", `{"template_id":"private-name","signers":[]}`, 422},
+		{"duplicate", "application/json", `{"template_id":7,"template_id":8,"signers":[{"name":"private-name"}]}`, 422},
+		{"unsupported content type", "text/plain", `{"template_id":7,"signers":[{"name":"private-name"}]}`, 415},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+path, strings.NewReader(tc.raw))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", tc.contentType)
+			req.Header.Set("If-Match", `"1"`)
+			resp, err := ts.Client().Do(req)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+			data, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, tc.status, resp.StatusCode, string(data))
+			require.NotContains(t, string(data), "private-name")
+			require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+		})
 	}
 }

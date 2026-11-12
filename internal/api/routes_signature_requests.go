@@ -1,11 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"io"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/config"
@@ -94,11 +98,64 @@ func signatureError(err error) error {
 	}
 	return docuSealProblem(err)
 }
+
+// signatureBodyContext replays the bounded, validated bytes to Huma.
+type signatureBodyContext struct {
+	huma.Context
+	body *bytes.Reader
+}
+
+func (c signatureBodyContext) BodyReader() io.Reader { return c.body }
+
+// Huma includes the original body in parse errors; validate this private body
+// first and return a fixed problem without submitting it to the formatter.
+func privateSignatureBody(api huma.API) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		_ = ctx.SetReadDeadline(time.Now().Add(5 * time.Second))
+		reader := ctx.BodyReader()
+		if reader == nil {
+			reader = bytes.NewReader(nil)
+		}
+		if closer, ok := reader.(io.Closer); ok {
+			defer func() { _ = closer.Close() }()
+		}
+		body, err := io.ReadAll(io.LimitReader(reader, (1<<20)+1))
+		_ = ctx.SetReadDeadline(time.Time{})
+		status := http.StatusUnprocessableEntity
+		detail := "invalid signature request body"
+		if err != nil {
+			status = http.StatusBadRequest
+			var networkErr net.Error
+			if errors.As(err, &networkErr) && networkErr.Timeout() {
+				status = http.StatusRequestTimeout
+			}
+		} else if len(body) > 1<<20 {
+			status = http.StatusRequestEntityTooLarge
+		} else if len(body) == 0 {
+			status = http.StatusBadRequest
+		} else {
+			contentType := ctx.Header("Content-Type")
+			if contentType == "" {
+				contentType = "application/json"
+			}
+			var request SignatureRequestBody
+			if err = api.Unmarshal(contentType, body, &request); err == nil {
+				next(signatureBodyContext{Context: ctx, body: bytes.NewReader(body)})
+				return
+			} else if errors.Is(err, huma.ErrUnknownContentType) {
+				status = http.StatusUnsupportedMediaType
+			}
+		}
+		ctx.SetHeader("Cache-Control", cacheControlNoStore)
+		_ = huma.WriteErr(api, ctx, status, detail)
+	}
+}
+
 func registerSignatureRequestRoutes(api huma.API, d Deps, g *gate) {
 	service := contractsign.Service{Store: d.Store, Connect: func(ctx context.Context) (config.DocuSealConnection, *docusealclient.Client, error) {
 		return resolveDocuSeal(ctx, d)
 	}, Admit: g.mutate, Settle: g.MutateContext}
-	huma.Register(api, huma.Operation{OperationID: "createContractSignatureRequest", Method: http.MethodPost, Path: "/api/v1/contracts/{contract_id}/signature-requests", Summary: "Send a contract for signature", DefaultStatus: http.StatusCreated, MaxBodyBytes: 1 << 20, SkipValidateBody: true}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{OperationID: "createContractSignatureRequest", Method: http.MethodPost, Path: "/api/v1/contracts/{contract_id}/signature-requests", Summary: "Send a contract for signature", DefaultStatus: http.StatusCreated, MaxBodyBytes: 1 << 20, SkipValidateBody: true, Middlewares: huma.Middlewares{privateSignatureBody(api)}}, func(ctx context.Context, in *struct {
 		ContractID string `path:"contract_id"`
 		IfMatch    string `header:"If-Match"`
 		Body       SignatureRequestBody
