@@ -1,6 +1,13 @@
 <script lang="ts">
   import XIcon from "@lucide/svelte/icons/x";
-  import { Button, Chip, IconButton, SegmentedControl, TextInput, Typeahead } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Chip,
+    IconButton,
+    SegmentedControl,
+    TextInput,
+    Typeahead,
+  } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import {
     createParty,

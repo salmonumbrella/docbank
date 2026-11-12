@@ -250,7 +250,12 @@
             done.push(step.label);
           } catch (cause) {
             if (!alive || authFailure(cause)) return;
-            failed(cause, step.label, done, plan.slice(index).map((item) => item.label));
+            failed(
+              cause,
+              step.label,
+              done,
+              plan.slice(index).map((item) => item.label),
+            );
             return;
           }
         }

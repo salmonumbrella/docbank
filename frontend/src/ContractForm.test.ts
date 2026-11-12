@@ -153,9 +153,7 @@ describe("new contract", () => {
       display_name: "Harbor Holdings",
       own: true,
     });
-    expect(
-      await screen.findByRole("button", { name: "Remove Harbor Holdings" }),
-    ).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Remove Harbor Holdings" })).toBeTruthy();
   });
 
   it("loads every party page before offering to create one", async () => {

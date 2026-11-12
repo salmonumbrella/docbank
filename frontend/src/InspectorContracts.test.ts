@@ -28,7 +28,8 @@ const older: SelectedSource = {
   key: "older",
   versionID: draftVersionID,
 };
-const page = (items: Contract[]) => Response.json({ items, as_of: "2027-01-01", limit: 100, offset: 0 });
+const page = (items: Contract[]) =>
+  Response.json({ items, as_of: "2027-01-01", limit: 100, offset: 0 });
 const problem = (status: number, code: string) =>
   Response.json({ status, code, detail: code }, { status });
 
@@ -147,7 +148,9 @@ it("links the version the inspector shows with the contract revision", async () 
     path: "/api/v1/contracts?q=north&limit=20",
     ifMatch: null,
   });
-  expect(await screen.findByRole("listitem", { name: "Northwind Storage - unit lease" })).toBeTruthy();
+  expect(
+    await screen.findByRole("listitem", { name: "Northwind Storage - unit lease" }),
+  ).toBeTruthy();
 });
 
 it("reloads and asks to retry when the contract changed before the link", async () => {

@@ -248,8 +248,12 @@ export function partyChanges(
   const before = new Set(base.map(partyKey));
   const after = new Set(draft.map(partyKey));
   return [
-    ...base.filter((party) => !after.has(partyKey(party))).map((party) => ({ attach: false, party })),
-    ...draft.filter((party) => !before.has(partyKey(party))).map((party) => ({ attach: true, party })),
+    ...base
+      .filter((party) => !after.has(partyKey(party)))
+      .map((party) => ({ attach: false, party })),
+    ...draft
+      .filter((party) => !before.has(partyKey(party)))
+      .map((party) => ({ attach: true, party })),
   ];
 }
 
@@ -267,6 +271,7 @@ const problemSentences: Record<string, string> = {
     "This vault records audits; contract changes aren't available here yet.",
 };
 export function contractProblem(cause: unknown): string {
-  if (cause instanceof APIError && problemSentences[cause.code]) return problemSentences[cause.code]!;
+  if (cause instanceof APIError && problemSentences[cause.code])
+    return problemSentences[cause.code]!;
   return cause instanceof Error ? cause.message : String(cause);
 }

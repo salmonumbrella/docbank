@@ -74,10 +74,14 @@
     const controller = new AbortController();
     loading = true;
     error = "";
-    listNodeContracts(nodeID, { limit: contractPageSize, offset: 0 }, {
-      session,
-      signal: controller.signal,
-    }).then(
+    listNodeContracts(
+      nodeID,
+      { limit: contractPageSize, offset: 0 },
+      {
+        session,
+        signal: controller.signal,
+      },
+    ).then(
       (page) => {
         if (controller.signal.aborted) return;
         items = page.items;
@@ -238,7 +242,8 @@
   {#if loading}<span role="status"><Spinner size={13} /> Loading contracts…</span>
   {:else if error}
     <div class="row">
-      {error}<Button size="sm" surface="soft" onclick={() => (reloads += 1)}>Retry contracts</Button>
+      {error}<Button size="sm" surface="soft" onclick={() => (reloads += 1)}>Retry contracts</Button
+      >
     </div>
   {:else if items.length === 0}
     <p class="muted">Not linked to a contract</p>
@@ -260,7 +265,8 @@
               <span class="actions">
                 {#if confirming === rowKey(contract, row)}
                   Unlink?
-                  <Button size="sm" disabled={busy} onclick={() => (confirming = "")}>Cancel</Button>
+                  <Button size="sm" disabled={busy} onclick={() => (confirming = "")}>Cancel</Button
+                  >
                   <Button
                     size="sm"
                     tone="danger"
