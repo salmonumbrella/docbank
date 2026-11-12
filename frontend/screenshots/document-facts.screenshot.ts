@@ -453,6 +453,7 @@ test("shows document dates and people in the inspector and both tables", async (
       }
       type Head = {
         version_id: string;
+        date_state: string;
         events: {
           event_id: string;
           evidence_id: string;
@@ -483,10 +484,17 @@ test("shows document dates and people in the inspector and both tables", async (
       });
       const identities = (items: { event_id: string; evidence_id: string }[]) =>
         items.map((item) => `${item.event_id}/${item.evidence_id}`).sort();
-      // Everything in a head except its events: the generation, checksum,
-      // inputs digest, epochs, publication time and metadata sources.
+      // Everything in the exact target's head except its events: the version,
+      // generation, checksum, inputs digest, fingerprint, input epochs,
+      // publication time, metadata sources and the store's freshness verdict.
+      // global_publication_epoch is the vault-wide counter any document's
+      // publish advances, so it stays in the witness as a diagnostic only.
       const fence = (head: Head) =>
-        JSON.stringify(Object.entries(head).filter(([key]) => key !== "events"));
+        JSON.stringify(
+          Object.entries(head).filter(
+            ([key]) => key !== "events" && key !== "global_publication_epoch",
+          ),
+        );
       const retainedSent = before.events.find(
         (item) => item.date_kind === "sent" && item.utc_key === SENT_UTC_KEY,
       );
@@ -499,6 +507,8 @@ test("shows document dates and people in the inspector and both tables", async (
           fullAgain.content_version_id,
         ].every((id) => id === privateVersion),
         sameHead:
+          before.date_state === "published" &&
+          after.date_state === "published" &&
           fence(before) === fence(after) &&
           JSON.stringify(identities(before.events)) === JSON.stringify(identities(after.events)),
         published: [full, safe, fullAgain].every((item) => item.state === "published"),
@@ -560,9 +570,18 @@ test("shows document dates and people in the inspector and both tables", async (
 
     const inspector = page.getByRole("complementary", { name: "Document inspector" });
     const liveRow = (name: string) => page.locator("tr[data-live-node]").filter({ hasText: name });
+    // A folder is open once one of its own children is listed; a child's name
+    // need not contain the folder's (private holds reviewer-note.eml).
+    const expectedChild: Record<string, string> = {
+      board: "board-update.eml",
+      private: "reviewer-note.eml",
+      bulk: "memo-000.txt",
+    };
     const openFolder = async (name: string) => {
+      const child = expectedChild[name];
+      if (!child) throw new Error(`no expected child for folder ${name}`);
       await liveRow(name).first().dblclick();
-      await expect(page.locator("tr[data-live-node]").filter({ hasText: name })).not.toHaveCount(0);
+      await expect(liveRow(child).first()).toBeVisible();
     };
     // A fresh page, so each state starts with a new facts owner.
     const browse = async (folder: string) => {

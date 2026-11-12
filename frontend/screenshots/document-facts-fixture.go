@@ -120,7 +120,8 @@ type headWitness struct {
 	InputEpoch         int64        `json:"input_epoch"`
 	PublishedAt        string       `json:"published_at"`
 	StateInputEpoch    int64        `json:"state_input_epoch"`
-	PublicationEpoch   int64        `json:"publication_epoch"`
+	DateState          string       `json:"date_state"`
+	GlobalPublication  int64        `json:"global_publication_epoch"`
 	Sources            []headSource `json:"sources"`
 	Events             []headEvent  `json:"events"`
 }
@@ -136,6 +137,19 @@ func printHead(ctx context.Context, vault, version string) {
 	check(err)
 	state, err := s.DocumentEventStateRow(ctx, view.Generation.DeriverFingerprint)
 	check(err)
+	// The store's own freshness verdict for this exact version, the one the
+	// dates API serves; when published it must select the same generation.
+	facts, err := s.DocumentDateFacts(ctx, version)
+	check(err)
+	if facts.State == "published" {
+		served := facts.View.Generation
+		if served.GenerationID != view.Generation.GenerationID ||
+			served.Checksum != view.Generation.Checksum ||
+			served.InputsSHA256 != view.Generation.InputsSHA256 {
+			panic(fmt.Sprintf("fresh generation %s differs from retained %s",
+				served.GenerationID, view.Generation.GenerationID))
+		}
+	}
 	out := headWitness{
 		VersionID:          view.Version.ID,
 		GenerationID:       view.Generation.GenerationID,
@@ -145,7 +159,8 @@ func printHead(ctx context.Context, vault, version string) {
 		InputEpoch:         view.InputEpoch,
 		PublishedAt:        view.PublishedAt,
 		StateInputEpoch:    state.InputEpoch,
-		PublicationEpoch:   state.PublicationEpoch,
+		DateState:          facts.State,
+		GlobalPublication:  state.PublicationEpoch,
 		Sources:            []headSource{},
 		Events:             []headEvent{},
 	}
