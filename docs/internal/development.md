@@ -189,7 +189,7 @@ the remaining architecture.
 
 Register file/tree commands under `document`, vault identity and maintenance
 under `vault`, and email operations under `email`. `report` owns search-count
-evidence; leave `search` arguments available for arbitrary query words. Existing
+evidence; leave `search` arguments available for arbitrary query words. The `record` and `types` groups own typed records and their definitions. Existing
 domain groups keep their names. Use `registerGroupedCommand` after installing
 the command's flags and children when moving another command. It retains a
 hidden root definition for at least one release, with separate Cobra state and
@@ -556,6 +556,10 @@ GRANT INSERT, DELETE ON documents.node_tags TO docbank_runtime;
 GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
     ON documents.saved_queries TO docbank_runtime;
+GRANT INSERT, UPDATE(active, revision, updated_at) ON documents.record_types TO docbank_runtime;
+GRANT INSERT, UPDATE(title, note, status, revision, updated_at, retired_at)
+    ON documents.records TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.record_values TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;

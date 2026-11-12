@@ -117,6 +117,10 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /photos/checkouts/{id}/rebind` | verify and bind a restored checkout folder; loopback-only | Implemented |
 | `POST /photos/checkouts/{id}/retire` | request retirement; release holds and reservation when queued or running work finishes or is cancelled | Implemented |
 | `GET /photos/checkouts` · `GET /photos/checkouts/{id}` | list checkout definitions or read checkout status with paged entries and their `working_state` | Implemented |
+| `GET /record-types` · `GET /record-types/{type}` | list or inspect built-in record types | Implemented |
+| `POST /record-types/{type}/activate` · `/deactivate` | change activation under `If-Match` | Implemented |
+| `GET /records` · `POST /records` | list or create typed records | Implemented |
+| `GET /records/{id}` · `PATCH /records/{id}` · `POST /records/{id}/retire` | inspect, edit, or retire a record | Implemented |
 | `GET /people` · `POST /people` | list, search, and create active canonical people | Implemented |
 | `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
 | `PATCH /people/by-id/{person_id}` · `POST /people/by-id/{person_id}/retire` | rename or retire one person under `If-Match` | Implemented |
@@ -2550,3 +2554,18 @@ include a `position` span:
 - No MCP endpoint inside `docbank daemon run`. `docbank mcp` remains a bounded
   client process with its own transport and credential boundary.
 - No remote-daemon mode or `[remote]` configuration.
+
+## Typed records
+
+Record reads use `Cache-Control: no-store`. Type activation and deactivation,
+record edits, and retirement require `If-Match` with the observed revision.
+A never-activated type reports revision 0; its first activation uses
+`If-Match: "0"`. A stale revision returns 412. Record writes require an active
+type and return `409 audit_mutation_unsupported` in an audited vault.
+
+`GET /records` requires `type`. Repeated `field=field_id=JSON-value` selectors
+match field values; `before=field_id=YYYY-MM-DD` and `after=field_id=YYYY-MM-DD`
+are exclusive. `q` matches a literal ASCII case-insensitive title substring.
+`status` compares the effective status before pagination. `as_of` selects the
+status date and is returned in the page. See [Records and contracts](../usage/records.md)
+for the contract fields and lifecycle.

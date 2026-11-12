@@ -256,6 +256,9 @@ func writeRecordValues(ctx context.Context, tx *sql.Tx, r Record) error {
 	return nil
 }
 func (s *Store) UpdateRecord(ctx context.Context, id string, revision int64, patch RecordPatch) (Record, error) {
+	if patch.Title == nil && patch.Note == nil && patch.Status == nil && len(patch.Fields) == 0 {
+		return Record{}, ErrInvalidRecord
+	}
 	var out Record
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		current, err := readRecord(ctx, tx, id, s.postgresSchema != "")
@@ -524,7 +527,7 @@ func asciiLower(s string) string {
 func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions) error {
 	validDate := func(s string) bool {
 		d, err := time.Parse("2006-01-02", s)
-		return err == nil && d.Format("2006-01-02") == s
+		return err == nil && d.Year() >= 1 && d.Format("2006-01-02") == s
 	}
 	if !validDate(opts.AsOf) {
 		return fmt.Errorf("%w: invalid as_of", ErrInvalidRecord)

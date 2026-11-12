@@ -56,6 +56,8 @@ func TestCommandGroupsCompletion(t *testing.T) {
 		{[]string{"document", ""}, "list", "ls"},
 		{[]string{"vault", ""}, "verify", "document"},
 		{[]string{"email", ""}, "mailbox", "email-pdf"},
+		{[]string{"record", ""}, "create", "document"},
+		{[]string{"types", ""}, "activate", "document"},
 		{[]string{"document", "versions", ""}, "prune", "versions"},
 	} {
 		t.Run(strings.Join(tc.args, "/"), func(t *testing.T) {
@@ -98,7 +100,7 @@ func TestCommandGroupsUsageAndNestedDeprecation(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	defer resetFlags(rootCmd)
 	for _, args := range [][]string{
-		{"document", "bogus"}, {"vault", "bogus"}, {"email", "bogus"},
+		{"document", "bogus"}, {"vault", "bogus"}, {"email", "bogus"}, {"record", "bogus"}, {"types", "bogus"},
 		{"document", "get", "id:12"}, {"get", "id:12"},
 		{"email", "documents", "release", "synthetic-operation"},
 		{"email-documents", "release", "synthetic-operation"},

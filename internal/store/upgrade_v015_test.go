@@ -277,6 +277,10 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, node.CurrentVersionID, "synthetic-detector")
 					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES('synthetic-watch','example',?,?,8)`, node.ID, fakeHash("e5"))
+					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('synthetic-watch','example','2026-01-01T00:00:00.000000000Z')`)
+					require.NoError(t, err)
 				}
 
 				definition, err := legacy.CreateSavedQuery(t.Context(), "Released", "", SavedQueryKindQuery, []byte(`{}`))
@@ -317,6 +321,9 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 					require.Equal(t, 17, revision)
 					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_face_scans WHERE content_version_id=? AND detector_fingerprint='synthetic-detector'`, node.CurrentVersionID).Scan(&scans))
 					require.Equal(t, 1, scans)
+					var preservedAbsences int
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM watch_source_absences WHERE watch_name='synthetic-watch' AND source_ref='example'`).Scan(&preservedAbsences))
+					require.Equal(t, 1, preservedAbsences)
 				}
 				firstRun := persistedSavedQueryRun(t, s, first)
 				secondRun := persistedSavedQueryRun(t, s, second)

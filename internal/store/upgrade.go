@@ -823,12 +823,20 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		return err
 	}
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return replaceImportedTables(ctx, source, tx, []string{
+		if err := replaceImportedTables(ctx, source, tx, []string{
 			"vault_change_head", "vault_changes", "watch_source_absences",
 			"photo_xmp_unsettled", "photo_xmp_unsettled_pending",
-			"photo_description_explicit_waiters", "photo_face_scans",
-			"photo_suggestions", "vector_membership_epochs",
-		})
+			"photo_face_scans", "photo_suggestions", "vector_membership_epochs",
+		}); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_description_explicit_waiters`); err != nil {
+			return err
+		}
+		// Derived-upload jobs and their waiters are intentionally absent from
+		// metadata import; copy only waiters whose parents were restored.
+		filter := `waiter_id IN (SELECT waiter_id FROM rendition_job_waiters WHERE ` + backedUpRenditionJobs(metadataJSONDialect{}) + `)`
+		return copyReleasedRows(ctx, source, tx, "photo_description_explicit_waiters", filter)
 	})
 }
 
@@ -960,7 +968,17 @@ func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, t
 	if filter != "" {
 		query += ` WHERE ` + filter
 	}
-	rows, err := source.QueryContext(ctx, query+` ORDER BY rowid`)
+	// WITHOUT ROWID tables have no rowid to order by; their primary key is
+	// included among these columns, giving a stable order for the copy.
+	var ddl string
+	if err := source.QueryRowContext(ctx, `SELECT sql FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&ddl); err != nil {
+		return fmt.Errorf("reading released %s definition: %w", table, err)
+	}
+	order := "rowid"
+	if strings.Contains(strings.ToUpper(ddl), "WITHOUT ROWID") {
+		order = columns
+	}
+	rows, err := source.QueryContext(ctx, query+` ORDER BY `+order)
 	if err != nil {
 		return fmt.Errorf("reading released %s: %w", table, err)
 	}

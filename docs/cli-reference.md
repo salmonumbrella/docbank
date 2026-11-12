@@ -2062,3 +2062,10 @@ builds; release builds inject both via `-ldflags`).
 `DOCBANK_LOG_LEVEL` sets the daemon or MCP process log level (`debug`, `info`,
 `warn`, `error`; default `info`) for `docbank daemon run`, background-spawned
 daemons, and `docbank mcp` diagnostics.
+
+## Record types and records
+
+`docbank types list|show|activate|deactivate` manages the built-in record
+types. `docbank record list|show|create|edit|retire` manages their records.
+See [Records and contracts](usage/records.md) for selectors, revision fences,
+and examples.

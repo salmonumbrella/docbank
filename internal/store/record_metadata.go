@@ -145,6 +145,13 @@ func validateRecordMetadataState(ctx context.Context, q metadataQuerier) error {
 			return err
 		}
 	}
+	var invalidRecords int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM records r LEFT JOIN record_types t ON t.type_id=r.type_id WHERE t.type_id IS NULL`).Scan(&invalidRecords); err != nil {
+		return err
+	}
+	if invalidRecords != 0 {
+		return errors.New("invalid record type reference")
+	}
 	var invalid int
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM record_values v LEFT JOIN records r ON r.record_id=v.record_id WHERE r.record_id IS NULL OR v.type_id<>r.type_id`).Scan(&invalid); err != nil {
 		return err

@@ -23,6 +23,8 @@ func checkRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	r, err := s.CreateRecord(ctx, "contract", recordtype.Record{Title: "Sample agreement", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}}})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, r.Revision)
+	_, err = s.UpdateRecord(ctx, r.ID, r.Revision, RecordPatch{})
+	require.ErrorIs(t, err, ErrInvalidRecord)
 	unchanged, err := s.UpdateRecord(ctx, r.ID, r.Revision, RecordPatch{Title: &r.Title})
 	require.NoError(t, err)
 	require.Equal(t, r.Revision, unchanged.Revision)
@@ -46,6 +48,7 @@ func TestRecordListRejectsInvalidSelectors(t *testing.T) {
 	s := newTestStore(t)
 	for _, opts := range []RecordListOptions{
 		{TypeID: "contract", AsOf: "2026-02-30", Limit: 100},
+		{TypeID: "contract", AsOf: "0000-01-01", Limit: 100},
 		{TypeID: "contract", AsOf: "2026-01-01", Status: "not_a_status", Limit: 100},
 		{TypeID: "contract", AsOf: "2026-01-01", Fields: map[string]any{"not_a_field": "x"}, Limit: 100},
 		{TypeID: "contract", AsOf: "2026-01-01", Before: map[string]string{"term.end": "2026-02-30"}, Limit: 100},
@@ -56,8 +59,9 @@ func TestRecordListRejectsInvalidSelectors(t *testing.T) {
 	}
 }
 
-func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {
-	s := newTestStore(t)
+func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	_, err := s.ActivateRecordType(ctx, "contract", 0)
 	require.NoError(t, err)
@@ -78,4 +82,8 @@ func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
 	require.Equal(t, "A", page[0].Title)
+}
+
+func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {
+	checkRecordListFiltersEffectiveStatusBeforePaging(t, newTestStore)
 }

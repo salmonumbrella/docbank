@@ -80,8 +80,14 @@ pdf renders one exact retained EML content version as a verified local PDF.`,
 	RunE:        commandGroupHelp,
 }
 
+var recordCmd = &cobra.Command{Use: "record", Short: "Manage typed records", GroupID: groupDocuments,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker}, RunE: commandGroupHelp}
+
+var recordTypesCmd = &cobra.Command{Use: "types", Short: "Manage record types", GroupID: groupDocuments,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker}, RunE: commandGroupHelp}
+
 func init() {
-	rootCmd.AddCommand(documentCmd, vaultCmd, emailCmd)
+	rootCmd.AddCommand(documentCmd, vaultCmd, emailCmd, recordCmd, recordTypesCmd)
 }
 
 // Register after the owning init has installed all flags and children. Keep the

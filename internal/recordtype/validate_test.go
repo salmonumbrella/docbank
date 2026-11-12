@@ -25,6 +25,7 @@ func TestContractValidation(t *testing.T) {
 		{"empty title", func(r *Record) { r.Title = " " }},
 		{"title too long", func(r *Record) { r.Title = strings.Repeat("x", 301) }},
 		{"control title", func(r *Record) { r.Title = "bad\x00title" }},
+		{"control at title edge", func(r *Record) { r.Title = "\nAgreement" }},
 		{"unknown field", func(r *Record) { r.Fields = map[string]any{"other": "x"} }},
 		{"invalid label", func(r *Record) { r.Fields = map[string]any{"contract_type": "Bad label"} }},
 		{"long terms", func(r *Record) { r.Fields = map[string]any{"summary": strings.Repeat("x", 8193)} }},

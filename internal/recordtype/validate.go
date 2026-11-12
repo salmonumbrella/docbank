@@ -20,6 +20,9 @@ func (e *ValidationError) Error() string { return fmt.Sprintf("%s: %s", e.Field,
 func invalid(field, reason string) error { return &ValidationError{Field: field, Reason: reason} }
 
 func NormalizeRecord(def Definition, r Record) (Record, error) {
+	if !utf8.ValidString(r.Title) || strings.IndexFunc(r.Title, unicode.IsControl) >= 0 {
+		return Record{}, invalid("title", "invalid title")
+	}
 	r.Title = norm.NFC.String(strings.TrimSpace(r.Title))
 	if !utf8.ValidString(r.Title) || len(r.Title) > 1200 || utf8.RuneCountInString(r.Title) < 1 || utf8.RuneCountInString(r.Title) > 300 || strings.IndexFunc(r.Title, unicode.IsControl) >= 0 {
 		return Record{}, invalid("title", "invalid title")
@@ -124,11 +127,15 @@ func normalizeLong(field, s string) (string, error) {
 			return "", invalid(field, "invalid text")
 		}
 	}
-	return norm.NFC.String(s), nil
+	s = norm.NFC.String(s)
+	if len(s) > 8192 {
+		return "", invalid(field, "invalid text")
+	}
+	return s, nil
 }
 func validDate(s string) bool {
 	t, err := time.Parse("2006-01-02", s)
-	return err == nil && t.Format("2006-01-02") == s
+	return err == nil && t.Year() >= 1 && t.Format("2006-01-02") == s
 }
 func EffectiveStatus(def Definition, status string, fields map[string]any, asOf string) string {
 	for _, d := range def.Status.Derived {
