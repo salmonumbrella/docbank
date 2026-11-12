@@ -27,7 +27,15 @@ func printContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 		parties = append(parties, p.Role+":"+p.DisplayName)
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\t%s\t%s\trevision %d\n", c.ContractID, c.Title, c.ContractType, c.EffectiveStatus, contractDate(c.StartsOn), contractDate(c.ExpiresOn), strings.Join(parties, ", "), c.Revision)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, d := range c.Documents {
+		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "  %s\tid:%d\t%s\t%s\tcurrent=%t\tavailable=%t\n", d.Role, d.NodeID, d.ContentVersionID, d.BlobSHA256, d.Current, d.Available); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	if jsonOutput {
