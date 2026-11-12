@@ -235,7 +235,7 @@ func TestWebSessionContractWriteRejectsForeignOrigin(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.APIKey = "synthetic-key"
 	cfg.Web.PublicOrigin = "https://archive.example.test"
-	server := NewServer(Deps{Store: catalog, Blobs: blobs, VaultRoot: dir, Cfg: cfg, WebURL: "https://archive.example.test/", WebLoginEnabled: true})
+	server := NewServer(Deps{Store: catalog, Blobs: blobs, VaultRoot: dir, Cfg: cfg, WebURL: "http://localhost:7777/", WebLoginEnabled: true})
 	t.Cleanup(server.Close)
 	login := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example.test/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"synthetic-key"}`))
 	login.Header.Set("Origin", "https://archive.example.test")
