@@ -186,3 +186,31 @@ func TestBoundedToolSuccessExactIntegerSerialization(t *testing.T) {
 	_, err = boundedToolSuccess(mustResolveSchema(&jsonschema.Schema{Type: "string"}), strings.Repeat("x", maxToolResponseBytes), nil)
 	require.ErrorIs(t, err, errToolResultTooLarge)
 }
+
+func TestBoundedToolSuccessPreservesEmptyCollections(t *testing.T) {
+	output := struct {
+		Items  []string          `json:"items"`
+		Labels map[string]string `json:"labels"`
+	}{}
+	schema := &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{
+		"items": {Type: "array"}, "labels": {Type: "object"},
+	}, Required: []string{"items", "labels"}}
+	result, err := boundedToolSuccess(mustResolveSchema(schema), output, nil)
+	require.NoError(t, err)
+	wire, err := json.Marshal(result)
+	require.NoError(t, err)
+	var decoded struct {
+		Structured struct {
+			Items  []string          `json:"items"`
+			Labels map[string]string `json:"labels"`
+		} `json:"structuredContent"`
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(wire, &decoded))
+	require.NotNil(t, decoded.Structured.Items)
+	require.NotNil(t, decoded.Structured.Labels)
+	require.NotEmpty(t, decoded.Content)
+	require.JSONEq(t, `{"items":[],"labels":{}}`, decoded.Content[0].Text)
+}
