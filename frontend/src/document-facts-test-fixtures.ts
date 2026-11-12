@@ -105,3 +105,17 @@ export const threeClaims = dates([
   ),
   claim("c3", "document_date", { state: "date", precision: "date", date: "2026-03-09" }),
 ]);
+
+// The safe facts route for one exact version, with no claims or people. App
+// tests whose fetch mocks predate Dates and People answer the selected
+// version's reads with this instead of an unrelated fallback payload.
+export function versionFactsResponse(url: string): Response | undefined {
+  const match = /\/api\/v1\/versions\/([^/?]+)\/(dates|people)(?:\?|$)/.exec(url);
+  if (!match) return undefined;
+  const content_version_id = decodeURIComponent(match[1]!);
+  return Response.json(
+    match[2] === "dates"
+      ? { ...dates([]), content_version_id }
+      : { ...people(), content_version_id },
+  );
+}

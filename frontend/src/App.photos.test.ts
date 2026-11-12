@@ -32,6 +32,7 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as snapshots from "./snapshots.js";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
+import { versionFactsResponse } from "./document-facts-test-fixtures.js";
 
 const savedImportCheckpoints = vi.hoisted(
   () => new Map<string, import("./photoImportStorage.js").PhotoImportCheckpoint>(),
@@ -60,6 +61,8 @@ beforeEach(() => {
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => {
   vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+    const facts = versionFactsResponse(url);
+    if (facts) return Promise.resolve(facts);
     return (
       photoMetadataResponse(url, init) ??
       (url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length
@@ -1849,6 +1852,8 @@ it.each([false, true])(
     let hiddenReads = 0;
     let finishRestore!: (response: Response) => void;
     const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+      const facts = versionFactsResponse(url);
+      if (facts) return facts;
       if (url.endsWith("/photos/hidden/lock")) {
         unlocked = false;
         return Response.json({});
