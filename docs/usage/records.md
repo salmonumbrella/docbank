@@ -26,7 +26,8 @@ output. A list supports `--status`, `--q` for a literal title substring,
 `--field contract_type=service`, `--before term.end=2027-01-01`, and
 `--after term.end=2026-01-01`. Date comparisons are exclusive. `--as-of`
 chooses the date used for derived status; otherwise the daemon's local date
-is used. Filtering happens before `--limit` and `--offset`.
+is used. Equality filters apply to text and label fields; use date bounds for dates.
+Filtering happens before `--limit` and `--offset`.
 
 A contract stores `draft`, `pending_signature`, `active`, `terminated`, or
 `cancelled`. It displays `expired` only when its stored status is `active` and
@@ -38,7 +39,7 @@ start, an end, or both; the start cannot follow the end. The optional `summary`,
 limit.
 
 Edit a record with `docbank record edit <id> --set summary='Revised terms'`.
-Use `--clear term.end` to clear a date endpoint. `--title`, `--status`, and
+Use `--clear term.end` to clear a date endpoint; editing one endpoint preserves the other. `--title`, `--status`, and
 `--note` change the corresponding top-level fields. `--expect-revision`
 refuses a stale edit; without it the CLI reads the current revision first. An
 unchanged edit keeps its revision. Retire a record with `docbank record retire

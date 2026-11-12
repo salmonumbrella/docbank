@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -14,7 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/recordtype"
 )
 
-func recordAssignments(def recordtype.Definition, sets, clears []string, current map[string]any) (map[string]any, error) {
+func recordAssignments(def recordtype.Definition, sets, clears []string) (map[string]any, error) {
 	fields := map[string]any{}
 	seen := map[string]bool{}
 	apply := func(key string, value any) error {
@@ -40,9 +39,6 @@ func recordAssignments(def recordtype.Definition, sets, clears []string, current
 		m, ok := fields[id].(map[string]any)
 		if !ok {
 			m = map[string]any{}
-			if previous, ok := current[id].(map[string]any); ok {
-				maps.Copy(m, previous)
-			}
 			fields[id] = m
 		}
 		m[part] = value
@@ -126,6 +122,9 @@ func init() {
 			return writeCLIJSON(cmd.OutOrStdout(), r)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (%s)\nType: %s\nStatus: %s\nRevision: %d\nNote: %s\n", r.Title, r.RecordID, r.TypeID, r.EffectiveStatus, r.Revision, r.Note)
+		if r.RetiredAt != nil {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Retired: %s\n", *r.RetiredAt)
+		}
 		keys := make([]string, 0, len(r.Fields))
 		for k := range r.Fields {
 			keys = append(keys, k)
@@ -149,7 +148,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		fields, err := recordAssignments(state.Definition, createSets, nil, nil)
+		fields, err := recordAssignments(state.Definition, createSets, nil)
 		if err != nil {
 			return err
 		}
@@ -194,7 +193,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		fields, err := recordAssignments(state.Definition, editSets, editClears, old.Fields)
+		fields, err := recordAssignments(state.Definition, editSets, editClears)
 		if err != nil {
 			return err
 		}

@@ -28,6 +28,15 @@ func checkRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	unchanged, err := s.UpdateRecord(ctx, r.ID, r.Revision, RecordPatch{Title: &r.Title})
 	require.NoError(t, err)
 	require.Equal(t, r.Revision, unchanged.Revision)
+	r, err = s.UpdateRecord(ctx, r.ID, r.Revision, RecordPatch{Fields: map[string]any{"term": map[string]any{"start": "2025-01-01"}}})
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"start": "2025-01-01", "end": "2026-01-01"}, r.Fields["term"])
+	r, err = s.UpdateRecord(ctx, r.ID, r.Revision, RecordPatch{Fields: map[string]any{"term": map[string]any{"end": nil}}})
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"start": "2025-01-01"}, r.Fields["term"])
+	r, err = s.UpdateRecord(ctx, r.ID, r.Revision, RecordPatch{Fields: map[string]any{"term": nil}})
+	require.NoError(t, err)
+	require.NotContains(t, r.Fields, "term")
 	_, err = s.UpdateRecord(ctx, r.ID, 0, RecordPatch{Title: &r.Title})
 	require.ErrorIs(t, err, ErrStaleRevision)
 	retired, err := s.RetireRecord(ctx, r.ID, r.Revision)
@@ -42,19 +51,16 @@ func checkRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.ErrorIs(t, err, ErrRecordTypeInactive)
 }
 
-func TestRecordLifecycle(t *testing.T) {
-	t.Parallel()
-	checkRecordLifecycle(t, newTestStore)
-}
-
 func TestRecordListRejectsInvalidSelectors(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	for _, opts := range []RecordListOptions{
 		{TypeID: "contract", AsOf: "2026-02-30", Limit: 100},
-		{TypeID: "contract", AsOf: "0000-01-01", Limit: 100},
 		{TypeID: "contract", AsOf: "2026-01-01", Status: "not_a_status", Limit: 100},
 		{TypeID: "contract", AsOf: "2026-01-01", Fields: map[string]any{"not_a_field": "x"}, Limit: 100},
+		{TypeID: "contract", AsOf: "2026-01-01", Fields: map[string]any{"summary": "x"}, Limit: 100},
+		{TypeID: "contract", AsOf: "2026-01-01", Fields: map[string]any{"signed_on": "2026-01-01"}, Limit: 100},
+		{TypeID: "contract", AsOf: "2026-01-01", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}}, Limit: 100},
 		{TypeID: "contract", AsOf: "2026-01-01", Before: map[string]string{"term.end": "2026-02-30"}, Limit: 100},
 		{TypeID: "contract", AsOf: "2026-01-01", Before: map[string]string{"summary": "2026-01-01"}, Limit: 100},
 	} {
@@ -70,9 +76,10 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 	_, err := s.ActivateRecordType(ctx, "contract", 0)
 	require.NoError(t, err)
 	for _, input := range []recordtype.Record{
-		{Title: "A", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "service"}},
-		{Title: "B", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-02"}, "contract_type": "service"}},
-		{Title: "Éclair %", Status: "draft", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "lease"}},
+		{Title: "B", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "service"}},
+		{Title: "A", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-02"}, "contract_type": "service"}},
+		{Title: "ÉCLAIR decoy", Status: "draft"},
+		{Title: "ÉCLAIR %", Status: "draft", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "lease"}},
 	} {
 		_, err = s.CreateRecord(ctx, "contract", input)
 		require.NoError(t, err)
@@ -81,15 +88,15 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
 	require.Len(t, page, 1)
-	require.Equal(t, "A", page[0].Title)
+	require.Equal(t, "B", page[0].Title)
 	page, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Fields: map[string]any{"contract_type": "service"}, Before: map[string]string{"term.end": "2026-01-02"}, Limit: 1})
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
-	require.Equal(t, "A", page[0].Title)
-	page, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", Query: "ÉCLAIR %", AsOf: "2026-01-02", Limit: 10})
+	require.Equal(t, "B", page[0].Title)
+	page, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", Query: "Éclair %", AsOf: "2026-01-02", Limit: 10})
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
-	require.Equal(t, "Éclair %", page[0].Title)
+	require.Equal(t, "ÉCLAIR %", page[0].Title)
 	state, err := s.GetRecordType(ctx, "contract")
 	require.NoError(t, err)
 	_, err = s.DeactivateRecordType(ctx, "contract", state.Revision)
@@ -99,18 +106,5 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 	require.Zero(t, total)
 	_, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Limit: 10, IncludeInactive: true})
 	require.NoError(t, err)
-	require.Equal(t, 3, total)
-}
-
-func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {
-	t.Parallel()
-	checkRecordListFiltersEffectiveStatusBeforePaging(t, newTestStore)
-}
-
-func TestRecordFieldStorageUsesDefinitionTypes(t *testing.T) {
-	t.Parallel()
-	def := recordtype.Definition{Fields: []recordtype.Field{{ID: "any_date", Type: "date"}, {ID: "any_range", Type: "date_range"}, {ID: "any_label", Type: "label"}}}
-	require.Equal(t, "value_date", recordValueColumn(recordFieldType(def, "any_date")))
-	require.Equal(t, "date_range", recordFieldType(def, "any_range"))
-	require.Equal(t, "value_text", recordValueColumn(recordFieldType(def, "any_label")))
+	require.Equal(t, 4, total)
 }

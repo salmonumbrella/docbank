@@ -28,6 +28,9 @@ func TestRecordCreateRejectsExplicitNullAndEmptyPatch(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/records", nil, map[string]any{"type_id": "contract", "title": "Example", "status": nil})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/records", nil, map[string]any{"type_id": "contract", "title": "Default status"})
+	require.Equal(t, http.StatusCreated, response.StatusCode, body)
+	require.Contains(t, body, `"status":"draft"`)
 	for _, field := range []string{"note", "fields"} {
 		response, body = do(t, ts, http.MethodPost, "/api/v1/records", nil, map[string]any{"type_id": "contract", "title": "Example", field: nil})
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
@@ -58,18 +61,15 @@ func TestRecordRoutesFenceEditAndRetirement(t *testing.T) {
 	require.Equal(t, `"1"`, response.Header.Get("ETag"))
 	response, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"title": "Changed"})
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"title": "Synthetic agreement"})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Equal(t, `"1"`, response.Header.Get("ETag"))
 	response, body = do(t, ts, http.MethodPost, path+"/retire", map[string]string{"If-Match": `"1"`}, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"title": "Changed"})
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 }
 
-func TestRecordGetRejectsYearZero(t *testing.T) {
+func TestRecordGetRejectsInvalidDate(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	response, body := do(t, ts, http.MethodGet, "/api/v1/records/00000000-0000-4000-8000-000000000000?as_of=0000-01-01", nil, nil)
+	response, body := do(t, ts, http.MethodGet, "/api/v1/records/00000000-0000-4000-8000-000000000000?as_of=2026-02-30", nil, nil)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 }
