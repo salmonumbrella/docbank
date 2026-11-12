@@ -215,7 +215,7 @@ var backendSuites = []backendSuite{
 		}},
 	}},
 	{name: "metadata-export", postgres: "native operations", scope: "Pinned logical metadata and backup-scoped export, audit verification and recovery into fresh SQLite; excludes PostgreSQL import, physical recovery and public opening.", scenarios: []backendScenario{
-		{"MetadataExportRecovery", func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, false) }, func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, true) }},
+		{"MetadataExportRecovery", func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, newPostgresQueryStore) }},
 		{"MetadataBackupAuthority", func(t *testing.T) { t.Helper(); checkMetadataBackupAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataBackupAuthority(t, newPostgresQueryStore) }},
 		{"MetadataExportFailures", func(t *testing.T) { t.Helper(); checkMetadataExportFailures(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataExportFailures(t, newPostgresQueryStore) }},
 		{"MetadataSnapshotPinned", nil, checkMetadataSnapshotPinnedPostgres},
@@ -2245,6 +2245,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPartyFiltersAndReferences(t, newPostgresQueryStore)
 		}},
+		{"ContractRevisionExhaustion", func(t *testing.T) { t.Helper(); checkContractRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkContractRevisionExhaustion(t, true) }},
 		{"ContractPartyHistory", func(t *testing.T) {
 			t.Helper()
 			checkContractPartyHistory(t, newTestStore)
