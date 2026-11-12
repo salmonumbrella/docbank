@@ -2,7 +2,8 @@ package taxrecord
 
 import (
 	"slices"
-	"strings"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 // EvidenceLink is the live authority relevant to an evidence requirement.
@@ -112,35 +113,14 @@ func ValidateDocument(v DocumentValues) error {
 	if (v.ContentVersionID == nil) != (v.ContentSHA256 == "") {
 		return invalid("content_version_id", "invalid pin")
 	}
-	if v.ContentVersionID != nil && !validDocumentUUID(*v.ContentVersionID) {
+	if v.ContentVersionID != nil && canonical.ValidateUUIDv4(*v.ContentVersionID) != nil {
 		return invalid("content_version_id", "invalid pin")
 	}
-	if v.EventID != nil && !validDocumentUUID(*v.EventID) {
+	if v.EventID != nil && canonical.ValidateUUIDv4(*v.EventID) != nil {
 		return invalid("event_id", "invalid value")
 	}
-	if v.ContentVersionID != nil {
-		if len(v.ContentSHA256) != 64 {
-			return invalid("content_sha256", "invalid pin")
-		}
-		for _, c := range v.ContentSHA256 {
-			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-				return invalid("content_sha256", "invalid pin")
-			}
-		}
+	if v.ContentVersionID != nil && !canonical.IsSHA256Hex(v.ContentSHA256) {
+		return invalid("content_sha256", "invalid pin")
 	}
 	return nil
-}
-func validDocumentUUID(s string) bool {
-	if len(s) != 36 || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' || s[14] != '4' || !strings.ContainsRune("89ab", rune(s[19])) {
-		return false
-	}
-	for i, c := range s {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			continue
-		}
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-			return false
-		}
-	}
-	return true
 }
