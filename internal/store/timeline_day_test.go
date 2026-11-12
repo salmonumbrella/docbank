@@ -88,6 +88,20 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	require.NoError(t, err)
 	_, _, err = s.Move(ctx, nodes[1].ID, s.RootID(), "renamed.txt", nodes[1].Revision)
 	require.NoError(t, err)
+	changedFingerprint := fakeHash("a3")
+	_, err = s.BumpDocumentEventInputEpoch(ctx, changedFingerprint)
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, nodes[1].CurrentVersionID)
+	changed := documentEventRecord(t, s.VaultID(), nodes[1].CurrentVersionID, "a2")
+	changed.Events[0].DateValue, changed.Events[0].RawValue = "2019-03-05", "2019-03-05"
+	changed.Events[0].AxisKey = "2019-03-05T00:00:00.000000000"
+	changed.Events[0].EventID = document.DocumentEventID(changed.VaultUID, changed.ContentVersionID, changed.Events[0].SourceKey, changed.Events[0].DateKind, changed.Events[0].DateValue, changed.Events[0].Precision, changed.Events[0].TimezoneKind, changed.Events[0].EvidenceSHA256)
+	changed.Primaries[0].EventID = changed.Events[0].EventID
+	primary, ok := document.SelectPrimaryEvent(changed.Events, changed.DocumentKind, "vault", "safe")
+	require.True(t, ok)
+	changed.Primaries = append(changed.Primaries, primary)
+	_, err = s.PublishDocumentEvents(ctx, target, changedFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, changed))
+	require.NoError(t, err)
 	req.Cursor = first.NextCursor
 	for name, change := range map[string]func(*TimelineDayRequest){
 		"limit":    func(r *TimelineDayRequest) { r.Limit = 2 },
@@ -118,6 +132,7 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	require.NotEqual(t, first.Items[0].NodeID, second.Items[0].NodeID)
 	require.Equal(t, "a2.txt", second.Items[0].Name)
 	require.Equal(t, "/a2.txt", second.Items[0].Path)
+	require.Equal(t, "2019-03-04T09:30:00", second.Items[0].Event.DateValue)
 	require.Empty(t, second.NextCursor)
 	_, err = svc.TimelineDay(ctx, "other", req)
 	require.ErrorIs(t, err, ErrTimelineCursorMismatch)

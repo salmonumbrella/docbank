@@ -237,6 +237,17 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 		require.Equal(t, tc.name == "exact", hasUTC)
 		e.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, e.SourceKey, e.DateKind, e.DateValue, e.Precision, e.TimezoneKind, e.EvidenceSHA256)
 		record.Primaries[0].EventID = e.EventID
+		if tc.name == "exact" {
+			// A second eligible day-level claim must not put the same version
+			// in both the timed list and the date strip.
+			other := *e
+			other.DateKind, other.DateValue, other.RawValue = "modified", "2019-03-04", "2019-03-04"
+			other.Precision, other.TimezoneKind, other.OffsetSeconds, other.UTCKey = "date", "omitted", nil, ""
+			other.AxisKey = "2019-03-04T00:00:00.000000000"
+			other.SourceKey += "/modified"
+			other.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, other.SourceKey, other.DateKind, other.DateValue, other.Precision, other.TimezoneKind, other.EvidenceSHA256)
+			record.Events = append(record.Events, other)
+		}
 		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
 		require.True(t, ok)
 		record.Primaries = append(record.Primaries, primary)
@@ -263,6 +274,14 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 	require.Equal(t, ids["date"], page.DateOnly[0].NodeID)
 	require.Len(t, page.MonthOnly, 2)
 	require.EqualValues(t, days.Days[0].Count, len(page.Items)+len(page.DateOnly))
+	scope.DateKinds = []string{"created", "modified"}
+	selected, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, selected.Items, 2)
+	require.Len(t, selected.DateOnly, 1)
+	require.Equal(t, ids["exact"], selected.Items[0].NodeID)
+	require.Equal(t, "date-kind-switch", selected.Items[0].Rule)
+	scope.DateKinds = nil
 
 	// The instant crosses the calendar boundary in Toronto. Floating and
 	// date-only claims keep their civil date in either view zone.
