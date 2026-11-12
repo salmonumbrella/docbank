@@ -28,6 +28,7 @@ type Error struct {
 	Detail                   string              `json:"detail,omitzero"`
 	Code                     string              `json:"code,omitzero"`
 	Errors                   []string            `json:"errors,omitempty"`
+	Candidates               []string            `json:"candidates,omitempty" maxItems:"5"`
 	ObservedScopeCount       int                 `json:"observed_scope_count,omitzero"`
 	FaceIDs                  []string            `json:"face_ids,omitzero" maxItems:"20"`
 	FaceVersionIDs           []string            `json:"face_version_ids,omitzero" maxItems:"20" doc:"The content version of each face in face_ids, in the same order."`

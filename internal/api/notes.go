@@ -60,7 +60,9 @@ type NotesStatus struct {
 	Items []NoteWatchStatus `json:"items"`
 }
 
-func registerNoteRoutes(api huma.API, d Deps) {
+func registerNoteRoutes(api huma.API, d Deps, cursors *documentQueryService) {
+	registerNoteTextRoute(api, d)
+	registerNoteOutlineRoute(api, d, cursors)
 	type byPathInput struct {
 		Path string `query:"path" required:"true"`
 	}
