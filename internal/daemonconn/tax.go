@@ -169,7 +169,10 @@ func validTaxAccount(a api.TaxAccount) bool {
 	if taxrecord.ValidateAccount(values) != nil {
 		return false
 	}
-	for _, timestamp := range []*string{&a.CreatedAt, &a.UpdatedAt, a.RetiredAt} {
+	return validTaxTimestamps(a.CreatedAt, a.UpdatedAt, a.RetiredAt)
+}
+func validTaxTimestamps(created, updated string, retired *string) bool {
+	for _, timestamp := range []*string{&created, &updated, retired} {
 		if timestamp != nil {
 			if _, err := time.Parse(time.RFC3339Nano, *timestamp); err != nil {
 				return false
