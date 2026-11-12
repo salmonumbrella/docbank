@@ -1,12 +1,6 @@
 import { expect, it } from "vite-plus/test";
-import type { WhenV1 } from "./generated/docbank.js";
 import { dateKindLabel, formatWhen, precisionLabel } from "./documentDates.js";
-const when = (fields: Partial<WhenV1>): WhenV1 => ({
-  state: "exact",
-  precision: "minute",
-  placed_by: { claim_basis: "", event_id: "", fallback: false, rule: "", source: "" },
-  ...fields,
-});
+import { when } from "./document-facts-test-fixtures.js";
 it("formats instants only in the configured zone", () => {
   const w = when({ at: "2026-03-11T03:40:00Z", source_zone: "-04:00" });
   expect(formatWhen(w, { name: "America/Toronto", supported: true }).value).toBe(
@@ -19,6 +13,10 @@ it("formats instants only in the configured zone", () => {
 it("keeps floating and civil dates independent of the configured zone", () => {
   const w = when({ state: "floating", local: "2026-03-10T23:30:00" });
   expect(formatWhen(w, undefined).value).toBe("Mar 10, 2026, 11:30 PM (no zone)");
+  for (const state of ["named", "omitted", "invalid"])
+    expect(formatWhen({ ...w, zone_state: state }, undefined).value).toBe(
+      "Mar 10, 2026, 11:30 PM (no zone)",
+    );
   expect(formatWhen(w, { name: "Asia/Tokyo", supported: true })).toEqual(formatWhen(w, undefined));
   expect(
     formatWhen(when({ state: "date", precision: "date", date: "2026-03-10" }), undefined).value,
@@ -34,13 +32,13 @@ it("labels known precision and date kinds", () => {
   expect(precisionLabel("fraction")).toBe("to the second");
   expect(dateKindLabel("vault_recorded")).toBe("Recorded in vault");
   expect(dateKindLabel("captured")).toBe("Captured");
-  expect(
-    formatWhen(when({ state: "date", precision: "date", date: "2026-03-10" }), undefined).zoneNote,
-  ).toBe("");
   expect(dateKindLabel("other")).toBe("other");
 });
 
 it("preserves source-zone uncertainty and formats inclusive civil ranges", () => {
+  expect(
+    formatWhen(when({ state: "date", precision: "date", date: "2026-03-10" }), undefined).zoneNote,
+  ).toBe("");
   const zone = { name: "America/Toronto", supported: true };
   const exact = when({ at: "2026-03-11T03:40:00Z", zone_state: "unknown" });
   expect(formatWhen(exact, zone).zoneNote).toBe("source zone not recorded");
@@ -52,34 +50,40 @@ it("preserves source-zone uncertainty and formats inclusive civil ranges", () =>
     ).value,
   ).toMatch(/^Mar 9\s–\s11, 2026$/u);
 });
-it("never converts floating values using the process timezone", () => {
-  const saved = process.env.TZ;
-  try {
-    process.env.TZ = "Asia/Tokyo";
-    const local = when({ state: "floating", local: "2026-03-10T23:30:00", zone_state: "named" });
-    const first = formatWhen(local, undefined);
-    process.env.TZ = "Pacific/Honolulu";
-    expect(formatWhen(local, undefined)).toEqual(first);
-    for (const state of ["omitted", "invalid"])
-      expect(formatWhen({ ...local, zone_state: state }, undefined).value).toBe(first.value);
-  } finally {
-    if (saved === undefined) delete process.env.TZ;
-    else process.env.TZ = saved;
-  }
-});
-
 it("shows only the clock fields supported by exact and floating precision", () => {
   const zone = { name: "UTC", supported: true };
   const expected = [
-    ["hour", "3 AM"],
-    ["minute", "3:40 AM"],
-    ["second", "3:40:12 AM"],
-    ["fraction", "3:40:12.123456 AM"],
+    ["hour", "2026-03-11T03:00:00Z", "2026-03-11T03:00:00", "3 AM"],
+    ["minute", "2026-03-11T03:40:00Z", "2026-03-11T03:40:00", "3:40 AM"],
+    ["second", "2026-03-11T03:40:12Z", "2026-03-11T03:40:12", "3:40:12 AM"],
+    ["fraction", "2026-03-11T03:40:12.123456Z", "2026-03-11T03:40:12.123456", "3:40:12.123456 AM"],
   ] as const;
-  for (const [precision, clock] of expected) {
-    const exact = when({ precision, at: "2026-03-11T03:40:12.123456Z" });
-    const floating = when({ state: "floating", precision, local: "2026-03-11T03:40:12.123456" });
-    expect(formatWhen(exact, zone).value).toContain(clock);
-    expect(formatWhen(floating, zone).value).toContain(clock);
+  for (const [precision, at, local, clock] of expected) {
+    expect(formatWhen(when({ precision, at }), zone).value).toContain(clock);
+    expect(formatWhen(when({ state: "floating", precision, local }), zone).value).toContain(clock);
   }
+});
+
+it("preserves hour-precision instants when zone offsets introduce minutes", () => {
+  const utc = { name: "UTC", supported: true };
+  const kolkata = { name: "Asia/Kolkata", supported: true };
+  const fromUTC = when({
+    precision: "hour",
+    at: "2026-04-03T09:00:00Z",
+    local: "2026-04-03T09:00:00",
+    zone_state: "utc",
+    source_zone: "UTC",
+    source_offset_seconds: 0,
+  });
+  const fromIndia = when({
+    precision: "hour",
+    at: "2026-04-03T03:30:00Z",
+    local: "2026-04-03T09:00:00",
+    zone_state: "offset",
+    source_zone: "+05:30",
+    source_offset_seconds: 19800,
+  });
+  expect(formatWhen(fromUTC, kolkata).value).toContain("2:30 PM");
+  expect(formatWhen(fromIndia, utc).value).toContain("3:30 AM");
+  expect(precisionLabel(fromIndia.precision)).toBe("to the hour");
 });

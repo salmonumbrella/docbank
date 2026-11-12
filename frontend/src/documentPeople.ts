@@ -18,7 +18,7 @@ export function roleRows(data: VersionPeople) {
   return roles
     .map(([role, label]) => {
       const people = new Map<string, PersonRef>();
-      for (const edge of data.edges) {
+      for (const edge of data.state === "pending" || data.state === "failed" ? [] : data.edges) {
         if (edge.role === role && !people.has(edge.person_id))
           people.set(edge.person_id, {
             id: edge.person_id,
@@ -45,7 +45,9 @@ export function roleRows(data: VersionPeople) {
 
 export function pendingNames(data: VersionPeople) {
   const names = new Map<string, string>();
-  for (const candidate of data.unresolved)
+  for (const candidate of data.state === "pending" || data.state === "failed"
+    ? []
+    : data.unresolved)
     if (!names.has(candidate.candidate_id)) names.set(candidate.candidate_id, candidate.raw_label);
   return [...names].map(([candidateID, name]) => ({ candidateID, name }));
 }

@@ -40,7 +40,6 @@ func TestWebMapConfiguration(t *testing.T) {
 			body := response.Body.String()
 			assert.Contains(t, strings.ToLower(body), "<!doctype html>")
 			assert.Contains(t, body, `name="docbank-map-tiles"`)
-			assert.Contains(t, body, `<meta name="docbank-timeline-timezone" content="America/Toronto">`)
 			page := html.UnescapeString(body)
 			assert.NotContains(t, page, "synthetic-provider-key")
 			assert.NotContains(t, page, "tiles.example.org/{z}")
@@ -63,11 +62,24 @@ func TestWebMapConfiguration(t *testing.T) {
 		require.Equal(t, http.StatusOK, disabled.Code)
 		assert.Contains(t, disabled.Header().Get("Content-Security-Policy"), "img-src 'self' data: blob:;")
 		assert.Contains(t, html.UnescapeString(disabled.Body.String()), `"tile_url":""`)
-		assert.Contains(t, disabled.Body.String(), `<meta name="docbank-timeline-timezone" content="UTC">`)
 	}
 	disabled := httptest.NewRecorder()
 	mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, webMapTilePath+"/3/4/5", nil))
 	assert.Equal(t, http.StatusNotFound, disabled.Code)
+}
+
+func TestWebTimelineTimezoneBootstrap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ zone, want string }{
+		{"America/Toronto", "America/Toronto"}, {"", "UTC"},
+	} {
+		mux := http.NewServeMux()
+		registerWeb(mux, true, "http://localhost:8080", "", "", tc.zone, config.MapTilesConfig{}, nil)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+		require.Equal(t, http.StatusOK, response.Code)
+		assert.Contains(t, response.Body.String(), `<meta name="docbank-timeline-timezone" content="`+tc.want+`">`)
+	}
 }
 
 type tileRig struct {
