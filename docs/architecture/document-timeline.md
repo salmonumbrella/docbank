@@ -97,6 +97,18 @@ identities in the same transaction, so a stale worker cannot publish over
 changed evidence. Source metadata is decoded before the write transaction.
 Events, actors, and primary choices stay together in the canonical record.
 
+The source metadata extractor retains email `Received` headers as raw strings. It does not derive a received-date claim from them, so it does not classify those strings as dates. Email `Date` claims use the shared email zone classification, including invalid numeric offsets.
+
+The current recipe adds `iana` and `rfc5322` timezone kinds to
+`document-events/v1`. The version identifies the shape of this disposable
+projection; the recipe fingerprint identifies its derivation. The current
+reader accepts older v1 records and the recipe change rebuilds their keys.
+Older strict v1 codecs reject the new kinds, so consumers decoding these
+records independently must upgrade with the producer. Logical backups do not
+contain these derived records; released-vault upgrades rebuild them from
+retained authority. This is a vocabulary extension, not an assertion that an
+older codec can read newer bytes.
+
 A rebuild advances the input epoch and scans every retained version, including
 history and trash. The current recipe reads active `source-metadata/v1`, exact
 provenance bindings, and the content-version record. It then publishes a fresh
@@ -199,3 +211,20 @@ Each claim's `when` describes its precision and source zone without inventing an
 instant for a floating or date-only value. A response reports `published`,
 `pending`, `failed`, or `none`; stale claims are not returned. If configured,
 `open.web` points to the version on the operator's public web origin.
+
+## Date search projection
+
+`document_date_keys` is a derived projection written with each event
+generation. It stores the civil date, month and year alongside the existing
+axis and UTC keys. All-day starts use their sibling end to represent the
+inclusive span. A key is sensitive when its event or any actor is sensitive.
+The current head selects the generation used for search. Backup metadata does
+not include these keys; the timeline rebuild derives them from retained
+sources after restore or upgrade.
+
+Calendar IANA zones resolve overlaps to the earlier instant and gaps to the
+first instant after the gap. Email RFC 5322 zone names use their fixed offsets;
+unknown names and `-0000` remain floating. The stored instant is validated
+without resolving it again, so changing time-zone data does not invalidate a
+retained generation. The event derivation recipe advances when these rules
+change; `primary-rule/v1` remains unchanged.

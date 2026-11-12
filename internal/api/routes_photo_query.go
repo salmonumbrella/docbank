@@ -75,8 +75,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		}
 		value, err := query.Parse(in.Body.Query)
 		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
+			return nil, queryInputError(err)
 		}
+		value.TimezoneDefaulted = false
 		metadataSort := value.Sort
 		value = photoRankingQuery(value)
 		request := photoRankingRequest(value, in.Body.Hidden, store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint})

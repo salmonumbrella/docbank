@@ -49,7 +49,9 @@ func EventUTCKey(
 		return "", false, errors.New("invalid timezone kind")
 	}
 	switch zone {
-	case "offset":
+	case "iana":
+		return "", false, errors.New("IANA UTC keys require the resolved instant")
+	case "offset", "rfc5322":
 		if offsetSeconds == nil || *offsetSeconds < -86399 || *offsetSeconds > 86399 {
 			return "", false, errors.New("invalid offset")
 		}
@@ -64,16 +66,27 @@ func EventUTCKey(
 	}
 
 	if precision == "year" || precision == "month" || precision == "date" ||
-		(zone != "utc" && zone != "offset") {
+		(zone != "utc" && zone != "offset" && zone != "rfc5322") {
 		return "", false, nil
 	}
-	if zone == "offset" {
+	if zone == "offset" || zone == "rfc5322" {
 		civil = civil.Add(-time.Duration(*offsetSeconds) * time.Second)
 	}
 	if civil.Year() < 1 || civil.Year() > 9999 {
 		return "", false, errors.New("UTC key outside four-digit year range")
 	}
 	return civil.Format("2006-01-02T15:04:05.000000000Z"), true, nil
+}
+
+// EventInstantUTCKey renders an instant with the event contract's UTC key format.
+func EventInstantUTCKey(instant time.Time) (string, error) {
+	value := strings.TrimSuffix(instant.UTC().Format(time.RFC3339Nano), "Z")
+	precision := EventPrecision("second")
+	if strings.Contains(value, ".") {
+		precision = "fraction"
+	}
+	key, _, err := EventUTCKey(value, precision, "utc", nil)
+	return key, err
 }
 
 func EventAxisKey(

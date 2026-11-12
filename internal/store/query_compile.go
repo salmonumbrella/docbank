@@ -50,8 +50,11 @@ type compiledQueryFragment struct {
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
 // parameterized document-membership predicate.
 type CompiledQuery struct {
-	Query        query.Query
-	Dependencies []query.Dependency
+	Timezone          string
+	TimezoneDefaulted bool
+	FullDisclosure    bool
+	Query             query.Query
+	Dependencies      []query.Dependency
 
 	photoHidden       bool
 	withoutSuggestion bool
@@ -69,6 +72,9 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
+	fullDisclosure       bool
+	requireFreshDates    bool
+	dateZone             string
 	photoDisplayMetadata bool
 	photoMetadataSet     bool
 	photoMetadataDensity func(string) (bool, error)
@@ -83,6 +89,16 @@ func (c queryCompiler) compile(
 	if err != nil {
 		return CompiledQuery{}, err
 	}
+	zone, defaulted := resolveDocumentDateZones(&resolved, queryDefaultZone(ctx))
+	if zone != "" && c.requireFreshDates {
+		if r, ok := resolver.(queryResolver); ok {
+			if q, ok := r.q.(metadataQuerier); ok {
+				if err := requireDocumentDateIndex(ctx, q); err != nil {
+					return CompiledQuery{}, err
+				}
+			}
+		}
+	}
 	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
 		c.photoMetadataDensity = func(value string) (bool, error) {
 			return r.photoMetadataHeadsFirst(ctx, value)
@@ -93,7 +109,7 @@ func (c queryCompiler) compile(
 		return CompiledQuery{}, err
 	}
 	compiled := CompiledQuery{
-		Query: resolved.Query, Dependencies: resolved.Dependencies,
+		Query: resolved.Query, Dependencies: resolved.Dependencies, Timezone: zone, TimezoneDefaulted: defaulted, FullDisclosure: c.fullDisclosure,
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
 		positiveTextTerms: query.PositiveTextTerms(resolved),
@@ -111,6 +127,10 @@ func (compiled CompiledQuery) PositiveTextTerms() []string {
 }
 
 func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, error) {
+	c.dateZone = ""
+	if resolved.Query.Timezone != nil {
+		c.dateZone = *resolved.Query.Timezone
+	}
 	if resolved.Query.Sort.Field == "relevance" && !c.photoDisplayMetadata {
 		return compiledQueryFragment{},
 			compileExpressionError(0, len(resolved.Query.Text), "relevance sort is not supported by bound queries")
@@ -125,10 +145,17 @@ func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compi
 			expression = c.compileLexicalPredicate(fts, true)
 		}
 	} else {
-		expression, err = c.compileResolvedExpression(resolved.Expression, "")
+		expression, err = c.compileDateScope(resolved.Expression, resolved.Query.Filters.DocumentDate)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
+	}
+	if resolved.Query.Syntax == "simple" && resolved.Query.Filters.DocumentDate != nil {
+		part, dateErr := c.compileDatePredicate(dateScope{ranges: [][2]string{{resolved.Query.Filters.DocumentDate.From, resolved.Query.Filters.DocumentDate.To}}, kinds: resolved.Query.Filters.DocumentDate.Kinds, precisionGroups: datePrecisionGroup(resolved.Query.Filters.DocumentDate.Precisions)})
+		if dateErr != nil {
+			return compiledQueryFragment{}, dateErr
+		}
+		expression = joinCompiledFragments([]compiledQueryFragment{expression, part}, ` AND `)
 	}
 	filters, err := c.compileQueryFilters(resolved.Query.Filters, 0, len(resolved.Query.Text))
 	if err != nil {
@@ -192,11 +219,17 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 		if c.pdfOnly && query.PDFFieldKind(syntax.Field) == "" {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
 		}
+		if field == "" && slices.Contains([]string{"date", "date_kind", "date_precision"}, syntax.Field) {
+			return c.compileDateScope(expression, nil)
+		}
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")
 		}
 		return c.compileResolvedExpression(expression.Children[0], syntax.Field)
 	case query.ExpressionAnd, query.ExpressionOr:
+		if syntax.Kind == query.ExpressionAnd && field == "" {
+			return c.compileDateScope(expression, nil)
+		}
 		parts, err := c.compileAssociativeChildren(expression, field, syntax.Kind)
 		if err != nil {
 			return compiledQueryFragment{}, err
@@ -326,9 +359,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 	nested, err := c.compileResolvedQuery(*expression.Saved)
 	if err != nil {
 		if expressionErr, ok := errors.AsType[*query.ExpressionError](err); ok {
-			return compiledQueryFragment{}, compileExpressionError(
-				expression.Syntax.Start, expression.Syntax.End, expressionErr.Message,
-			)
+			return compiledQueryFragment{}, &query.ExpressionError{Offset: expression.Syntax.Start, End: expression.Syntax.End, Message: expressionErr.Message, Cause: expressionErr}
 		}
 		return compiledQueryFragment{}, err
 	}

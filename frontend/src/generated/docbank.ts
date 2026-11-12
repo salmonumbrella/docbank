@@ -2075,6 +2075,13 @@ export interface DerivativePurgePlanRequest {
   content_version_ids?: string[];
 }
 
+export interface DocumentDateFilter {
+  from: string;
+  kinds?: string[];
+  precisions?: string[];
+  to: string;
+}
+
 export interface DocumentEventCoverage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3366,6 +3373,7 @@ export interface Filters {
   color_red_max?: string | null;
   /** @nullable */
   color_red_min?: string | null;
+  document_date?: DocumentDateFilter;
   exclude_collection_ids?: string[];
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
@@ -5412,6 +5420,22 @@ export interface WorkspaceQueryCoverage {
   profile_fingerprint?: string;
 }
 
+export type SavedQueryDateSchemaPrecisionsItem = typeof SavedQueryDateSchemaPrecisionsItem[keyof typeof SavedQueryDateSchemaPrecisionsItem];
+
+
+export const SavedQueryDateSchemaPrecisionsItem = {
+  exact: 'exact',
+  day: 'day',
+  coarse: 'coarse',
+} as const;
+
+export interface SavedQueryDateSchema {
+  from: string;
+  kinds?: string[];
+  precisions?: SavedQueryDateSchemaPrecisionsItem[];
+  to: string;
+}
+
 export type SavedQueryFiltersSchemaFlagsItem = typeof SavedQueryFiltersSchemaFlagsItem[keyof typeof SavedQueryFiltersSchemaFlagsItem];
 
 
@@ -5559,6 +5583,7 @@ export interface SavedQueryFiltersSchema {
      * @nullable
      */
   color_red_min?: string | null;
+  document_date?: SavedQueryDateSchema;
   /** @maxItems 64 */
   exclude_collection_ids?: string[];
   /** @maxItems 64 */
@@ -5694,6 +5719,7 @@ export const SavedQuerySortSchemaField = {
   capture_time: 'capture_time',
   import_time: 'import_time',
   added_time: 'added_time',
+  document_date: 'document_date',
 } as const;
 
 export interface SavedQuerySortSchema {
@@ -5725,6 +5751,8 @@ export interface SavedQueryV1Schema {
   syntax?: SavedQueryV1SchemaSyntax;
   /** @maxLength 8192 */
   text?: string;
+  timezone?: string;
+  timezone_defaulted?: boolean;
   v?: SavedQueryV1SchemaV;
 }
 
@@ -6754,6 +6782,9 @@ export interface Query {
   sort: Sort;
   syntax: string;
   text: string;
+  /** @nullable */
+  timezone?: string | null;
+  timezone_defaulted?: boolean;
   v: number;
 }
 
@@ -8317,6 +8348,8 @@ export interface WorkspaceQueryResponse {
   snapshot_fingerprint: string;
   /** @pattern ^[0-9a-f]{32}$ */
   snapshot_id: string;
+  timezone?: string;
+  timezone_defaulted: boolean;
   /** @minimum 0 */
   total: number;
   /** @minimum 0 */
@@ -9280,6 +9313,17 @@ export interface WebTabSession {
   upload_secret: string;
 }
 
+/**
+ * Full date disclosure requires an API key
+ */
+export type WorkspaceQueryCreateRequestDisclosure = typeof WorkspaceQueryCreateRequestDisclosure[keyof typeof WorkspaceQueryCreateRequestDisclosure];
+
+
+export const WorkspaceQueryCreateRequestDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -9306,6 +9350,8 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Full date disclosure requires an API key */
+  disclosure?: WorkspaceQueryCreateRequestDisclosure;
   /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;

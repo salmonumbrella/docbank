@@ -14,11 +14,12 @@ const maxWorkspaceQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // WorkspaceQueryCreateRequest opens one exact, daemon-lifetime query snapshot.
 type WorkspaceQueryCreateRequest struct {
-	Photos   bool         `json:"photos,omitempty"`
-	Query    QueryPayload `json:"query"`
-	Profile  string       `json:"profile,omitempty" maxLength:"128"`
-	PageSize int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
+	Disclosure string       `json:"disclosure,omitempty" enum:"safe,full" doc:"Full date disclosure requires an API key"`
+	Photos     bool         `json:"photos,omitempty"`
+	Query      QueryPayload `json:"query"`
+	Profile    string       `json:"profile,omitempty" maxLength:"128"`
+	PageSize   int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
+	Facets     []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
 }
 
 // WorkspaceQueryPageRequest reads one page using only the opaque cursor minted
@@ -120,6 +121,8 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 
 // WorkspaceQueryResponse carries complete frozen metadata and one row page.
 type WorkspaceQueryResponse struct {
+	Timezone          string `json:"timezone,omitempty"`
+	TimezoneDefaulted bool   `json:"timezone_defaulted"`
 	PhotoSearchStatus
 
 	Query               QueryPayload               `json:"query"`
@@ -179,6 +182,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		return WorkspaceQueryResponse{}, err
 	}
 	out := WorkspaceQueryResponse{
+		Timezone: page.Timezone, TimezoneDefaulted: page.TimezoneDefaulted,
 		PhotoSearchStatus: fromStorePhotoSearchStatus(page.PhotoRanking),
 		Query:             QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
 		QueryFingerprint: page.QueryFingerprint, MemberHash: page.MemberHash,

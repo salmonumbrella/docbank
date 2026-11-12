@@ -11,9 +11,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func TestQuerySnapshotCachePagesAreOpaqueOwnedAndCallerIsolated(t *testing.T) {
@@ -583,4 +585,59 @@ func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T)
 			assert.Equal(t, snapshotCacheStats{}, service.stats())
 		})
 	}
+}
+
+func TestQuerySnapshotRetainsTimezoneOnLaterPages(t *testing.T) {
+	s := newTestStore(t)
+	for i := range 51 {
+		name := fmt.Sprintf("date-%02d.txt", i)
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(name), 1, "text/plain")
+		require.NoError(t, err)
+	}
+	driveDocumentEventWorker(t, s)
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	value := snapshotTestQuery(t, `{"sort":{"field":"document_date"}}`)
+	ctx := WithQueryDefaultTimezone(t.Context(), "America/Toronto")
+	first, err := service.Create(ctx, "owner", SnapshotRequest{Query: value, PageSize: 50})
+	require.NoError(t, err)
+	require.Equal(t, "America/Toronto", first.Timezone)
+	require.True(t, first.TimezoneDefaulted)
+	second, err := service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
+	require.NoError(t, err)
+	require.Equal(t, first.Timezone, second.Timezone)
+	require.True(t, second.TimezoneDefaulted)
+	explicit := snapshotTestQuery(t, `{"timezone":"UTC","sort":{"field":"document_date"}}`)
+	explicitPage, err := service.Create(ctx, "owner", SnapshotRequest{Query: explicit})
+	require.NoError(t, err)
+	require.Equal(t, "UTC", explicitPage.Timezone)
+	require.False(t, explicitPage.TimezoneDefaulted)
+}
+
+func TestDocumentDateSortKeepsUndatedLast(t *testing.T) {
+	for _, direction := range []string{"asc", "desc"} {
+		rows := []SnapshotRow{
+			{SortKey: "", SnapshotMember: SnapshotMember{NodeID: 1}},
+			{SortKey: "2026-03-10T00:00:00.000000000", SnapshotMember: SnapshotMember{NodeID: 2}},
+			{SortKey: "2026-03-09T00:00:00.000000000", SnapshotMember: SnapshotMember{NodeID: 3}},
+		}
+		sortSnapshotRows(rows, query.Sort{Field: "document_date", Direction: direction})
+		require.Equal(t, int64(1), rows[2].NodeID)
+		if direction == "asc" {
+			require.Equal(t, int64(3), rows[0].NodeID)
+		} else {
+			require.Equal(t, int64(2), rows[0].NodeID)
+		}
+	}
+}
+
+func TestPhotoDocumentDateSortPreservesPosition(t *testing.T) {
+	rows := []SnapshotRow{
+		{SortKey: "0001", dateSortSet: true, dateSortKey: "", SnapshotMember: SnapshotMember{NodeID: 1}},
+		{SortKey: "0002", dateSortSet: true, dateSortKey: "2026-03-09", SnapshotMember: SnapshotMember{NodeID: 2}},
+		{SortKey: "0003", dateSortSet: true, dateSortKey: "2026-03-10", SnapshotMember: SnapshotMember{NodeID: 3}},
+	}
+	sortSnapshotRows(rows, query.Sort{Field: "document_date", Direction: "desc"})
+	require.Equal(t, []int64{3, 2, 1}, []int64{rows[0].NodeID, rows[1].NodeID, rows[2].NodeID})
+	require.Equal(t, []string{"0003", "0002", "0001"}, []string{rows[0].SortKey, rows[1].SortKey, rows[2].SortKey})
 }
