@@ -45,11 +45,34 @@ jobs:
           kit-retry 3 5 npm --prefix frontend ci
           kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
       - name: Embed frontend and capture the Taxes page
+        env:
+          CGO_ENABLED: "1"
+          DOCBANK_TELEMETRY_ENABLED: "0"
         run: |
           npm --prefix frontend run build
           find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
           cp -R frontend/dist/. internal/web/dist/
-          node frontend/screenshots/taxes.run.mjs
+          scratch="$RUNNER_TEMP/taxes-capture"
+          mkdir -p "$scratch"
+          go build -tags fts5 -o "$scratch/docbank" ./cmd/docbank
+          # The spec seeds its own mkdtemp vault and stops its daemon in dispose().
+          DOCBANK_SCREENSHOT_BINARY="$scratch/docbank" \
+          DOCBANK_TAXES_SCREENSHOT_DIR="$GITHUB_WORKSPACE/.superpowers/taxes-shots" \
+          PLAYWRIGHT_JSON_OUTPUT_FILE="$scratch/report.json" \
+            node frontend/node_modules/@playwright/test/cli.js test taxes.screenshot.ts \
+              --config frontend/screenshots/playwright.config.ts --project chromium \
+              --retries 0 --reporter line,json
+          node -e '
+            const report = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            const { expected, unexpected, flaky, skipped } = report.stats;
+            const got = { expected, unexpected, flaky, skipped, errors: report.errors.length };
+            const want = { expected: 1, unexpected: 0, flaky: 0, skipped: 0, errors: 0 };
+            if (JSON.stringify(got) !== JSON.stringify(want)) {
+              console.error(`Taxes capture must execute one passing case: ${JSON.stringify(got)}`);
+              process.exit(1);
+            }
+            console.log("taxes: executed=1 passed=1 skipped=0 failed=0");
+          ' "$scratch/report.json"
       - name: Upload Taxes screenshots
         uses: actions/upload-artifact@v7.0.2
         with:
