@@ -507,5 +507,21 @@ func checkTimelineDuplicateCollapse(t *testing.T, open func(*testing.T) *Store) 
 		for _, item := range page.DateOnly {
 			require.Contains(t, ids, item.NodeID)
 		}
+		if tc.collapse && s.postgresSchema == "" {
+			group, err := s.DuplicateGroupByHash(ctx, fakeHash("dd0"), 1)
+			require.NoError(t, err)
+			require.Equal(t, group.RepresentativeNodeID, page.DateOnly[0].NodeID)
+		}
+	}
+	if s.postgresSchema == "" {
+		// Collapse must select a representative from the scoped population.
+		scope.Query.Filters.Paths = []string{"/duplicate-1.txt"}
+		page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, 1)
+		require.Equal(t, ids[1], page.DateOnly[0].NodeID)
+		days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
+		require.NoError(t, err)
+		require.Equal(t, []TimelineDayCount{{Date: date.String(), Count: 1, DateOnly: 1}}, days.Days)
 	}
 }
