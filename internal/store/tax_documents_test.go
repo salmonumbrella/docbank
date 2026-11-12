@@ -39,6 +39,15 @@ func checkTaxDocumentLinksLifecycle(t *testing.T, open func(*testing.T) *Store) 
 	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
 	require.NoError(t, err)
 	assert.Equal(t, "missing", d.Evidence.State)
+	trashed, _, err := s.Trash(ctx, n.ID, n.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Nil(t, d.Documents[0].NodeID)
+	assert.NotNil(t, d.Documents[0].ContentVersionID)
+	_ = trashed
 }
 func TestTaxDocumentLinksLifecycle(t *testing.T) { checkTaxDocumentLinksLifecycle(t, newTestStore) }
 
