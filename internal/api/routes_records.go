@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"net/http"
@@ -173,7 +172,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 				return nil, invalidRecordRequest()
 			}
 			var value any
-			if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			if err := jsonv2.Unmarshal([]byte(raw), &value); err != nil {
 				return nil, invalidRecordRequest()
 			}
 			opts.Fields[id] = value

@@ -1,11 +1,16 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
 )
 
 func TestRecordTypeActivationRequiresRevisionZero(t *testing.T) {
@@ -72,4 +77,29 @@ func TestRecordGetRejectsInvalidDate(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	response, body := do(t, ts, http.MethodGet, "/api/v1/records/00000000-0000-4000-8000-000000000000?as_of=2026-02-30", nil, nil)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+}
+
+func TestRecordValidationDoesNotExposeContent(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Logger = slog.New(slog.NewTextHandler(&logs, nil)) })
+	for _, body := range []string{
+		`{"type_id":"contract","title":"synthetic-secret",`,
+		`{"type_id":"contract","title":"Example","note":{"synthetic-secret":1}}`,
+		`{"type_id":"contract","title":{"synthetic-secret":1}}`,
+		`{"type_id":"contract","title":"Example","fields":"synthetic-secret"}`,
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/records", strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.GreaterOrEqual(t, resp.StatusCode, 400)
+		require.Less(t, resp.StatusCode, 500)
+		require.NotContains(t, string(data), "synthetic-secret")
+	}
+	require.NotContains(t, logs.String(), "synthetic-secret")
 }

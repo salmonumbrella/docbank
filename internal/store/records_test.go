@@ -97,6 +97,22 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
 	require.Equal(t, "ÉCLAIR %", page[0].Title)
+	for _, query := range []string{"bad\x00query", "bad\nquery"} {
+		_, _, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", Query: query, AsOf: "2026-01-02", Limit: 10})
+		require.ErrorIs(t, err, ErrInvalidRecord)
+	}
+	for _, tc := range []struct {
+		opts         RecordListOptions
+		field, value string
+	}{
+		{RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Limit: 10, Fields: map[string]any{"contract_type": "Bad secret"}}, "contract_type", "Bad secret"},
+		{RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Limit: 10, Before: map[string]string{"term.end": "secret date"}}, "term.end", "secret date"},
+	} {
+		_, _, err = s.ListRecords(ctx, tc.opts)
+		require.ErrorIs(t, err, ErrInvalidRecord)
+		require.ErrorContains(t, err, tc.field)
+		require.NotContains(t, err.Error(), tc.value)
+	}
 	state, err := s.GetRecordType(ctx, "contract")
 	require.NoError(t, err)
 	_, err = s.DeactivateRecordType(ctx, "contract", state.Revision)

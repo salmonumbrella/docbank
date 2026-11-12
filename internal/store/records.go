@@ -554,6 +554,9 @@ func asciiLower(s string) string {
 }
 
 func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions) error {
+	if !recordtype.ValidTitleQuery(opts.Query) {
+		return fmt.Errorf("%w: invalid title query", ErrInvalidRecord)
+	}
 	if !recordtype.ValidDate(opts.AsOf) {
 		return fmt.Errorf("%w: invalid as_of", ErrInvalidRecord)
 	}
@@ -587,14 +590,11 @@ func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions
 		}
 		normalized, err := recordtype.NormalizeRecord(def, recordtype.Record{Title: "x", Status: initial, Fields: map[string]any{id: value}})
 		if err != nil || len(normalized.Fields) != 1 || !reflect.DeepEqual(normalized.Fields[id], value) {
-			return fmt.Errorf("%w: invalid field selector", ErrInvalidRecord)
+			return fmt.Errorf("%w: %s: invalid field selector", ErrInvalidRecord, id)
 		}
 	}
 	for _, selectors := range []map[string]string{opts.Before, opts.After} {
 		for path, date := range selectors {
-			if !recordtype.ValidDate(date) {
-				return fmt.Errorf("%w: invalid date selector", ErrInvalidRecord)
-			}
 			found := false
 			for _, f := range def.Fields {
 				if !f.Retired && ((f.Type == "date" && path == f.ID) || (f.Type == "date_range" && (path == f.ID+".start" || path == f.ID+".end"))) {
@@ -603,6 +603,9 @@ func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions
 			}
 			if !found {
 				return fmt.Errorf("%w: invalid date field", ErrInvalidRecord)
+			}
+			if !recordtype.ValidDate(date) {
+				return fmt.Errorf("%w: %s: invalid date selector", ErrInvalidRecord, path)
 			}
 		}
 	}
