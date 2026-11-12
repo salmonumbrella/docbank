@@ -1,0 +1,38 @@
+name: Contracts C1 upgrade focused test
+
+on:
+  push:
+    branches: [ci/contracts-c1-ci4-red]
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOPROXY: https://proxy.golang.org|direct
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Focused released upgrade test
+        run: go test -tags fts5 ./internal/store/ -run '^(TestUpgradeReleasedV0170KeepsOperationalState|TestPhotoFaceUndoRetiresUnusedCreatedPerson)$' -count=1 -v
