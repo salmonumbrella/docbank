@@ -479,7 +479,7 @@ func TestTermReportSelectedAdmission(t *testing.T) {
 	require.Equal(t, first, frame.Members[0].Identity)
 	require.Equal(t, second, frame.Members[1].Identity)
 	require.Equal(t, []bool{true, false}, frame.Members[0].RawMatches)
-	// The prepared relation population includes the unselected alpha as well,
+	// The inline relation population includes the unselected alpha as well,
 	// but the frame intersects it with the selected node and version pairs.
 	prepared := request
 	prepared.Terms = append([]report.Term(nil), request.Terms[:1]...)
@@ -528,7 +528,7 @@ func TestTermReportSelectedAdmission(t *testing.T) {
 	require.ErrorIs(t, err, ErrReportSelectionChanged)
 }
 
-func TestTermReportPreparedPopulationIntersectsCollectionScope(t *testing.T) {
+func TestTermReportInlinePopulationIntersectsCollectionScope(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	first := createCollectionRun(t, s, "alpha.txt", "prepared-report-alpha")
