@@ -265,7 +265,7 @@ func TestTaxReceiptBoundAndMetadata(t *testing.T) {
 	defer func() { _ = overLimit.Body.Close() }()
 	_, err = decodeTaxReceiptLimit(t.Context(), overLimit, false, int64(len(body)-1))
 	require.True(t, IsResponseDecodeError(err))
-	err = taxMutationFailure(err)
+	err = taxMutationFailure(err, "account")
 	assert.Contains(t, err.Error(), "may have been applied")
 	assert.NotContains(t, err.Error(), "1234")
 	// Every byte of the largest legal text fields could take six JSON bytes.
@@ -347,7 +347,12 @@ func TestTaxMutationMaintenanceIsDefinite(t *testing.T) {
 	assert.Contains(t, err.Error(), "retry this mutation after maintenance finishes")
 	assert.NotContains(t, err.Error(), "may have been applied")
 	assert.NotContains(t, err.Error(), "private-synthetic-value")
-	unknown := taxMutationFailure(apiProblemError(api.Error{Status: http.StatusInternalServerError, Code: "internal", Detail: "private-synthetic-value"}))
+	_, err = New(server.URL, "").CreateTaxRecord(t.Context(), api.CreateTaxRecordRequest{})
+	require.ErrorIs(t, err, ErrMaintenanceBusy)
+	assert.Contains(t, err.Error(), "retry this mutation after maintenance finishes")
+	assert.NotContains(t, err.Error(), "may have been applied")
+	assert.NotContains(t, err.Error(), "private-synthetic-value")
+	unknown := taxMutationFailure(apiProblemError(api.Error{Status: http.StatusInternalServerError, Code: "internal", Detail: "private-synthetic-value"}), "account")
 	assert.Contains(t, unknown.Error(), "may have been applied")
 	assert.NotContains(t, unknown.Error(), "private-synthetic-value")
 }
