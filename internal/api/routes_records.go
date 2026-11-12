@@ -27,70 +27,10 @@ func recordRevision(v string, allowZero bool) (int64, error) {
 func invalidRecordRequest() error {
 	return NewError(http.StatusUnprocessableEntity, "invalid_record", "invalid record request")
 }
-func parseRecordBody(body map[string]any, create bool) (string, recordtype.Record, store.RecordPatch, error) {
-	var typeID string
-	r := recordtype.Record{Status: "draft"}
-	var patch store.RecordPatch
-	fields := map[string]any{}
-	business := false
-	for k, v := range body {
-		switch k {
-		case "$schema":
-			continue
-		case "type_id":
-			if !create {
-				return "", r, patch, invalidRecordRequest()
-			}
-			s, ok := v.(string)
-			if !ok || s == "" {
-				return "", r, patch, invalidRecordRequest()
-			}
-			typeID = s
-			business = true
-		case "title", "note", "status":
-			s, ok := v.(string)
-			if !ok {
-				return "", r, patch, invalidRecordRequest()
-			}
-			business = true
-			switch k {
-			case "title":
-				r.Title = s
-				patch.Title = &s
-			case "note":
-				r.Note = s
-				patch.Note = &s
-			case "status":
-				r.Status = s
-				patch.Status = &s
-			}
-		case "fields":
-			m, ok := v.(map[string]any)
-			if !ok {
-				return "", r, patch, invalidRecordRequest()
-			}
-			for id, value := range m {
-				fields[id] = value
-			}
-			business = business || len(m) > 0
-		default:
-			return "", r, patch, invalidRecordRequest()
-		}
-	}
-	if !business || (create && (typeID == "" || patch.Title == nil)) {
-		return "", r, patch, invalidRecordRequest()
-	}
-	r.Fields = fields
-	patch.Fields = fields
-	return typeID, r, patch, nil
-}
 func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "listRecordTypes", Method: http.MethodGet, Path: "/api/v1/record-types", Summary: "List record types"}, func(ctx context.Context, in *struct {
 		IncludeInactive bool `query:"include_inactive"`
-	}) (*struct {
-		CacheControl string `header:"Cache-Control"`
-		Body         []RecordType
-	}, error) {
+	}) (*recordTypeListOutput, error) {
 		states, err := d.Store.ListRecordTypes(ctx, in.IncludeInactive)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -99,10 +39,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		for _, s := range states {
 			out = append(out, fromRecordType(s))
 		}
-		return &struct {
-			CacheControl string `header:"Cache-Control"`
-			Body         []RecordType
-		}{"no-store", out}, nil
+		return &recordTypeListOutput{"no-store", out}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "getRecordType", Method: http.MethodGet, Path: "/api/v1/record-types/{type}", Summary: "Inspect a record type"}, func(ctx context.Context, in *struct {
 		Type string `path:"type"`
@@ -149,7 +86,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		AsOf string `query:"as_of"`
 	}) (*recordOutput, error) {
 		asOf := recordToday(in.AsOf)
-		if _, err := time.Parse("2006-01-02", asOf); err != nil {
+		if !recordtype.ValidDate(asOf) {
 			return nil, invalidRecordRequest()
 		}
 		r, err := d.Store.GetRecord(ctx, in.ID)
@@ -169,10 +106,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		After           []string `query:"after"`
 		Limit           int      `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset          int      `query:"offset" minimum:"0"`
-	}) (*struct {
-		CacheControl string `header:"Cache-Control"`
-		Body         RecordPage
-	}, error) {
+	}) (*recordPageOutput, error) {
 		opts := store.RecordListOptions{TypeID: in.Type, Status: in.Status, IncludeInactive: in.IncludeInactive, Query: in.Query, AsOf: recordToday(in.AsOf), Fields: map[string]any{}, Before: map[string]string{}, After: map[string]string{}, Limit: in.Limit, Offset: in.Offset}
 		for _, v := range in.Field {
 			id, raw, ok := strings.Cut(v, "=")
@@ -211,29 +145,19 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		for _, r := range records {
 			out = append(out, fromRecord(r, opts.AsOf))
 		}
-		return &struct {
-			CacheControl string `header:"Cache-Control"`
-			Body         RecordPage
-		}{"no-store", RecordPage{Records: out, Total: total, Limit: opts.Limit, Offset: opts.Offset, AsOf: opts.AsOf}}, nil
+		return &recordPageOutput{"no-store", RecordPage{Records: out, Total: total, Limit: opts.Limit, Offset: opts.Offset, AsOf: opts.AsOf}}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body RecordCreateRequest }) (*recordOutput, error) {
-		body := map[string]any{"type_id": in.Body.TypeID, "title": in.Body.Title}
-		if in.Body.Fields != nil {
-			body["fields"] = in.Body.Fields
+		input := recordtype.Record{Title: in.Body.Title, Status: "draft", Fields: in.Body.Fields}
+		if in.Body.Note != nil {
+			input.Note = *in.Body.Note
 		}
 		if in.Body.Status != nil {
-			body["status"] = *in.Body.Status
-		}
-		if in.Body.Note != nil {
-			body["note"] = *in.Body.Note
-		}
-		id, input, _, err := parseRecordBody(body, true)
-		if err != nil {
-			return nil, err
+			input.Status = *in.Body.Status
 		}
 		var out *recordOutput
 		err = g.mutate(ctx, func() error {
-			r, e := d.Store.CreateRecord(ctx, id, input)
+			r, e := d.Store.CreateRecord(ctx, in.Body.TypeID, input)
 			if e != nil {
 				return FromStoreError(e)
 			}
@@ -251,22 +175,9 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		body := map[string]any{}
-		if in.Body.Title != nil {
-			body["title"] = *in.Body.Title
-		}
-		if in.Body.Note != nil {
-			body["note"] = *in.Body.Note
-		}
-		if in.Body.Status != nil {
-			body["status"] = *in.Body.Status
-		}
-		if in.Body.Fields != nil {
-			body["fields"] = in.Body.Fields
-		}
-		_, _, patch, err := parseRecordBody(body, false)
-		if err != nil {
-			return nil, err
+		patch := store.RecordPatch{Title: in.Body.Title, Note: in.Body.Note, Status: in.Body.Status, Fields: in.Body.Fields}
+		if patch.Title == nil && patch.Note == nil && patch.Status == nil && len(patch.Fields) == 0 {
+			return nil, invalidRecordRequest()
 		}
 		var out *recordOutput
 		err = g.mutate(ctx, func() error {

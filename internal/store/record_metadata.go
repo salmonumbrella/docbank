@@ -98,18 +98,12 @@ func validateRecordValueMetadata(v metadataRecordValue) error {
 	if !ok {
 		return errors.New("unknown record type")
 	}
-	var field *recordtype.Field
-	for i := range def.Fields {
-		if def.Fields[i].ID == v.FieldID {
-			field = &def.Fields[i]
-			break
-		}
-	}
-	if field == nil {
+	fieldType := recordFieldType(def, v.FieldID)
+	if fieldType == "" {
 		return errors.New("unknown record field")
 	}
 	var value any
-	switch field.Type {
+	switch fieldType {
 	case "date_range":
 		if v.Text != nil || (v.Date == nil && v.DateEnd == nil) {
 			return errors.New("invalid record value shape")
@@ -145,15 +139,8 @@ func validateRecordMetadataState(ctx context.Context, q metadataQuerier) error {
 			return err
 		}
 	}
-	var invalidRecords int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM records r LEFT JOIN record_types t ON t.type_id=r.type_id WHERE t.type_id IS NULL`).Scan(&invalidRecords); err != nil {
-		return err
-	}
-	if invalidRecords != 0 {
-		return errors.New("invalid record type reference")
-	}
 	var invalid int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM record_values v LEFT JOIN records r ON r.record_id=v.record_id WHERE r.record_id IS NULL OR v.type_id<>r.type_id`).Scan(&invalid); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM record_values v JOIN records r ON r.record_id=v.record_id WHERE v.type_id<>r.type_id`).Scan(&invalid); err != nil {
 		return err
 	}
 	if invalid != 0 {

@@ -78,7 +78,7 @@ func NormalizeRecord(def Definition, r Record) (Record, error) {
 					return Record{}, invalid(id, "invalid label")
 				}
 			}
-			if f.Type == "date" && !validDate(s) {
+			if f.Type == "date" && !ValidDate(s) {
 				return Record{}, invalid(id, "invalid date")
 			}
 			fields[id] = s
@@ -96,7 +96,7 @@ func NormalizeRecord(def Definition, r Record) (Record, error) {
 					continue
 				}
 				s, ok := v.(string)
-				if !ok || !validDate(s) {
+				if !ok || !ValidDate(s) {
 					return Record{}, invalid(id, "invalid date")
 				}
 				rangeValue[k] = s
@@ -133,7 +133,9 @@ func normalizeLong(field, s string) (string, error) {
 	}
 	return s, nil
 }
-func validDate(s string) bool {
+
+// ValidDate accepts canonical civil dates from year 1 through 9999.
+func ValidDate(s string) bool {
 	t, err := time.Parse("2006-01-02", s)
 	return err == nil && t.Year() >= 1 && t.Format("2006-01-02") == s
 }

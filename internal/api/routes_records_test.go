@@ -52,3 +52,9 @@ func TestRecordRoutesFenceEditAndRetirement(t *testing.T) {
 	response, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"title": "Changed"})
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 }
+
+func TestRecordGetRejectsYearZero(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	response, body := do(t, ts, http.MethodGet, "/api/v1/records/00000000-0000-4000-8000-000000000000?as_of=0000-01-01", nil, nil)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+}

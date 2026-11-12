@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
 	"go.kenn.io/docbank/internal/recordtype"
 )
@@ -27,11 +26,11 @@ type RecordTypeState struct {
 	CreatedAt, UpdatedAt string
 }
 type Record struct {
-	ID, TypeID, Title, Note, Status, EffectiveStatus string
-	Fields                                           map[string]any
-	Revision                                         int64
-	CreatedAt, UpdatedAt                             string
-	RetiredAt                                        *string
+	ID, TypeID, Title, Note, Status string
+	Fields                          map[string]any
+	Revision                        int64
+	CreatedAt, UpdatedAt            string
+	RetiredAt                       *string
 }
 type RecordPatch struct {
 	Title, Note, Status *string
@@ -173,6 +172,22 @@ func (s *Store) CreateRecord(ctx context.Context, id string, input recordtype.Re
 	})
 	return out, err
 }
+
+// recordFieldType resolves storage semantics from the shipped definition.
+func recordFieldType(def recordtype.Definition, id string) string {
+	for _, f := range def.Fields {
+		if f.ID == id {
+			return f.Type
+		}
+	}
+	return ""
+}
+func recordValueColumn(fieldType string) string {
+	if fieldType == "date" {
+		return "value_date"
+	}
+	return "value_text"
+}
 func readRecord(ctx context.Context, q recordQueryer, id string, lock bool) (Record, error) {
 	var r Record
 	query := `SELECT record_id,type_id,title,note,status,revision,created_at,updated_at,retired_at FROM records WHERE record_id=$1`
@@ -191,6 +206,10 @@ func readRecord(ctx context.Context, q recordQueryer, id string, lock bool) (Rec
 		return Record{}, err
 	}
 	defer func() { _ = rows.Close() }()
+	def, ok := recordtype.Builtin(r.TypeID)
+	if !ok {
+		return Record{}, fmt.Errorf("%w: unknown record type", ErrInvalidRecord)
+	}
 	r.Fields = map[string]any{}
 	for rows.Next() {
 		var field string
@@ -198,9 +217,12 @@ func readRecord(ctx context.Context, q recordQueryer, id string, lock bool) (Rec
 		if err := rows.Scan(&field, &text, &date, &end); err != nil {
 			return Record{}, err
 		}
-		if text.Valid {
-			r.Fields[field] = text.String
-		} else if field == "term" {
+		switch recordFieldType(def, field) {
+		case "text", "long_text", "label":
+			if text.Valid {
+				r.Fields[field] = text.String
+			}
+		case "date_range":
 			m := map[string]any{}
 			if date.Valid {
 				m["start"] = date.String
@@ -209,8 +231,12 @@ func readRecord(ctx context.Context, q recordQueryer, id string, lock bool) (Rec
 				m["end"] = end.String
 			}
 			r.Fields[field] = m
-		} else if date.Valid {
-			r.Fields[field] = date.String
+		case "date":
+			if date.Valid {
+				r.Fields[field] = date.String
+			}
+		default:
+			return Record{}, fmt.Errorf("%w: unknown record field", ErrInvalidRecord)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -219,16 +245,13 @@ func readRecord(ctx context.Context, q recordQueryer, id string, lock bool) (Rec
 	return r, nil
 }
 func (s *Store) GetRecord(ctx context.Context, id string) (Record, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+	var r Record
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		r, err = readRecord(ctx, tx, id, false)
+		return err
+	})
 	if err != nil {
-		return Record{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	r, err := readRecord(ctx, tx, id, false)
-	if err != nil {
-		return Record{}, err
-	}
-	if err = tx.Commit(); err != nil {
 		return Record{}, err
 	}
 	return r, nil
@@ -237,18 +260,25 @@ func writeRecordValues(ctx context.Context, tx *sql.Tx, r Record) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM record_values WHERE record_id=$1`, r.ID); err != nil {
 		return err
 	}
+	def, ok := recordtype.Builtin(r.TypeID)
+	if !ok {
+		return fmt.Errorf("%w: unknown record type", ErrInvalidRecord)
+	}
 	for id, value := range r.Fields {
 		var text, date, end any
-		switch v := value.(type) {
-		case string:
-			if id == "signed_on" {
-				date = v
-			} else {
-				text = v
+		switch recordFieldType(def, id) {
+		case "text", "long_text", "label":
+			text = value
+		case "date":
+			date = value
+		case "date_range":
+			v, ok := value.(map[string]any)
+			if !ok {
+				return fmt.Errorf("%w: invalid date range", ErrInvalidRecord)
 			}
-		case map[string]any:
-			date = v["start"]
-			end = v["end"]
+			date, end = v["start"], v["end"]
+		default:
+			return fmt.Errorf("%w: unknown record field", ErrInvalidRecord)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO record_values(record_id,type_id,field_id,value_text,value_date,value_date_end) VALUES($1,$2,$3,$4,$5,$6)`, r.ID, r.TypeID, id, text, date, end); err != nil {
 			return err
@@ -425,12 +455,7 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 		clauses := []string{"fv.record_id=r.record_id", "fv.field_id=" + bind(field)}
 		switch x := v.(type) {
 		case string:
-			col := "value_text"
-			for _, f := range def.Fields {
-				if f.ID == field && f.Type == "date" {
-					col = "value_date"
-				}
-			}
+			col := recordValueColumn(recordFieldType(def, field))
 			clauses = append(clauses, "fv."+col+"="+bind(x))
 		case map[string]any:
 			for _, part := range []struct{ key, col string }{{"start", "value_date"}, {"end", "value_date_end"}} {
@@ -462,61 +487,47 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 		}
 	}
 	predicate := strings.Join(where, " AND ")
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	var total int
-	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM records r WHERE "+predicate, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	limit, offset := bind(opts.Limit), bind(opts.Offset)
-	rows, err := tx.QueryContext(ctx, "SELECT r.record_id FROM records r WHERE "+predicate+" ORDER BY r.title,r.record_id LIMIT "+limit+" OFFSET "+offset, args...)
-	if err != nil {
-		return nil, 0, err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, 0, err
-		}
-		ids = append(ids, id)
-	}
-	if err = rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, 0, err
-	}
-	if err = rows.Close(); err != nil {
-		return nil, 0, err
-	}
 	var out []Record
-	for _, id := range ids {
-		r, e := readRecord(ctx, tx, id, false)
-		if e != nil {
-			return nil, 0, e
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM records r WHERE "+predicate, args...).Scan(&total); err != nil {
+			return err
 		}
-		r.EffectiveStatus = recordtype.EffectiveStatus(def, r.Status, r.Fields, opts.AsOf)
-		out = append(out, r)
-	}
-	if err = tx.Commit(); err != nil {
+		limit, offset := bind(opts.Limit), bind(opts.Offset)
+		rows, err := tx.QueryContext(ctx, "SELECT r.record_id FROM records r WHERE "+predicate+" ORDER BY r.title,r.record_id LIMIT "+limit+" OFFSET "+offset, args...)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err = rows.Close(); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			r, e := readRecord(ctx, tx, id, false)
+			if e != nil {
+				return e
+			}
+			out = append(out, r)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, 0, err
 	}
 	return out, total, nil
-}
-func recordDate(fields map[string]any, path string) string {
-	parts := strings.Split(path, ".")
-	v := fields[parts[0]]
-	if len(parts) == 2 {
-		m, _ := v.(map[string]any)
-		v = m[parts[1]]
-	} else if len(parts) != 1 {
-		return ""
-	}
-	s, _ := v.(string)
-	return s
 }
 
 // asciiFoldSQL uses only portable replace(), so non-ASCII bytes retain their case.
@@ -538,11 +549,7 @@ func asciiLower(s string) string {
 }
 
 func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions) error {
-	validDate := func(s string) bool {
-		d, err := time.Parse("2006-01-02", s)
-		return err == nil && d.Year() >= 1 && d.Format("2006-01-02") == s
-	}
-	if !validDate(opts.AsOf) {
+	if !recordtype.ValidDate(opts.AsOf) {
 		return fmt.Errorf("%w: invalid as_of", ErrInvalidRecord)
 	}
 	if opts.Status != "" {
@@ -569,7 +576,7 @@ func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions
 	}
 	for _, selectors := range []map[string]string{opts.Before, opts.After} {
 		for path, date := range selectors {
-			if !validDate(date) {
+			if !recordtype.ValidDate(date) {
 				return fmt.Errorf("%w: invalid date selector", ErrInvalidRecord)
 			}
 			found := false

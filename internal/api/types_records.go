@@ -50,6 +50,14 @@ type RecordPage struct {
 	Offset  int      `json:"offset"`
 	AsOf    string   `json:"as_of"`
 }
+type recordTypeListOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	Body         []RecordType
+}
+type recordPageOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	Body         RecordPage
+}
 type recordOutput struct {
 	ETag         string `header:"ETag"`
 	CacheControl string `header:"Cache-Control"`
