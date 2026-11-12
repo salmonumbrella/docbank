@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestNoteRoutesReadCurrentOriginalAndCollectionStatus(t *testing.T) {
 	ctx := t.Context()
 	dir, err := s.Mkdir(ctx, s.RootID(), "records")
 	require.NoError(t, err)
-	const src = "---\ntitle: Authored title\ntags: [blue, green]\n---\n# Heading\n"
+	const src = "\ufeff---\r\ntitle: Authored title\r\ntags: [blue, green]\r\n---\r\n# Heading\r\n"
 	hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader(src))
 	require.NoError(t, err)
 	n, err := s.CreateFile(ctx, dir.ID, "note.MD", hash, size, "text/plain")
@@ -49,6 +50,21 @@ func TestNoteRoutesReadCurrentOriginalAndCollectionStatus(t *testing.T) {
 	require.Equal(t, "not_watched", got.SourceState)
 	require.Equal(t, 1, got.Headings)
 	require.Equal(t, jsontext.Value(`"Authored title"`), got.Frontmatter["title"])
+	t.Run("OriginalText", func(t *testing.T) {
+		resp, body := get(t, ts, "/api/v1/notes/"+strconv.FormatInt(n.ID, 10)+"/text", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var text struct {
+			NodeID           int64  `json:"node_id"`
+			ContentVersionID string `json:"content_version_id"`
+			SHA256           string `json:"sha256"`
+			Text             string `json:"text"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &text))
+		require.Equal(t, n.ID, text.NodeID)
+		require.Equal(t, n.CurrentVersionID, text.ContentVersionID)
+		require.Equal(t, hash, text.SHA256)
+		require.Equal(t, src, text.Text)
+	})
 	resp, body = get(t, ts, "/api/v1/notes/status", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var status api.NotesStatus
