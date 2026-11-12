@@ -502,7 +502,11 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 	if validateUUIDv4(contentVersionID) != nil {
 		return nil, ErrInvalidPerson
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id`, contentVersionID)
+	return documentPersonAssertionsTx(ctx, s.db, contentVersionID)
+}
+
+func documentPersonAssertionsTx(ctx context.Context, q metadataQuerier, contentVersionID string) ([]PersonDocumentAssertion, error) {
+	rows, err := q.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id`, contentVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -731,3 +735,52 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 }
 
 var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `))`
+
+// VersionCandidate contains only the occurrences belonging to the requested version.
+type VersionCandidate struct {
+	CandidateID, DisplayName, ActorKey string
+	Occurrences                        []PersonCandidateOccurrence
+	OccurrenceLabels                   map[PersonCandidateOccurrence]string
+}
+
+func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
+	// Matched fresh actors are required for emitted occurrences in both modes.
+	// Canonical writes and validated imports store occurrence UUIDs as literal
+	// lowercase ASCII, so the hex filter finds them; exact comparison below
+	// removes false matches. Admission and import validation cap open candidates
+	// at maxOpenPersonCandidates and evidence at maxPersonCandidateEvidence bytes.
+	// Do not truncate the results.
+	evidenceHex := "hex(evidence_json)"
+	if s.postgresSchema != "" {
+		evidenceHex = "upper(encode(evidence_json, 'hex'))"
+	}
+	rows, err := q.QueryContext(ctx, `SELECT candidate_id,display_name,actor_key,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match' AND `+evidenceHex+` LIKE $1 ORDER BY created_at,candidate_id`, fmt.Sprintf("%%%X%%", versionID))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := []VersionCandidate{}
+	for rows.Next() {
+		var c VersionCandidate
+		var raw []byte
+		if err := rows.Scan(&c.CandidateID, &c.DisplayName, &c.ActorKey, &raw); err != nil {
+			return nil, err
+		}
+		occurrences, err := decodeStoredCandidateEvidence(raw)
+		if err != nil {
+			return nil, err
+		}
+		for _, occurrence := range occurrences {
+			if occurrence.ContentVersionID == versionID {
+				c.Occurrences = append(c.Occurrences, occurrence)
+			}
+		}
+		if len(c.Occurrences) > 0 {
+			result = append(result, c)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
