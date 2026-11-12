@@ -222,7 +222,7 @@ func checkSignatureRevisionExhaustion(t *testing.T, postgres bool) {
 }
 
 // Cancellation retains the contract and fences every transition on both backends.
-func checkSignatureCancellation(t *testing.T, open func(*testing.T) *Store) {
+func checkSignatureCancellationLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
