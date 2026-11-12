@@ -24,6 +24,7 @@ type backendSuite struct {
 var backendSuites = []backendSuite{
 	{name: "timeline-day-query", postgres: "native operations", scope: "Unscoped safe current document placements and day counts; shared Query/search remains unqualified (docbank#p4dq).", scenarios: []backendScenario{
 		{"TimelineDaysUndatedAndPending", func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newTestStore) }, func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore) }},
+		{"TimelinePlacementTiers", func(t *testing.T) { checkTimelinePlacementTiers(t, newTestStore) }, func(t *testing.T) { checkTimelinePlacementTiers(t, newPostgresQueryStore) }},
 		{"TimelineFreshnessTerminalAttempts", func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newTestStore) }, func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newPostgresQueryStore) }},
 		{"TimelineScopeRejected", nil, func(t *testing.T) { checkTimelineScopeRejected(t, newPostgresQueryStore) }},
 		{"TimelineDayStripAccounting", func(t *testing.T) { checkTimelineDayStripAccounting(t, newTestStore) }, func(t *testing.T) { checkTimelineDayStripAccounting(t, newPostgresQueryStore) }},
