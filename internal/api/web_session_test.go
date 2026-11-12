@@ -1,12 +1,18 @@
 package api
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/store"
 
 	"github.com/stretchr/testify/require"
 )
@@ -139,7 +145,7 @@ func TestWebSessionAllowsOnlyContractRegisterReads(t *testing.T) {
 		{http.MethodGet, "/api/v1/contracts?status=active&type=lease&expiring_before=2027-02-01&as_of=2027-01-01&limit=100&offset=200", true},
 		{http.MethodGet, contract, true},
 		{http.MethodGet, contract + "?as_of=2027-01-01", true},
-		{http.MethodGet, "/api/v1/contracts?q=storage", false},
+		{http.MethodGet, "/api/v1/contracts?q=storage", true},
 		{http.MethodGet, "/api/v1/contracts?party_id=11111111-1111-4111-8111-111111111111", false},
 		{http.MethodGet, "/api/v1/contracts?status=active&status=draft", false},
 		{http.MethodGet, "/api/v1/contracts?extra=1", false},
@@ -149,13 +155,107 @@ func TestWebSessionAllowsOnlyContractRegisterReads(t *testing.T) {
 		{http.MethodGet, "/api/v1/contracts/not-a-uuid", false},
 		{http.MethodGet, "/api/v1/contracts/11111111-1111-4111-8111-11111111111A", false},
 		{http.MethodGet, contract + "/documents", false},
-		// The contract checks follow the shared non-GET refusal; one write per
-		// path fails if either check moves ahead of it.
-		{http.MethodPost, "/api/v1/contracts", false},
-		{http.MethodPatch, contract, false},
 	} {
 		require.Equal(t, route.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.method+" "+route.path)
 	}
+}
+
+func TestWebSessionContractWriteBoundaries(t *testing.T) {
+	t.Parallel()
+	const id = "11111111-1111-4111-8111-111111111111"
+	const upper = "11111111-1111-4111-8111-11111111111A"
+	const contract = "/api/v1/contracts/" + id
+	const party = contract + "/parties/" + id
+	const document = contract + "/documents/412"
+	for _, tc := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{http.MethodPost, "/api/v1/contracts", true},
+		{http.MethodPatch, contract, true},
+		{http.MethodPut, party + "?role=own", true},
+		{http.MethodDelete, party + "?role=own", true},
+		{http.MethodPut, document + "?role=signed&content_version_id=" + id, true},
+		{http.MethodDelete, document + "?role=signed&content_version_id=" + id, true},
+		{http.MethodGet, "/api/v1/contracts?q=storage", true},
+		{http.MethodGet, "/api/v1/parties?limit=100&offset=0", true},
+		{http.MethodPost, "/api/v1/parties", true},
+		{http.MethodGet, "/api/v1/nodes/412/contracts?as_of=2027-01-01&limit=100&offset=0", true},
+		{http.MethodDelete, contract, false},
+		{http.MethodPost, "/api/v1/contracts?x=1", false},
+		{http.MethodPatch, contract + "?x=1", false},
+		{http.MethodPatch, "/api/v1/contracts/" + upper, false},
+		{http.MethodPut, contract + "/parties/" + upper + "?role=own", false},
+		{http.MethodPut, party, false},
+		{http.MethodPut, party + "?role=", false},
+		{http.MethodPut, party + "?role=own&role=own", false},
+		{http.MethodPut, party + "?role=own&extra=1", false},
+		{http.MethodGet, party + "?role=own", false},
+		{http.MethodPut, document + "?role=signed", false},
+		{http.MethodPut, document + "?role=signed&content_version_id=", false},
+		{http.MethodPut, document + "?role=signed&content_version_id=bad", false},
+		{http.MethodPut, document + "?role=signed&content_version_id=" + upper, false},
+		{http.MethodPut, document + "?role=&content_version_id=" + id, false},
+		{http.MethodPut, document + "?role=signed&role=signed&content_version_id=" + id, false},
+		{http.MethodPut, document + "?role=signed&content_version_id=" + id + "&content_version_id=" + id, false},
+		{http.MethodPut, document + "?role=signed&content_version_id=" + id + "&extra=1", false},
+		{http.MethodPut, contract + "/documents/0?role=signed&content_version_id=" + id, false},
+		{http.MethodPatch, "/api/v1/parties/" + id, false},
+		{http.MethodPost, "/api/v1/parties/" + id + "/retire", false},
+		{http.MethodGet, "/api/v1/parties/" + id, false},
+		{http.MethodPost, "/api/v1/parties?extra=1", false},
+		{http.MethodGet, "/api/v1/parties?include_retired=true", false},
+		{http.MethodGet, "/api/v1/parties?kind=person", false},
+		{http.MethodGet, "/api/v1/parties?own=true", false},
+		{http.MethodGet, "/api/v1/parties?limit=1&limit=2", false},
+		{http.MethodGet, "/api/v1/contracts?party_id=" + id, false},
+		{http.MethodGet, "/api/v1/contracts?q=a&q=b", false},
+		{http.MethodGet, "/api/v1/nodes/0/contracts", false},
+		{http.MethodGet, "/api/v1/nodes/1/contracts?extra=1", false},
+		{http.MethodGet, "/api/v1/nodes/1/contracts?limit=1&limit=2", false},
+		{http.MethodPost, "/api/v1/nodes/1/contracts", false},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)))
+		})
+	}
+}
+
+func TestWebSessionContractWriteRejectsForeignOrigin(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	catalog, err := store.Open(t.Context(), filepath.Join(dir, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = catalog.Close() })
+	blobsDir := filepath.Join(dir, "blobs")
+	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0700))
+	blobs, err := blob.New(store.NewPackCatalog(catalog), blobsDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blobs.Close() })
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-key"
+	cfg.Web.PublicOrigin = "https://archive.example.test"
+	server := NewServer(Deps{Store: catalog, Blobs: blobs, VaultRoot: dir, Cfg: cfg, WebURL: "https://archive.example.test/", WebLoginEnabled: true})
+	t.Cleanup(server.Close)
+	login := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example.test/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"synthetic-key"}`))
+	login.Header.Set("Origin", "https://archive.example.test")
+	login.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, login)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var status webSignInStatus
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &status))
+	require.NotNil(t, status.Session)
+	cookies := response.Result().Cookies()
+	require.Len(t, cookies, 1)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example.test/api/v1/contracts", strings.NewReader(`{"title":"Synthetic"}`))
+	request.Header.Set("Origin", "https://foreign.example.test")
+	request.Header.Set(WebSessionHeader, status.Session.Token)
+	request.AddCookie(cookies[0])
+	denied := httptest.NewRecorder()
+	server.Handler().ServeHTTP(denied, request)
+	require.Equal(t, http.StatusForbidden, denied.Code)
+	require.Contains(t, denied.Body.String(), `"code":"web_browser"`)
 }
 
 func TestWebPages(t *testing.T) {
