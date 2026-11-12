@@ -199,6 +199,7 @@ test("contracts register, detail and exact linked version", async ({ page }) => 
     await main.getByRole("button", { name: "All contracts" }).first().click();
     await expect(table).toBeVisible();
     await expect(table.getByRole("columnheader", { name: "Type" })).toBeHidden();
+    await shot(page, "contracts-mobile.png");
     // Mobile evidence: nothing in the page, filters or table extends past the viewport.
     const width = page.viewportSize()!.width;
     const right = async (locator: ReturnType<typeof page.getByRole>) =>
@@ -208,7 +209,6 @@ test("contracts register, detail and exact linked version", async ({ page }) => 
     expect(await right(table)).toBeLessThanOrEqual(width);
     for (const name of ["Title", "Counterparty", "Status", "Expires"])
       expect(await right(table.getByRole("columnheader", { name }))).toBeLessThanOrEqual(width);
-    await shot(page, "contracts-mobile.png");
     await main
       .getByRole("button", { name: "Show contract Northwind Storage - unit lease" })
       .click();
