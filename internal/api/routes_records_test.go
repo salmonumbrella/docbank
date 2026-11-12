@@ -9,6 +9,7 @@ import (
 )
 
 func TestRecordTypeActivationRequiresRevisionZero(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := do(t, ts, http.MethodGet, "/api/v1/record-types/contract", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -21,6 +22,7 @@ func TestRecordTypeActivationRequiresRevisionZero(t *testing.T) {
 }
 
 func TestRecordCreateRejectsExplicitNullAndEmptyPatch(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/record-types/contract/activate", map[string]string{"If-Match": `"0"`}, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -39,6 +41,7 @@ func TestRecordCreateRejectsExplicitNullAndEmptyPatch(t *testing.T) {
 }
 
 func TestRecordRoutesFenceEditAndRetirement(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/record-types/contract/activate", map[string]string{"If-Match": `"0"`}, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -65,6 +68,7 @@ func TestRecordRoutesFenceEditAndRetirement(t *testing.T) {
 }
 
 func TestRecordGetRejectsYearZero(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := do(t, ts, http.MethodGet, "/api/v1/records/00000000-0000-4000-8000-000000000000?as_of=0000-01-01", nil, nil)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)

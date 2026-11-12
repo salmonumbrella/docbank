@@ -12,6 +12,7 @@ import (
 )
 
 func TestR1GenerateSchemaContract(t *testing.T) {
+	t.Parallel()
 	db := schemaContractDB(t, DefaultSQLiteDriver(), schemaSQL)
 	digest := schemaCatalogDigest(t, db)
 	indexes := schemaIndexDigests(t, db)

@@ -42,9 +42,13 @@ func checkRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.ErrorIs(t, err, ErrRecordTypeInactive)
 }
 
-func TestRecordLifecycle(t *testing.T) { checkRecordLifecycle(t, newTestStore) }
+func TestRecordLifecycle(t *testing.T) {
+	t.Parallel()
+	checkRecordLifecycle(t, newTestStore)
+}
 
 func TestRecordListRejectsInvalidSelectors(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for _, opts := range []RecordListOptions{
 		{TypeID: "contract", AsOf: "2026-02-30", Limit: 100},
@@ -99,10 +103,12 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 }
 
 func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {
+	t.Parallel()
 	checkRecordListFiltersEffectiveStatusBeforePaging(t, newTestStore)
 }
 
 func TestRecordFieldStorageUsesDefinitionTypes(t *testing.T) {
+	t.Parallel()
 	def := recordtype.Definition{Fields: []recordtype.Field{{ID: "any_date", Type: "date"}, {ID: "any_range", Type: "date_range"}, {ID: "any_label", Type: "label"}}}
 	require.Equal(t, "value_date", recordValueColumn(recordFieldType(def, "any_date")))
 	require.Equal(t, "date_range", recordFieldType(def, "any_range"))

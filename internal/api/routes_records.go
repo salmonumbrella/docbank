@@ -22,6 +22,8 @@ type optionalRecordString struct {
 	Value string
 }
 
+const cacheControlNoStore = "no-store"
+
 func (v *optionalRecordString) UnmarshalJSON(raw []byte) error {
 	if bytes.Equal(raw, []byte("null")) {
 		return errors.New("record field cannot be null")
@@ -93,7 +95,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		for _, s := range states {
 			out = append(out, fromRecordType(s))
 		}
-		return &recordTypeListOutput{"no-store", out}, nil
+		return &recordTypeListOutput{cacheControlNoStore, out}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "getRecordType", Method: http.MethodGet, Path: "/api/v1/record-types/{type}", Summary: "Inspect a record type"}, func(ctx context.Context, in *struct {
 		Type string `path:"type"`
@@ -102,7 +104,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &recordTypeOutput{ETag: revisionETag(s.Revision), CacheControl: "no-store", Body: fromRecordType(s)}, nil
+		return &recordTypeOutput{ETag: revisionETag(s.Revision), CacheControl: cacheControlNoStore, Body: fromRecordType(s)}, nil
 	})
 	for _, active := range []bool{true, false} {
 		path, op := "deactivate", "deactivateRecordType"
@@ -129,7 +131,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 				if e != nil {
 					return FromStoreError(e)
 				}
-				out = &recordTypeOutput{ETag: revisionETag(s.Revision), CacheControl: "no-store", Body: fromRecordType(s)}
+				out = &recordTypeOutput{ETag: revisionETag(s.Revision), CacheControl: cacheControlNoStore, Body: fromRecordType(s)}
 				return nil
 			})
 			return out, err
@@ -147,7 +149,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &recordOutput{ETag: revisionETag(r.Revision), CacheControl: "no-store", Body: fromRecord(r, asOf)}, nil
+		return &recordOutput{ETag: revisionETag(r.Revision), CacheControl: cacheControlNoStore, Body: fromRecord(r, asOf)}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "listRecords", Method: http.MethodGet, Path: "/api/v1/records", Summary: "List records"}, func(ctx context.Context, in *struct {
 		Type            string   `query:"type" required:"true"`
@@ -199,7 +201,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		for _, r := range records {
 			out = append(out, fromRecord(r, opts.AsOf))
 		}
-		return &recordPageOutput{"no-store", RecordPage{Records: out, Total: total, Limit: opts.Limit, Offset: opts.Offset, AsOf: opts.AsOf}}, nil
+		return &recordPageOutput{cacheControlNoStore, RecordPage{Records: out, Total: total, Limit: opts.Limit, Offset: opts.Offset, AsOf: opts.AsOf}}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body RecordCreateInput }) (*recordOutput, error) {
 		input := recordtype.Record{Title: in.Body.Title, Status: "draft", Fields: in.Body.Fields.Value}
@@ -215,7 +217,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 			if e != nil {
 				return FromStoreError(e)
 			}
-			out = &recordOutput{ETag: revisionETag(r.Revision), CacheControl: "no-store", Body: fromRecord(r, recordToday(""))}
+			out = &recordOutput{ETag: revisionETag(r.Revision), CacheControl: cacheControlNoStore, Body: fromRecord(r, recordToday(""))}
 			return nil
 		})
 		return out, err
@@ -248,7 +250,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 			if e != nil {
 				return FromStoreError(e)
 			}
-			out = &recordOutput{ETag: revisionETag(r.Revision), CacheControl: "no-store", Body: fromRecord(r, recordToday(""))}
+			out = &recordOutput{ETag: revisionETag(r.Revision), CacheControl: cacheControlNoStore, Body: fromRecord(r, recordToday(""))}
 			return nil
 		})
 		return out, err
@@ -267,7 +269,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 			if e != nil {
 				return FromStoreError(e)
 			}
-			out = &recordOutput{ETag: revisionETag(r.Revision), CacheControl: "no-store", Body: fromRecord(r, recordToday(""))}
+			out = &recordOutput{ETag: revisionETag(r.Revision), CacheControl: cacheControlNoStore, Body: fromRecord(r, recordToday(""))}
 			return nil
 		})
 		return out, err
