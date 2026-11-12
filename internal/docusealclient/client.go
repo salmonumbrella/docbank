@@ -148,13 +148,7 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	var wire struct {
-		Data *[]struct {
-			ID         int64   `json:"id"`
-			Name       *string `json:"name"`
-			Submitters []struct {
-				Name string `json:"name"`
-			} `json:"submitters"`
-		} `json:"data"`
+		Data       *[]templateWire `json:"data"`
 		Pagination struct {
 			Next *int64 `json:"next"`
 		} `json:"pagination"`
@@ -192,19 +186,9 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
 		previous = t.ID
-		if t.Name == nil || t.Submitters == nil {
-			return TemplatePage{}, errors.New("docuseal_invalid_response")
-		}
-		name := displayText(*t.Name)
-		if strings.Contains(*t.Name, c.connection.APIKey) || strings.Contains(name, c.connection.APIKey) {
-			return TemplatePage{}, errors.New("docuseal_invalid_response")
-		}
-		item := Template{ID: t.ID, Name: name, Roles: make([]string, 0, len(t.Submitters))}
-		for _, role := range t.Submitters {
-			if strings.Contains(role.Name, c.connection.APIKey) {
-				return TemplatePage{}, errors.New("docuseal_invalid_response")
-			}
-			item.Roles = append(item.Roles, role.Name)
+		item, err := c.projectTemplate(t)
+		if err != nil {
+			return TemplatePage{}, err
 		}
 		page.Templates = append(page.Templates, item)
 	}
@@ -291,14 +275,21 @@ func (c *Client) Template(ctx context.Context, id int64) (Template, error) {
 	if err := c.get(ctx, fmt.Sprintf("/templates/%d", id), &wire); err != nil {
 		return Template{}, err
 	}
-	if wire.ID != id || wire.Name == nil || wire.Submitters == nil {
+	if wire.ID != id {
+		return Template{}, errors.New("docuseal_invalid_response")
+	}
+	return c.projectTemplate(wire)
+}
+
+func (c *Client) projectTemplate(wire templateWire) (Template, error) {
+	if wire.Name == nil || wire.Submitters == nil {
 		return Template{}, errors.New("docuseal_invalid_response")
 	}
 	name := displayText(*wire.Name)
 	if strings.Contains(*wire.Name, c.connection.APIKey) || strings.Contains(name, c.connection.APIKey) {
 		return Template{}, errors.New("docuseal_invalid_response")
 	}
-	item := Template{ID: id, Name: name, Roles: make([]string, 0, len(wire.Submitters))}
+	item := Template{ID: wire.ID, Name: name, Roles: make([]string, 0, len(wire.Submitters))}
 	for _, r := range wire.Submitters {
 		if strings.Contains(r.Name, c.connection.APIKey) {
 			return Template{}, errors.New("docuseal_invalid_response")

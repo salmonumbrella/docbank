@@ -113,10 +113,14 @@ page to fail rather than being rewritten. Each provider response is limited to 2
 
 ## Send a template for signature
 
-Choose a DocuSeal template with one exact role per signer. Docbank sends the
+Choose a DocuSeal template with one exact role per signer, up to 20 signers.
+Docbank rejects template roles that differ only in ASCII letter case, because
+DocuSeal resolves those roles ambiguously. Docbank sends the
 provider the template ID and each signer's role, name, email and an opaque
 external ID. It does not send contract terms, parties or document bytes. The
-provider emails the signers using the document already in its template.
+provider emails the signers using the document already in its template. By
+default DocuSeal invites the first signer initially, then invites the next signer
+after the preceding signer completes.
 
 ```console
 docbank contract sign request <contract-id> --template 7 --signer 'Tenant=tenant@example.com:Example Tenant'
@@ -135,8 +139,10 @@ Only one request may be open for a contract. A confirmed send moves a draft to
 unchanged. If the provider outcome is unknown, the request stays `creating`;
 run `docbank contract sign status <contract-id>` before retrying and do not send
 another invitation blindly.
-Archive requests in DocuSeal manually. Deleting a contract is refused while a
-request is open; terminal request history is removed with the contract, while
+Archive requests in DocuSeal manually when needed. Archiving there does not clear
+the local open request. A successful or uncertain request blocks another request
+and contract deletion until cancellation or reconciliation is available in a
+later release. Terminal request history is removed with the contract, while
 stored documents remain. Signature mutations are refused in audited vaults.
 If audit is enabled between admission and settlement, even a confirmed provider
 send can remain `creating` with an unknown outcome.

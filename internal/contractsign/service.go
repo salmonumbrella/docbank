@@ -58,7 +58,18 @@ func (s Service) Request(ctx context.Context, contractID string, revision, templ
 		return store.SignatureRequest{}, store.ErrInvalidSignatureRequest
 	}
 	ordered := make([]store.SignatureSignerInput, 0, len(signers))
+	roles := make(map[string]bool, len(template.Roles))
 	for _, role := range template.Roles {
+		folded := strings.Map(func(r rune) rune {
+			if r >= 'A' && r <= 'Z' {
+				return r + ('a' - 'A')
+			}
+			return r
+		}, role)
+		if roles[folded] {
+			return store.SignatureRequest{}, store.ErrInvalidSignatureRequest
+		}
+		roles[folded] = true
 		v, ok := supplied[role]
 		if !ok {
 			return store.SignatureRequest{}, store.ErrInvalidSignatureRequest

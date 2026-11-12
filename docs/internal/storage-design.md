@@ -804,6 +804,14 @@ The effective status (`expired`) is derived on read from the stored status and
 expiry date and is never stored. Contracts and links round-trip through metadata
 JSONL as `contract` and `contract_party` records, which restore validates.
 
+Signature requests and ordered signers are metadata authority in
+`contract_signature_requests` and `contract_signature_signers`; both round-trip
+through JSONL and restore validation. The history index orders by contract,
+creation time and request ID. Signers reference their request with cascade
+removal. An open request prevents contract deletion; deletion removes terminal
+history and its signers atomically. Validation checks the error-code vocabulary
+independently of request state.
+
 Admission and retention differ. A new link requires an active party, and the own
 role also requires an own entity; both checks run in the mutation transaction.
 A link already present is retained after its party retires: attaching it again

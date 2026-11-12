@@ -544,6 +544,10 @@ GRANT INSERT, DELETE, UPDATE(title, contract_type, status, starts_on, expires_on
     signed_on, summary, purpose, consideration, termination, revision, updated_at)
     ON documents.contracts TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.contract_parties TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(state, last_error_code, provider_submission_id, revision, updated_at)
+  ON documents.contract_signature_requests TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(provider_submitter_id)
+  ON documents.contract_signature_signers TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
 GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
     display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;

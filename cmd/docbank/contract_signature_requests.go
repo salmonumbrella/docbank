@@ -88,6 +88,9 @@ func newSignatureRequestCommand() *cobra.Command {
 			if id := daemonconn.SignatureRequestErrorID(err); id != "" {
 				return fmt.Errorf("signature request %s: outcome uncertain or failed; inspect it before retrying", id)
 			}
+			if _, ok := daemonconn.ProblemCode(err); ok {
+				return fmt.Errorf("signature request: %w", err)
+			}
 			if daemonconn.IsRetryableMutationError(err) {
 				return fmt.Errorf("signature request outcome unknown; run docbank contract sign status %s before retrying: %w", args[0], err)
 			}
