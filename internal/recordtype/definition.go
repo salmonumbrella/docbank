@@ -1,6 +1,17 @@
 // Package recordtype defines and validates the record types shipped by Docbank.
 package recordtype
 
+const FieldTypeLabel = "label"
+
+func (d Definition) InitialStatus() string {
+	for _, status := range d.Status.Values {
+		if status.Initial && !status.Retired {
+			return status.ID
+		}
+	}
+	return ""
+}
+
 type Definition struct {
 	ID          string           `json:"id"`
 	Version     int              `json:"version"`

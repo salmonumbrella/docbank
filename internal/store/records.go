@@ -54,17 +54,20 @@ func recordTypeState(ctx context.Context, q metadataQuerier, id string, lock boo
 		return RecordTypeState{}, ErrNotFound
 	}
 	state := RecordTypeState{Definition: def}
-	query := `SELECT active,revision,created_at,updated_at FROM record_types WHERE type_id=$1`
+	query := `SELECT active,version,revision,created_at,updated_at FROM record_types WHERE type_id=$1`
 	if lock {
 		query += ` FOR UPDATE`
 	}
-	var active int
-	err := q.QueryRowContext(ctx, query, id).Scan(&active, &state.Revision, &state.CreatedAt, &state.UpdatedAt)
+	var active, version int
+	err := q.QueryRowContext(ctx, query, id).Scan(&active, &version, &state.Revision, &state.CreatedAt, &state.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return state, nil
 	}
 	if err != nil {
 		return RecordTypeState{}, err
+	}
+	if version < 1 || version > def.Version {
+		return RecordTypeState{}, fmt.Errorf("%w: unsupported record type version", ErrInvalidRecord)
 	}
 	state.Active = active == 1
 	return state, nil
@@ -115,7 +118,7 @@ func (s *Store) setRecordTypeActive(ctx context.Context, id string, revision int
 			out.CreatedAt = stamp
 		} else {
 			var result sql.Result
-			result, err = tx.ExecContext(ctx, `UPDATE record_types SET active=$1,revision=$2,updated_at=$3 WHERE type_id=$4 AND revision=$5`, value, revision+1, stamp, id, revision)
+			result, err = tx.ExecContext(ctx, `UPDATE record_types SET active=$1,revision=$2,updated_at=$3,version=$4 WHERE type_id=$5 AND revision=$6`, value, revision+1, stamp, current.Definition.Version, id, revision)
 			if err == nil {
 				var n int64
 				n, err = result.RowsAffected()
@@ -160,6 +163,9 @@ func (s *Store) CreateRecord(ctx context.Context, id string, input recordtype.Re
 		if !state.Active {
 			return ErrRecordTypeInactive
 		}
+		if e = touchRecordTypeVersion(ctx, tx, state.Definition); e != nil {
+			return e
+		}
 		_, e = tx.ExecContext(ctx, `INSERT INTO records(record_id,type_id,title,note,status,revision,created_at,updated_at,retired_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL)`, out.ID, id, out.Title, out.Note, out.Status, out.Revision, stamp, stamp)
 		if e != nil {
 			return e
@@ -167,6 +173,11 @@ func (s *Store) CreateRecord(ctx context.Context, id string, input recordtype.Re
 		return writeRecordValues(ctx, tx, out)
 	})
 	return out, err
+}
+
+func touchRecordTypeVersion(ctx context.Context, tx *sql.Tx, def recordtype.Definition) error {
+	_, err := tx.ExecContext(ctx, `UPDATE record_types SET version=$1 WHERE type_id=$2 AND version<$1`, def.Version, def.ID)
+	return err
 }
 
 // recordFieldType resolves storage semantics from the shipped definition.
@@ -177,12 +188,6 @@ func recordFieldType(def recordtype.Definition, id string) string {
 		}
 	}
 	return ""
-}
-func recordValueColumn(fieldType string) string {
-	if fieldType == "date" {
-		return "value_date"
-	}
-	return "value_text"
 }
 func readRecord(ctx context.Context, q metadataQuerier, id string, lock bool) (Record, error) {
 	var r Record
@@ -197,26 +202,42 @@ func readRecord(ctx context.Context, q metadataQuerier, id string, lock bool) (R
 	if err != nil {
 		return Record{}, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT field_id,value_text,value_date,value_date_end FROM record_values WHERE record_id=$1 ORDER BY field_id`, id)
+	state, err := recordTypeState(ctx, q, r.TypeID, false)
+	if err != nil {
+		return Record{}, err
+	}
+	r.Fields = map[string]any{}
+	rows, err := q.QueryContext(ctx, `SELECT record_id,field_id,value_text,value_date,value_date_end FROM record_values WHERE record_id=$1 ORDER BY field_id`, id)
 	if err != nil {
 		return Record{}, err
 	}
 	defer func() { _ = rows.Close() }()
-	def, ok := recordtype.Builtin(r.TypeID)
-	if !ok {
-		return Record{}, fmt.Errorf("%w: unknown record type", ErrInvalidRecord)
+	if err := readRecordValues(rows, state.Definition, map[string]*Record{id: &r}); err != nil {
+		return Record{}, err
 	}
-	r.Fields = map[string]any{}
+	return r, nil
+}
+
+// readRecordValues decodes fields for one record or a bounded page.
+func readRecordValues(rows *sql.Rows, def recordtype.Definition, records map[string]*Record) error {
 	for rows.Next() {
-		var field string
+		var id, field string
 		var text, date, end sql.NullString
-		if err := rows.Scan(&field, &text, &date, &end); err != nil {
-			return Record{}, err
+		if err := rows.Scan(&id, &field, &text, &date, &end); err != nil {
+			return err
+		}
+		r := records[id]
+		if r == nil {
+			return fmt.Errorf("%w: unexpected record value", ErrInvalidRecord)
 		}
 		switch recordFieldType(def, field) {
-		case "text", "long_text", "label":
+		case "text", "long_text", recordtype.FieldTypeLabel:
 			if text.Valid {
 				r.Fields[field] = text.String
+			}
+		case "date":
+			if date.Valid {
+				r.Fields[field] = date.String
 			}
 		case "date_range":
 			m := map[string]any{}
@@ -227,19 +248,13 @@ func readRecord(ctx context.Context, q metadataQuerier, id string, lock bool) (R
 				m["end"] = end.String
 			}
 			r.Fields[field] = m
-		case "date":
-			if date.Valid {
-				r.Fields[field] = date.String
-			}
 		default:
-			return Record{}, fmt.Errorf("%w: unknown record field", ErrInvalidRecord)
+			return fmt.Errorf("%w: unknown record field", ErrInvalidRecord)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return Record{}, err
-	}
-	return r, nil
+	return rows.Err()
 }
+
 func (s *Store) GetRecord(ctx context.Context, id string) (Record, error) {
 	var r Record
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
@@ -263,7 +278,7 @@ func writeRecordValues(ctx context.Context, tx *sql.Tx, r Record) error {
 	for id, value := range r.Fields {
 		var text, date, end any
 		switch recordFieldType(def, id) {
-		case "text", "long_text", "label":
+		case "text", "long_text", recordtype.FieldTypeLabel:
 			text = value
 		case "date":
 			date = value
@@ -340,6 +355,9 @@ func (s *Store) UpdateRecord(ctx context.Context, id string, revision int64, pat
 		if revision == math.MaxInt64 {
 			return ErrInvalidRecord
 		}
+		if err := touchRecordTypeVersion(ctx, tx, state.Definition); err != nil {
+			return err
+		}
 		out.Title = normalized.Title
 		out.Note = normalized.Note
 		out.Status = normalized.Status
@@ -383,6 +401,9 @@ func (s *Store) RetireRecord(ctx context.Context, id string, revision int64) (Re
 		}
 		if revision == math.MaxInt64 {
 			return ErrInvalidRecord
+		}
+		if err := touchRecordTypeVersion(ctx, tx, state.Definition); err != nil {
+			return err
 		}
 		stamp := nowRFC3339()
 		result, err := tx.ExecContext(ctx, `UPDATE records SET retired_at=$1,updated_at=$2,revision=$3 WHERE record_id=$4 AND revision=$5`, stamp, stamp, revision+1, id, revision)
@@ -456,20 +477,7 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 	sort.Strings(keys)
 	for _, field := range keys {
 		v := opts.Fields[field]
-		clauses := []string{"fv.record_id=r.record_id", "fv.field_id=" + bind(field)}
-		switch x := v.(type) {
-		case string:
-			col := recordValueColumn(recordFieldType(def, field))
-			clauses = append(clauses, "fv."+col+"="+bind(x))
-		case map[string]any:
-			for _, part := range []struct{ key, col string }{{"start", "value_date"}, {"end", "value_date_end"}} {
-				if v, ok := x[part.key]; ok {
-					clauses = append(clauses, "fv."+part.col+"="+bind(v))
-				} else {
-					clauses = append(clauses, "fv."+part.col+" IS NULL")
-				}
-			}
-		}
+		clauses := []string{"fv.record_id=r.record_id", "fv.field_id=" + bind(field), "fv.value_text=" + bind(v)}
 		where = append(where, "EXISTS (SELECT 1 FROM record_values fv WHERE "+strings.Join(clauses, " AND ")+")")
 	}
 	for _, filter := range []struct {
@@ -495,39 +503,46 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 	var out []Record
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
+		if _, err = recordTypeState(ctx, tx, opts.TypeID, false); err != nil {
+			return err
+		}
 		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM records r WHERE "+predicate, args...).Scan(&total); err != nil {
 			return err
 		}
 		limit, offset := bind(opts.Limit), bind(opts.Offset)
-		rows, err := tx.QueryContext(ctx, "SELECT r.record_id FROM records r WHERE "+predicate+" ORDER BY r.title,r.record_id LIMIT "+limit+" OFFSET "+offset, args...)
+		page := " FROM records r WHERE " + predicate + " ORDER BY r.title,r.record_id LIMIT " + limit + " OFFSET " + offset
+		rows, err := tx.QueryContext(ctx, "SELECT r.record_id,r.type_id,r.title,r.note,r.status,r.revision,r.created_at,r.updated_at,r.retired_at"+page, args...)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
-		var ids []string
 		for rows.Next() {
-			var id string
-			if err = rows.Scan(&id); err != nil {
-				_ = rows.Close()
+			var r Record
+			if err = rows.Scan(&r.ID, &r.TypeID, &r.Title, &r.Note, &r.Status, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &r.RetiredAt); err != nil {
 				return err
 			}
-			ids = append(ids, id)
+			r.Fields = map[string]any{}
+			out = append(out, r)
 		}
 		if err = rows.Err(); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		if err = rows.Close(); err != nil {
 			return err
 		}
-		for _, id := range ids {
-			r, e := readRecord(ctx, tx, id, false)
-			if e != nil {
-				return e
-			}
-			out = append(out, r)
+		if len(out) == 0 {
+			return nil
 		}
-		return nil
+		byID := make(map[string]*Record, len(out))
+		for i := range out {
+			byID[out[i].ID] = &out[i]
+		}
+		values, err := tx.QueryContext(ctx, "SELECT v.record_id,v.field_id,v.value_text,v.value_date,v.value_date_end FROM record_values v WHERE v.record_id IN (SELECT r.record_id"+page+") ORDER BY v.record_id,v.field_id", args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = values.Close() }()
+		return readRecordValues(values, def, byID)
 	})
 	if err != nil {
 		return nil, 0, err
@@ -578,16 +593,10 @@ func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions
 	}
 	for id, value := range opts.Fields {
 		fieldType := recordFieldType(def, id)
-		if fieldType != "text" && fieldType != "label" {
+		if fieldType != "text" && fieldType != recordtype.FieldTypeLabel {
 			return fmt.Errorf("%w: invalid field selector", ErrInvalidRecord)
 		}
-		initial := ""
-		for _, status := range def.Status.Values {
-			if status.Initial && !status.Retired {
-				initial = status.ID
-				break
-			}
-		}
+		initial := def.InitialStatus()
 		normalized, err := recordtype.NormalizeRecord(def, recordtype.Record{Title: "x", Status: initial, Fields: map[string]any{id: value}})
 		if err != nil || len(normalized.Fields) != 1 || !reflect.DeepEqual(normalized.Fields[id], value) {
 			return fmt.Errorf("%w: %s: invalid field selector", ErrInvalidRecord, id)

@@ -23,6 +23,7 @@ type backendSuite struct {
 
 var backendSuites = []backendSuite{
 	{name: "records", postgres: "native operations", scope: "Built-in record type activation and record lifecycle.", scenarios: []backendScenario{
+		{"RecordLongText", func(t *testing.T) { t.Helper(); checkRecordLongTextBackend(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRecordLongTextBackend(t, newPostgresQueryStore) }},
 		{"RecordLifecycle", func(t *testing.T) { t.Helper(); checkRecordLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRecordLifecycle(t, newPostgresQueryStore) }},
 		{"RecordListFilters", func(t *testing.T) { t.Helper(); checkRecordListFiltersEffectiveStatusBeforePaging(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()

@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 
 	"go.kenn.io/docbank/internal/recordtype"
@@ -127,7 +126,7 @@ func validateRecordValueMetadata(v metadataRecordValue) error {
 		}
 		value = *v.Text
 	}
-	normalized, err := recordtype.NormalizeRecord(def, recordtype.Record{Title: "x", Status: "draft", Fields: map[string]any{v.FieldID: value}})
+	normalized, err := recordtype.NormalizeRecord(def, recordtype.Record{Title: "x", Status: def.InitialStatus(), Fields: map[string]any{v.FieldID: value}})
 	if err != nil || !reflect.DeepEqual(normalized.Fields[v.FieldID], value) {
 		return errors.New("noncanonical record value")
 	}
@@ -144,7 +143,7 @@ func validateRecordMetadataState(ctx context.Context, q metadataQuerier) error {
 		return err
 	}
 	if invalid != 0 {
-		return fmt.Errorf("invalid record value references")
+		return errors.New("invalid record value references")
 	}
 	return nil
 }

@@ -2540,6 +2540,3 @@ CREATE TABLE {{schema}}.record_values (
     value_currency TEXT COLLATE "C",
     PRIMARY KEY(record_id, field_id)
 );
-CREATE INDEX idx_record_values_date ON {{schema}}.record_values(type_id, field_id, value_date);
-CREATE INDEX idx_record_values_date_end ON {{schema}}.record_values(type_id, field_id, value_date_end);
-CREATE INDEX idx_record_values_text ON {{schema}}.record_values(type_id, field_id, value_text);

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"text/tabwriter"
 
@@ -61,7 +62,7 @@ func init() {
 		var asJSON bool
 		command := &cobra.Command{Use: name + " <type>", Short: name + " a record type", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("expect-revision") && expected < 0 {
-				return fmt.Errorf("expected revision cannot be negative")
+				return errors.New("expected revision cannot be negative")
 			}
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {

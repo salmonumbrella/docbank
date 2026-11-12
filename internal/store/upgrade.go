@@ -581,7 +581,7 @@ func cutoverReleasedDatabase(
 		_ = closeSource()
 		return fmt.Errorf("creating current database for %s upgrade: %w", sourceSchema.release, err)
 	}
-	if err := importUpgradeJSONL(ctx, target, jsonlPath, sourceSchema); err != nil {
+	if err := importUpgradeJSONL(ctx, target, jsonlPath, sourceSchema, snapshot); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return err
@@ -676,12 +676,18 @@ func writeUpgradeJSONL(
 	return nil
 }
 
-func importUpgradeJSONL(ctx context.Context, target *Store, path string, sourceSchema releasedStorageSchema) error {
+func importUpgradeJSONL(ctx context.Context, target *Store, path string, sourceSchema releasedStorageSchema, source metadataQuerier) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening %s upgrade metadata: %w", sourceSchema.release, err)
 	}
-	if err := target.ImportMetadata(ctx, f); err != nil {
+	var beforeValidation func(context.Context, *sql.Tx) error
+	if sourceSchema.version == 48 {
+		beforeValidation = func(ctx context.Context, tx *sql.Tx) error {
+			return restoreV48RenditionJobs(ctx, source, tx)
+		}
+	}
+	if err := target.importMetadata(ctx, f, beforeValidation); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("importing %s metadata: %w", sourceSchema.release, err)
 	}
@@ -830,14 +836,24 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		}); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_description_explicit_waiters`); err != nil {
-			return err
-		}
-		// Derived-upload jobs and their waiters are intentionally absent from
-		// metadata import; copy only waiters whose parents were restored.
-		filter := `waiter_id IN (SELECT waiter_id FROM rendition_job_waiters WHERE ` + backedUpRenditionJobs(metadataJSONDialect{}) + `)`
-		return copyReleasedRows(ctx, source, tx, "photo_description_explicit_waiters", filter)
+		return nil
 	})
+}
+
+// restoreV48RenditionJobs retains in-flight local authority that backup omits.
+// It runs before import validation so retained job roots can resolve their owners.
+func restoreV48RenditionJobs(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	derived := metadataJSONDialect{}.text("execution_identity_json", "upload.input_kind") + "='derived_upload'"
+	if err := copyReleasedRows(ctx, source, tx, "rendition_jobs", derived); err != nil {
+		return err
+	}
+	if err := copyReleasedRows(ctx, source, tx, "rendition_job_waiters", "job_id IN (SELECT job_id FROM rendition_jobs WHERE "+derived+")"); err != nil {
+		return err
+	}
+	if err := copyReleasedTable(ctx, source, tx, "photo_description_explicit_waiters"); err != nil {
+		return err
+	}
+	return copyReleasedRows(ctx, source, tx, "current_rendition_roots", "root_kind='job' AND active=1 AND EXISTS (SELECT 1 FROM rendition_jobs j WHERE "+derived+" AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id))")
 }
 
 // restoreRebuildReceipts copies document event and people rebuild receipts

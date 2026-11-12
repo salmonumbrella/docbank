@@ -53,13 +53,13 @@ func NormalizeRecord(def Definition, r Record) (Record, error) {
 			}
 		}
 		if f == nil {
-			return Record{}, invalid(id, "unknown field")
+			return Record{}, invalid("fields", "unknown field")
 		}
 		if value == nil {
 			continue
 		}
 		switch f.Type {
-		case "text", "long_text", "label", "date":
+		case "text", "long_text", FieldTypeLabel, "date":
 			s, ok := value.(string)
 			if !ok {
 				return Record{}, invalid(id, "invalid value")
@@ -73,7 +73,7 @@ func NormalizeRecord(def Definition, r Record) (Record, error) {
 					return Record{}, err
 				}
 			}
-			if f.Type == "label" {
+			if f.Type == FieldTypeLabel {
 				matched, e := regexp.MatchString(f.Pattern, s)
 				if e != nil || !matched {
 					return Record{}, invalid(id, "invalid label")

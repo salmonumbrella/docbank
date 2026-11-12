@@ -1,6 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,6 +50,10 @@ func checkRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	state, err = s.DeactivateRecordType(ctx, "contract", state.Revision)
 	require.NoError(t, err)
 	require.False(t, state.Active)
+	_, err = s.UpdateRecord(ctx, r.ID, r.Revision, RecordPatch{Title: &r.Title})
+	require.ErrorIs(t, err, ErrRecordTypeInactive)
+	_, err = s.RetireRecord(ctx, r.ID, r.Revision)
+	require.ErrorIs(t, err, ErrRecordTypeInactive)
 	_, err = s.CreateRecord(ctx, "contract", recordtype.Record{Title: "Another", Status: "draft"})
 	require.ErrorIs(t, err, ErrRecordTypeInactive)
 }
@@ -113,6 +120,14 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 		require.ErrorContains(t, err, tc.field)
 		require.NotContains(t, err.Error(), tc.value)
 	}
+	page, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", After: map[string]string{"term.end": "2026-01-01"}, Limit: 1})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, "A", page[0].Title)
+	page, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Limit: 1, Offset: 1})
+	require.NoError(t, err)
+	require.Equal(t, 4, total)
+	require.Equal(t, "B", page[0].Title)
 	state, err := s.GetRecordType(ctx, "contract")
 	require.NoError(t, err)
 	_, err = s.DeactivateRecordType(ctx, "contract", state.Revision)
@@ -123,4 +138,54 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 	_, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Limit: 10, IncludeInactive: true})
 	require.NoError(t, err)
 	require.Equal(t, 4, total)
+}
+
+// checkRecordLongTextBackend exercises incompressible values on each backend.
+func checkRecordLongTextBackend(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	_, err := s.ActivateRecordType(t.Context(), "contract", 0)
+	require.NoError(t, err)
+	var text strings.Builder
+	for i := range 100 {
+		sum := sha256.Sum256([]byte(fmt.Sprint(i)))
+		fmt.Fprintf(&text, "%x", sum)
+	}
+	record, err := s.CreateRecord(t.Context(), "contract", recordtype.Record{Title: "Long text", Status: "draft", Fields: map[string]any{"summary": text.String()}})
+	require.NoError(t, err)
+	got, err := s.GetRecord(t.Context(), record.ID)
+	require.NoError(t, err)
+	require.Equal(t, text.String(), got.Fields["summary"])
+}
+
+func TestRecordRejectsNewerBuiltinVersion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	state, err := s.ActivateRecordType(ctx, "contract", 0)
+	require.NoError(t, err)
+	record, err := s.CreateRecord(ctx, "contract", recordtype.Record{Title: "Example", Status: "draft"})
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE record_types SET version=2 WHERE type_id='contract'`)
+	require.NoError(t, err)
+	_, err = s.GetRecordType(ctx, "contract")
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	_, err = s.ListRecordTypes(ctx, true)
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	_, _, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-01", Limit: 10, IncludeInactive: true})
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	_, err = s.GetRecord(ctx, record.ID)
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	_, err = s.CreateRecord(ctx, "contract", recordtype.Record{Title: "Other", Status: "draft"})
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	_, err = s.UpdateRecord(ctx, record.ID, record.Revision, RecordPatch{Title: &record.Title})
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	_, err = s.RetireRecord(ctx, record.ID, record.Revision)
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	_, err = s.DeactivateRecordType(ctx, "contract", state.Revision)
+	require.ErrorIs(t, err, ErrInvalidRecord)
+	var version, revision int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT version,revision FROM record_types WHERE type_id='contract'`).Scan(&version, &revision))
+	require.Equal(t, 2, version)
+	require.Equal(t, 1, revision)
 }
