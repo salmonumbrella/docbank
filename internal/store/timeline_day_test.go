@@ -187,7 +187,7 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
-	for i := range 203 {
+	for i := range 404 {
 		seed := fmt.Sprintf("%064x", i+1)
 		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("item-%03d.txt", i), seed, 1, "text/plain")
 		require.NoError(t, err)
@@ -198,6 +198,12 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 			event.DateValue, event.RawValue = "2019-03-04T09:30:00", "2019-03-04T09:30:00"
 			event.Precision = "second"
 			event.AxisKey = "2019-03-04T09:30:00.000000000"
+			event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
+			record.Primaries[0].EventID = event.EventID
+		} else if i >= 203 {
+			event := &record.Events[0]
+			event.DateValue, event.RawValue, event.Precision = "2019-03", "2019-03", "month"
+			event.AxisKey = "2019-03-01T00:00:00.000000000"
 			event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
 			record.Primaries[0].EventID = event.EventID
 		}
@@ -217,7 +223,9 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 	require.Len(t, first.Items, 1)
 	require.Len(t, first.DateOnly, 200)
 	require.True(t, first.DateOnlyTruncated)
-	require.EqualValues(t, 202, svc.stats().CachedRows)
+	require.Len(t, first.MonthOnly, 200)
+	require.True(t, first.MonthOnlyTruncated)
+	require.EqualValues(t, 402, svc.stats().CachedRows)
 	require.Positive(t, svc.stats().CachedBytes)
 	req.Cursor = first.NextCursor
 	require.NotEmpty(t, req.Cursor)
@@ -226,11 +234,13 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 	require.Len(t, second.Items, 1)
 	require.Empty(t, second.DateOnly)
 	require.False(t, second.DateOnlyTruncated)
+	require.Empty(t, second.MonthOnly)
+	require.False(t, second.MonthOnlyTruncated)
 	svc.Revoke("owner")
 	require.Equal(t, snapshotCacheStats{}, svc.stats())
 
 	for name, limits := range map[string]snapshotCacheLimits{
-		"rows":  {MaxRows: 201},
+		"rows":  {MaxRows: 401},
 		"bytes": {MaxBytes: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
