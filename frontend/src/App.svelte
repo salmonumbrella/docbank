@@ -3171,16 +3171,28 @@
     void searchPersonChecked(id);
   }
 
+  // Each chip click supersedes the previous one, even if the older check
+  // settles first.
+  let personSearchClick = 0;
+
   async function searchPersonChecked(id: string): Promise<void> {
     const query = parseQuery(
       JSON.stringify({ v: 1, syntax: "advanced", mode: "lexical", text: `person:${id}` }),
     );
     const session = webSession;
     const request = generation;
+    // The live or frozen selection the chip belongs to.
+    const selection = selectedSource?.key;
+    const click = ++personSearchClick;
+    const current = () =>
+      session === webSession &&
+      request === generation &&
+      selection === selectedSource?.key &&
+      click === personSearchClick;
     try {
       await previewQuery(session, query, new AbortController().signal);
     } catch (cause) {
-      if (session !== webSession || request !== generation) return;
+      if (!current()) return;
       // The fixed person:<id> query is well formed, so 422 means an unknown reference.
       if (cause instanceof APIError && cause.status === 422)
         showToast(
@@ -3189,7 +3201,7 @@
       else handleFailure(cause);
       return;
     }
-    if (session !== webSession || request !== generation) return;
+    if (!current()) return;
     await submitSnapshot(query, { page_size: 100 });
   }
 

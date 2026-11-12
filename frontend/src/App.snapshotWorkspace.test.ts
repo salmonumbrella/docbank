@@ -1264,7 +1264,7 @@ it("uses the inspector's confirmed revision for Tag selected during Advanced sea
   expect(within(screen.getByRole("region", { name: "Saved tags" })).getByText("None")).toBeTruthy();
 });
 
-it("checks a person chip's search first and keeps the document when it cannot run", async () => {
+it("checks a person chip's search first and acts only for the current selection and click", async () => {
   history.replaceState(
     null,
     "",
@@ -1278,7 +1278,8 @@ it("checks a person chip's search first and keeps the document when it cannot ru
       disconnect() {}
     },
   );
-  const page = snapshot(initialQuery, [row(1)], {}, 1);
+  const rows = [row(1), row(2)];
+  const page = snapshot(initialQuery, rows, {}, 2);
   const json = (value: unknown, status = 200) =>
     new Response(JSON.stringify(value), {
       status,
@@ -1294,8 +1295,9 @@ it("checks a person chip's search first and keeps the document when it cannot ru
     created_at: "2026-09-11T00:00:00Z",
     modified_at: "2026-09-11T00:00:00Z",
   };
-  const active = "55555555-5555-4555-8555-555555555555";
+  const mara = "55555555-5555-4555-8555-555555555555";
   const retired = "66666666-6666-4666-8666-666666666666";
+  const ines = "77777777-7777-4777-8777-777777777777";
   const person = (person_id: string, display_name: string) => ({
     action: "assert",
     assertion_id: `a-${person_id}`,
@@ -1306,39 +1308,54 @@ it("checks a person chip's search first and keeps the document when it cannot ru
     recorded_at: "",
     revision: 1,
   });
-  let parse: "ok" | "unavailable" | "down" = "unavailable";
+  let down = false;
+  // A held preview waits until the test releases it.
+  const holding = new Set<string>();
+  const held = new Map<string, () => void>();
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+  const release = async (id: string) => {
+    held.get(id)!();
+    held.delete(id);
+    await settle();
+  };
   const searches: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    const version = row(1).content_version_id;
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url.startsWith("/api/v1/nodes/1000/children"))
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     if (url.startsWith("/api/v1/tags?") || url.startsWith("/api/v1/saved-queries?"))
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
-    if (url === `/api/v1/versions/${version}/dates`)
+    const facts = /^\/api\/v1\/versions\/([^/]+)\/(dates|people)$/.exec(url);
+    if (facts?.[2] === "dates")
       return json({
         state: "none",
         claims: [],
-        content_version_id: version,
+        content_version_id: facts[1],
         diagnostics: [],
         node_id: 1,
       });
-    if (url === `/api/v1/versions/${version}/people`)
+    if (facts)
       return json({
         state: "published",
-        content_version_id: version,
+        content_version_id: facts[1],
         edges: [],
         unresolved: [],
-        assertions: [person(active, "Mara Okonkwo-Fell"), person(retired, "Retired Reviewer")],
+        assertions: [
+          person(mara, "Mara Okonkwo-Fell"),
+          person(retired, "Retired Reviewer"),
+          person(ines, "Ines Albarran"),
+        ],
       });
     if (url === "/api/v1/queries/parse") {
       const query = JSON.parse(String(init?.body));
       if (query.text === initialQuery.text)
         return json({ query, query_fingerprint: page.query_fingerprint, dependencies: [] });
-      if (parse === "unavailable")
+      const id = String(query.text).slice("person:".length);
+      if (holding.delete(id)) await new Promise<void>((resolve) => held.set(id, resolve));
+      if (id === retired)
         return json({ code: "invalid_query", detail: "unknown person reference" }, 422);
-      if (parse === "down") return json({ detail: "query parser unavailable" }, 503);
+      if (down) return json({ detail: "query parser unavailable" }, 503);
       const fingerprint = createHash("sha256").update(canonicalQuery(query)).digest("hex");
       return json({ query, query_fingerprint: `sha256:${fingerprint}`, dependencies: [] });
     }
@@ -1347,7 +1364,7 @@ it("checks a person chip's search first and keeps the document when it cannot ru
     if (url === "/api/v1/workspace/queries") {
       const { query } = JSON.parse(String(init?.body));
       searches.push(query.text);
-      return json(snapshot(query, [row(1)], {}, 1));
+      return json(snapshot(query, rows, {}, 2));
     }
     if (/^\/api\/v1\/nodes\/\d+\/tags\?/.test(url))
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
@@ -1364,39 +1381,71 @@ it("checks a person chip's search first and keeps the document when it cannot ru
         build_id: "",
       });
     }
-    if (url === "/api/v1/nodes/1")
+    const node = /^\/api\/v1\/nodes\/(\d+)$/.exec(url);
+    if (node) {
+      const selected = row(Number(node[1]));
       return json({
         ...root,
-        id: 1,
+        id: selected.node_id,
         parent_id: root.id,
         kind: "file",
-        name: row(1).name,
-        path: row(1).path,
-        revision: row(1).revision,
-        size: row(1).size,
-        current_version_id: version,
-        blob_hash: row(1).blob_hash,
-        mime_type: row(1).mime_type,
+        name: selected.name,
+        path: selected.path,
+        revision: selected.revision,
+        size: selected.size,
+        current_version_id: selected.content_version_id,
+        blob_hash: selected.blob_hash,
+        mime_type: selected.mime_type,
       });
+    }
     throw new Error(`unexpected request: ${url}`);
   });
+  const unavailable =
+    "This historical person is no longer available for search. Their recorded attribution is still shown.";
 
   render(App);
   await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-  await screen.findByText("Document 1 of 1");
-  expect(searches).toEqual([initialQuery.text]);
+  await screen.findByText("Document 1 of 2");
   const inspector = screen.getByRole("complementary", { name: "Document inspector" });
-  await fireEvent.click(await within(inspector).findByRole("button", { name: "Retired Reviewer" }));
-  await screen.findByText(
-    "This historical person is no longer available for search. Their recorded attribution is still shown.",
-  );
-  parse = "down";
-  await fireEvent.click(within(inspector).getByRole("button", { name: "Mara Okonkwo-Fell" }));
-  await screen.findByText("query parser unavailable");
-  // Neither failure ran a search or closed the document.
+  const chip = async (name: string) =>
+    fireEvent.click(await within(inspector).findByRole("button", { name }));
+  const select = async (index: number) => {
+    const target = screen.getByRole("cell", { name: `/records/report-${index}.pdf` });
+    await fireEvent.click(target.closest("tr")!, { detail: 1 });
+    await screen.findByText(`Document ${index} of 2`);
+  };
+  const clickHeld = async (id: string, name: string) => {
+    holding.add(id);
+    await chip(name);
+    await waitFor(() => expect(held.has(id)).toBe(true));
+  };
+
+  // A preview that settles after the frozen selection moved acts on nothing:
+  // neither a delayed success nor a delayed failure.
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await select(2);
+  await release(mara);
+  await clickHeld(retired, "Retired Reviewer");
+  await select(1);
+  await release(retired);
   expect(searches).toEqual([initialQuery.text]);
-  expect(screen.getByText("Document 1 of 1")).toBeTruthy();
-  parse = "ok";
-  await fireEvent.click(within(inspector).getByRole("button", { name: "Mara Okonkwo-Fell" }));
-  await waitFor(() => expect(searches).toEqual([initialQuery.text, `person:${active}`]));
+  expect(screen.queryByText(unavailable)).toBeNull();
+
+  // Current failures keep the document: 422 explains, others use the banner.
+  await chip("Retired Reviewer");
+  await screen.findByText(unavailable);
+  down = true;
+  await chip("Mara Okonkwo-Fell");
+  await screen.findByText("query parser unavailable");
+  expect(searches).toEqual([initialQuery.text]);
+  expect(screen.getByText("Document 1 of 2")).toBeTruthy();
+
+  // The newer of two pending clicks wins even when the older settles first.
+  down = false;
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await clickHeld(ines, "Ines Albarran");
+  await release(mara);
+  expect(searches).toEqual([initialQuery.text]);
+  await release(ines);
+  await waitFor(() => expect(searches).toEqual([initialQuery.text, `person:${ines}`]));
 });
