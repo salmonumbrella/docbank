@@ -8653,6 +8653,43 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    LinkTaxDocumentRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LinkTaxDocumentRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        content_version_id:
+          type:
+            - string
+            - "null"
+        event_id:
+          type:
+            - string
+            - "null"
+        form_code:
+          maxLength: 256
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        note:
+          maxLength: 8192
+          type: string
+        role:
+          type: string
+      required:
+        - node_id
+        - role
+      type: object
+      x-go-type: api.LinkTaxDocumentRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     LocalTextApplyRequest:
       additionalProperties: false
       properties:
@@ -21723,6 +21760,93 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TaxDocumentLink:
+      additionalProperties: false
+      properties:
+        content_sha256:
+          type: string
+        content_version_id:
+          type:
+            - string
+            - "null"
+        event_id:
+          type:
+            - string
+            - "null"
+        form_code:
+          type: string
+        intact:
+          type: boolean
+        link_id:
+          type: string
+        live:
+          type: boolean
+        node_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        note:
+          type: string
+        path:
+          type:
+            - string
+            - "null"
+        pinned:
+          type: boolean
+        record_id:
+          type: string
+        recorded_at:
+          type: string
+        retired_at:
+          type:
+            - string
+            - "null"
+        role:
+          type: string
+      required:
+        - link_id
+        - record_id
+        - event_id
+        - node_id
+        - content_version_id
+        - content_sha256
+        - role
+        - form_code
+        - note
+        - recorded_at
+        - retired_at
+        - live
+        - pinned
+        - intact
+        - path
+      type: object
+      x-go-type: api.TaxDocumentLink
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxDocumentMutation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TaxDocumentMutation.json
+          format: uri
+          readOnly: true
+          type: string
+        document:
+          $ref: "#/components/schemas/TaxDocumentLink"
+        record:
+          $ref: "#/components/schemas/TaxRecord"
+      required:
+        - record
+        - document
+      type: object
+      x-go-type: api.TaxDocumentMutation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TaxEvent:
       additionalProperties: false
       properties:
@@ -21798,6 +21922,40 @@ components:
         - event
       type: object
       x-go-type: api.TaxEventMutation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxEvidence:
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+        unmet:
+          items:
+            $ref: "#/components/schemas/TaxEvidenceRequirement"
+          type: array
+      required:
+        - state
+        - unmet
+      type: object
+      x-go-type: api.TaxEvidence
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxEvidenceRequirement:
+      additionalProperties: false
+      properties:
+        event_id:
+          type:
+            - string
+            - "null"
+        requires:
+          type: string
+      required:
+        - requires
+        - event_id
+      type: object
+      x-go-type: api.TaxEvidenceRequirement
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21963,6 +22121,10 @@ components:
           type: string
         direction:
           type: string
+        documents:
+          items:
+            $ref: "#/components/schemas/TaxDocumentLink"
+          type: array
         due_date:
           type:
             - string
@@ -21971,6 +22133,8 @@ components:
           items:
             $ref: "#/components/schemas/TaxEvent"
           type: array
+        evidence:
+          $ref: "#/components/schemas/TaxEvidence"
         filer_party_id:
           type: string
         form_code:
@@ -22034,6 +22198,8 @@ components:
       required:
         - events
         - balance
+        - documents
+        - evidence
         - record_id
         - account_id
         - filer_party_id
@@ -34609,6 +34775,85 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Advance a tax record
+  /api/v1/tax/records/{record_id}/documents:
+    post:
+      operationId: linkTaxDocument
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkTaxDocumentRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxDocumentMutation"
+          description: Created
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Link a tax document
+  /api/v1/tax/records/{record_id}/documents/{link_id}/retire:
+    post:
+      operationId: retireTaxDocument
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: link_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxDocumentMutation"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Retire a tax document link
   /api/v1/tax/records/{record_id}/events:
     post:
       operationId: addTaxEvent

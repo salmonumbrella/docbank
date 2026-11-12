@@ -16149,6 +16149,99 @@ func (c *Client) AdvanceTaxRecord(ctx context.Context, options *AdvanceTaxRecord
 	return responseParser(ctx, resp)
 }
 
+// LinkTaxDocument Link a tax document
+func (c *Client) LinkTaxDocument(ctx context.Context, options *LinkTaxDocumentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LinkTaxDocumentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}/documents",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*LinkTaxDocumentResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(LinkTaxDocumentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "LinkTaxDocumentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[LinkTaxDocumentErrorResponse](resp, "LinkTaxDocumentErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}/documents")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireTaxDocument Retire a tax document link
+func (c *Client) RetireTaxDocument(ctx context.Context, options *RetireTaxDocumentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetireTaxDocumentResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}/documents/{link_id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetireTaxDocumentResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetireTaxDocumentResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetireTaxDocumentResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetireTaxDocumentErrorResponse](resp, "RetireTaxDocumentErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}/documents/{link_id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // AddTaxEvent Add a tax record event
 func (c *Client) AddTaxEvent(ctx context.Context, options *AddTaxEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddTaxEventResponse, error) {
 	var err error
@@ -27824,6 +27917,86 @@ func (o *AdvanceTaxRecordRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// LinkTaxDocumentRequestOptions is the options needed to make a request to LinkTaxDocument.
+type LinkTaxDocumentRequestOptions struct {
+	PathParams *LinkTaxDocumentPath
+	Body       *LinkTaxDocumentBody
+	Header     *LinkTaxDocumentHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *LinkTaxDocumentRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *LinkTaxDocumentRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *LinkTaxDocumentRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *LinkTaxDocumentRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetireTaxDocumentRequestOptions is the options needed to make a request to RetireTaxDocument.
+type RetireTaxDocumentRequestOptions struct {
+	PathParams *RetireTaxDocumentPath
+	Header     *RetireTaxDocumentHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetireTaxDocumentRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetireTaxDocumentRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetireTaxDocumentRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetireTaxDocumentRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // AddTaxEventRequestOptions is the options needed to make a request to AddTaxEvent.
 type AddTaxEventRequestOptions struct {
 	PathParams *AddTaxEventPath
@@ -28950,6 +29123,14 @@ type AdvanceTaxRecordHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type LinkTaxDocumentHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type RetireTaxDocumentHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type AddTaxEventHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -29622,6 +29803,15 @@ type AdvanceTaxRecordPath struct {
 	RecordID string `json:"record_id"`
 }
 
+type LinkTaxDocumentPath struct {
+	RecordID string `json:"record_id"`
+}
+
+type RetireTaxDocumentPath struct {
+	RecordID string `json:"record_id"`
+	LinkID   string `json:"link_id"`
+}
+
 type AddTaxEventPath struct {
 	RecordID string `json:"record_id"`
 }
@@ -30057,6 +30247,8 @@ type CreateTaxRecordBody = CreateTaxRecordRequest
 type UpdateTaxRecordBody = PatchTaxRecordRequest
 
 type AdvanceTaxRecordBody = AdvanceTaxRecordRequest
+
+type LinkTaxDocumentBody = LinkTaxDocumentRequest
 
 type AddTaxEventBody = AddTaxEventRequest
 
@@ -32075,6 +32267,14 @@ type AdvanceTaxRecordResponse = api.TaxEventMutation
 
 type AdvanceTaxRecordErrorResponse = Error
 
+type LinkTaxDocumentResponse = api.TaxDocumentMutation
+
+type LinkTaxDocumentErrorResponse = Error
+
+type RetireTaxDocumentResponse = api.TaxDocumentMutation
+
+type RetireTaxDocumentErrorResponse = Error
+
 type AddTaxEventResponse = api.TaxEventMutation
 
 type AddTaxEventErrorResponse = Error
@@ -32843,6 +33043,8 @@ type JobList = api.JobList
 type JobRequest = bundle.JobRequest
 
 type LaneControl = api.LaneControl
+
+type LinkTaxDocumentRequest = api.LinkTaxDocumentRequest
 
 type LocalTextApplyRequest = api.LocalTextApplyRequest
 
@@ -33876,9 +34078,17 @@ type TaxAccountPage = api.TaxAccountPage
 
 type TaxBalance = api.TaxBalance
 
+type TaxDocumentLink = api.TaxDocumentLink
+
+type TaxDocumentMutation = api.TaxDocumentMutation
+
 type TaxEvent = api.TaxEvent
 
 type TaxEventMutation = api.TaxEventMutation
+
+type TaxEvidence = api.TaxEvidence
+
+type TaxEvidenceRequirement = api.TaxEvidenceRequirement
 
 type TaxRecord = api.TaxRecord
 

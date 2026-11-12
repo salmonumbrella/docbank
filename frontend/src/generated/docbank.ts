@@ -3989,6 +3989,21 @@ export interface JobRequest {
   plan_id: string;
 }
 
+export interface LinkTaxDocumentRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  content_version_id?: string | null;
+  /** @nullable */
+  event_id?: string | null;
+  /** @maxLength 256 */
+  form_code?: string;
+  node_id: number;
+  /** @maxLength 8192 */
+  note?: string;
+  role: string;
+}
+
 export type LocalTextApplyRequestServer = typeof LocalTextApplyRequestServer[keyof typeof LocalTextApplyRequestServer];
 
 
@@ -9190,22 +9205,27 @@ export interface TaxBalance {
   outstanding_minor: number | null;
 }
 
-export interface TaxEvent {
+export interface TaxDocumentLink {
+  content_sha256: string;
   /** @nullable */
-  amount_minor: number | null;
-  currency: string;
-  event_id: string;
-  kind: string;
+  content_version_id: string | null;
+  /** @nullable */
+  event_id: string | null;
+  form_code: string;
+  intact: boolean;
+  link_id: string;
+  live: boolean;
+  /** @nullable */
+  node_id: number | null;
   note: string;
-  occurred_on: string;
-  record_id: string;
-  record_revision: number;
-  recorded_at: string;
-  reference: string;
-  sets_state: string;
-  void_reason: string;
   /** @nullable */
-  voided_at: string | null;
+  path: string | null;
+  pinned: boolean;
+  record_id: string;
+  recorded_at: string;
+  /** @nullable */
+  retired_at: string | null;
+  role: string;
 }
 
 export interface TaxRecord {
@@ -9253,11 +9273,47 @@ export interface TaxRecord {
   verified_revision: number | null;
 }
 
+export interface TaxDocumentMutation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  document: TaxDocumentLink;
+  record: TaxRecord;
+}
+
+export interface TaxEvent {
+  /** @nullable */
+  amount_minor: number | null;
+  currency: string;
+  event_id: string;
+  kind: string;
+  note: string;
+  occurred_on: string;
+  record_id: string;
+  record_revision: number;
+  recorded_at: string;
+  reference: string;
+  sets_state: string;
+  void_reason: string;
+  /** @nullable */
+  voided_at: string | null;
+}
+
 export interface TaxEventMutation {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   event: TaxEvent;
   record: TaxRecord;
+}
+
+export interface TaxEvidenceRequirement {
+  /** @nullable */
+  event_id: string | null;
+  requires: string;
+}
+
+export interface TaxEvidence {
+  state: string;
+  unmet: TaxEvidenceRequirement[];
 }
 
 export interface TaxRecordDetail {
@@ -9274,9 +9330,11 @@ export interface TaxRecordDetail {
   created_at: string;
   currency: string;
   direction: string;
+  documents: TaxDocumentLink[];
   /** @nullable */
   due_date: string | null;
   events: TaxEvent[];
+  evidence: TaxEvidence;
   filer_party_id: string;
   form_code: string;
   kind: string;
@@ -11105,6 +11163,14 @@ export type UpdateTaxRecordHeaders = {
 
 export type AdvanceTaxRecordHeaders = {
 'If-Match': string;
+};
+
+export type LinkTaxDocumentHeaders = {
+'If-Match'?: string;
+};
+
+export type RetireTaxDocumentHeaders = {
+'If-Match'?: string;
 };
 
 export type AddTaxEventHeaders = {
@@ -22917,6 +22983,87 @@ return sessionJSON<TaxEventMutation>(getAdvanceTaxRecordUrl(recordId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(advanceTaxRecordRequest)
+  }
+);}
+
+
+
+export const getLinkTaxDocumentUrl = (recordId: string,) => {
+
+
+
+
+  return `/api/v1/tax/records/${encodeURIComponent(String(recordId))}/documents`
+}
+
+/**
+ * @summary Link a tax document
+ */
+export const linkTaxDocument = async (recordId: string,
+    linkTaxDocumentRequest: NonReadonly<LinkTaxDocumentRequest>,
+    headers?: LinkTaxDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxDocumentMutation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxDocumentMutation>(getLinkTaxDocumentUrl(recordId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(linkTaxDocumentRequest)
+  }
+);}
+
+
+
+export const getRetireTaxDocumentUrl = (recordId: string,
+    linkId: string,) => {
+
+
+
+
+  return `/api/v1/tax/records/${encodeURIComponent(String(recordId))}/documents/${encodeURIComponent(String(linkId))}/retire`
+}
+
+/**
+ * @summary Retire a tax document link
+ */
+export const retireTaxDocument = async (recordId: string,
+    linkId: string,
+    headers?: RetireTaxDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxDocumentMutation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxDocumentMutation>(getRetireTaxDocumentUrl(recordId,linkId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
   }
 );}
 
