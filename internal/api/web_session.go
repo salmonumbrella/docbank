@@ -272,6 +272,9 @@ func (r *webSessionRegistry) waitRevocations() {
 func webSessionRequestAllowed(r *http.Request) bool {
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/versions/"); ok {
 		parts := strings.Split(after, "/")
+		if len(parts) == 3 && parts[1] == "people" && parts[2] == "assertions" {
+			return r.Method == http.MethodPut && r.URL.RawQuery == "" && validPageJobPathID(parts[0])
+		}
 		if len(parts) == 2 && (parts[1] == "dates" || parts[1] == "people") {
 			values, err := url.ParseQuery(r.URL.RawQuery)
 			if err != nil || r.Method != http.MethodGet || !validPageJobPathID(parts[0]) {

@@ -86,6 +86,7 @@ type PackageImportJob struct {
 type PersonPhotoSummary store.PersonPhotoSummary
 
 type PersonSummary struct {
+	LinkedContact     bool                `json:"linked_contact"`
 	PhotoSummary      *PersonPhotoSummary `json:"photo_summary,omitzero"`
 	IdentityLabel     string              `json:"identity_label,omitzero"`
 	DisplayNameFolded string              `json:"display_name_folded"`

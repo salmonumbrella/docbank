@@ -235,3 +235,25 @@ func TestDocumentPeopleResolutionDoesNotAssertRetiredPerson(t *testing.T) {
 	output, _ := ResolveDocumentPeople(input)
 	require.Empty(t, output.Edges)
 }
+
+func TestDocumentPeopleWithdrawnKeepsDerivedEdge(t *testing.T) {
+	t.Parallel()
+	const id = "00000000-0000-4000-8000-000000000002"
+	in := store.DocumentPeopleInputs{
+		ContentVersionID: "00000000-0000-4000-8000-000000000001",
+		Actors:           []store.DocumentPeopleActor{{Role: "author", ActorKey: "email:author@example.test", EvidenceKind: "source_metadata", EvidenceID: "claim"}},
+		Bindings:         map[string][]store.Person{"email:author@example.test": {{PersonID: id, State: "curated"}}},
+		Persons:          map[string]store.Person{id: {PersonID: id, State: "curated"}},
+		Assertions:       []store.PersonDocumentAssertion{{PersonID: id, Role: "author", Action: "withdrawn"}},
+	}
+	got, _ := ResolveDocumentPeople(in)
+	require.Len(t, got.Edges, 1)
+	require.NotEqual(t, "operator_assertion", got.Edges[0].EvidenceKind)
+	in.Assertions[0].Action = "suppress"
+	got, _ = ResolveDocumentPeople(in)
+	require.Empty(t, got.Edges)
+	in.Assertions[0].Action = "assert"
+	got, _ = ResolveDocumentPeople(in)
+	require.Len(t, got.Edges, 1)
+	require.Equal(t, "operator_assertion", got.Edges[0].EvidenceKind)
+}

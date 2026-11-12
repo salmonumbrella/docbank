@@ -292,6 +292,7 @@ SELECT person_id,display_name,display_name_folded,origin,state,revision,created_
 
 type PersonSearchResult struct {
 	Person
+	LinkedContact bool
 
 	IdentityLabel string
 	// RecentRank is the name group's newest visible depicted evidence time
@@ -402,6 +403,31 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		}
 		if err != nil {
 			return err
+		}
+		if len(people) > 0 {
+			args := make([]any, len(people))
+			marks := make([]string, len(people))
+			positions := make(map[string]int, len(people))
+			for i, person := range people {
+				args[i] = person.PersonID
+				marks[i] = fmt.Sprintf("$%d", i+1)
+				positions[person.PersonID] = i
+			}
+			rows, err := tx.QueryContext(ctx, `SELECT DISTINCT person_id FROM person_external_identities WHERE uid_state='current' AND person_id IN (`+strings.Join(marks, ",")+`)`, args...)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				people[positions[id]].LinkedContact = true
+			}
+			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				return err
+			}
 		}
 		if options.PhotoSummary {
 			return s.personPhotoSummaries(ctx, tx, people, options.GridRecipe, !hideLocked)

@@ -98,6 +98,17 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		return DocumentPeopleFacts{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	facts, err := s.documentPeopleFactsTx(ctx, tx, versionID, safe)
+	if err != nil {
+		return DocumentPeopleFacts{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return DocumentPeopleFacts{}, err
+	}
+	return facts, nil
+}
+
+func (s *Store) documentPeopleFactsTx(ctx context.Context, tx *sql.Tx, versionID string, safe bool) (DocumentPeopleFacts, error) {
 	version, hideLocked, err := s.factsVersionTx(ctx, tx, versionID)
 	if err != nil {
 		return DocumentPeopleFacts{}, err
@@ -216,9 +227,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			}
 		}
 		facts.Persons[id] = fp
-	}
-	if err := tx.Commit(); err != nil {
-		return DocumentPeopleFacts{}, err
 	}
 	return facts, nil
 }

@@ -413,6 +413,22 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 	}
 	var saved PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		saved, _, err = s.assertDocumentPersonTx(ctx, tx, assertion)
+		if err != nil {
+			return err
+		}
+		return advancePersonBindingEpochTx(ctx, tx)
+	})
+	return saved, err
+}
+
+func (s *Store) assertDocumentPersonTx(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (saved PersonDocumentAssertion, prior *PersonDocumentAssertion, err error) {
+	assertion.PhotoMark = assertion.Role == personAssertionRoleDepicted && assertion.Action == personAssertionActionAssert
+	if err = validatePersonAssertion(assertion); err != nil {
+		return
+	}
+	err = func() error {
 		if assertion.Role == personAssertionRoleDepicted {
 			if err := s.facePhotoQuery(ctx, tx, assertion.ContentVersionID); err != nil {
 				return err
@@ -427,6 +443,9 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			return err
 		}
 		existing, err := personAssertionByIdentityTx(ctx, tx, assertion.ContentVersionID, assertion.PersonID, assertion.Role)
+		if err == nil {
+			prior = &existing
+		}
 		switch {
 		case err == nil:
 			if existing.Action == personAssertionActionWithdrawn && assertion.Action != personAssertionActionWithdrawn {
@@ -489,13 +508,10 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 				}
 			}
 		}
-		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
-			return err
-		}
 		saved, err = personAssertionByIDTx(ctx, tx, assertion.AssertionID)
 		return err
-	})
-	return saved, err
+	}()
+	return
 }
 
 func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID string) ([]PersonDocumentAssertion, error) {
@@ -531,7 +547,7 @@ func validatePersonAssertion(assertion PersonDocumentAssertion) error {
 	}
 	if validateUUIDv4(assertion.ContentVersionID) != nil || validateUUIDv4(assertion.PersonID) != nil || assertion.Revision < 1 ||
 		!document.ValidPersonRole(assertion.Role) ||
-		(!slices.Contains([]string{personAssertionActionAssert, "suppress"}, assertion.Action) && (assertion.Role != personAssertionRoleDepicted || assertion.Action != personAssertionActionWithdrawn)) ||
+		!slices.Contains([]string{personAssertionActionAssert, "suppress", personAssertionActionWithdrawn}, assertion.Action) ||
 		len(assertion.Note) > maxPersonAssertionNoteBytes || !utf8.ValidString(assertion.Note) {
 		return ErrInvalidPerson
 	}

@@ -105,7 +105,7 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		out := PersonPage{Items: make([]PersonSummary, min(limit, len(people)))}
 		for index := range out.Items {
 			person := people[index]
-			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName, DisplayNameFolded: person.DisplayNameFolded,
+			out.Items[index] = PersonSummary{LinkedContact: person.LinkedContact, PersonID: person.PersonID, DisplayName: person.DisplayName, DisplayNameFolded: person.DisplayNameFolded,
 				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt, IdentityLabel: person.IdentityLabel, PhotoSummary: (*PersonPhotoSummary)(person.PhotoSummary)}
 		}
 		if len(people) > limit {

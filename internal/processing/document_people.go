@@ -83,6 +83,11 @@ func ResolveDocumentPeople(in store.DocumentPeopleInputs) (document.DocumentPeop
 		})
 	}
 	for _, assertion := range in.Assertions {
+		// Pre-existing withdrawn assertions only represented faces, which have no derived edges.
+		// Their output is unchanged, so this semantic correction needs no fingerprint bump.
+		if assertion.Action == "withdrawn" {
+			continue
+		}
 		out.Edges = slices.DeleteFunc(out.Edges, func(edge document.DocumentPersonEdgeV1) bool {
 			return edge.PersonID == assertion.PersonID && edge.Role == assertion.Role
 		})

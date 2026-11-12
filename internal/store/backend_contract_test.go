@@ -827,6 +827,9 @@ var backendSuites = []backendSuite{
 		{"SplitPersonMovesCustodianAndExternalUID", func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newPostgresQueryStore) }},
 		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
 		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
+		{"AssertDocumentPeopleCapacity", func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleCapacity(t, newPostgresQueryStore) }},
+		{"AssertDocumentPeopleRejects", func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleRejects(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleRejects(t, newPostgresQueryStore) }},
+		{"AssertDocumentPeopleAtomicUndo", func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleAtomicUndo(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleAtomicUndo(t, newPostgresQueryStore) }},
 		{"DocumentFactsDatesState", func(t *testing.T) { t.Helper(); checkDocumentFactsDatesState(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentFactsDatesState(t, newPostgresQueryStore) }},
 		{"DocumentPeopleFactsSensitiveUnresolvedActor", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
