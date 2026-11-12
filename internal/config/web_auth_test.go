@@ -62,11 +62,16 @@ func TestTimelineTimezoneConfig(t *testing.T) {
 		t.Run(tc.zone, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[web]\ntimeline_timezone = "+strconv.Quote(tc.zone)+"\n"), 0o600))
-			_, err := Load(root)
+			cfg, err := Load(root)
+			if tc.zone == "" {
+				require.ErrorContains(t, err, "timeline_timezone")
+				return
+			}
+			require.NoError(t, err)
 			if tc.valid {
-				require.NoError(t, err)
+				require.NoError(t, cfg.Validate())
 			} else {
-				require.Error(t, err)
+				require.ErrorContains(t, cfg.Validate(), "timeline_timezone")
 			}
 		})
 	}

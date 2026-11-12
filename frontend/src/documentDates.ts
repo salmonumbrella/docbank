@@ -42,11 +42,11 @@ function civilDate(value: string): Date {
   return result;
 }
 
-function clockOptions(precision: string): Intl.DateTimeFormatOptions {
+function clockOptions(precision: string, source: string): Intl.DateTimeFormatOptions {
   const options: Intl.DateTimeFormatOptions = { hour: "numeric" };
   if (precision !== "hour") options.minute = "2-digit";
   if (precision === "second" || precision === "fraction") options.second = "2-digit";
-  if (precision === "fraction") options.fractionalSecondDigits = 3;
+  if (precision === "fraction" && /\.\d+/.test(source)) options.fractionalSecondDigits = 3;
   return options;
 }
 
@@ -58,16 +58,10 @@ function formatClock(
   precision: string,
 ) {
   const fraction = precision === "fraction" ? source.match(/\.(\d+)/)?.[1] : undefined;
-  if (precision !== "fraction") return formatter.format(date);
+  if (!fraction) return formatter.format(date);
   return formatter
     .formatToParts(date)
-    .map((part) =>
-      part.type === "fractionalSecond"
-        ? (fraction ?? "")
-        : part.type === "decimal" && !fraction
-          ? ""
-          : part.value,
-    )
+    .map((part) => (part.type === "fractionalSecond" ? fraction : part.value))
     .join("");
 }
 
@@ -120,7 +114,7 @@ export function formatWhen(
       year: "numeric",
       month: "short",
       day: "numeric",
-      ...clockOptions(displayPrecision),
+      ...clockOptions(displayPrecision, when.local || when.at!),
       timeZoneName: "short",
     });
     return {
@@ -139,7 +133,7 @@ export function formatWhen(
   if (when.precision === "year") delete options.month;
   else if (when.precision !== "month") options.day = "numeric";
   if (floating) {
-    Object.assign(options, clockOptions(when.precision));
+    Object.assign(options, clockOptions(when.precision, civil));
   }
   const formatter = new Intl.DateTimeFormat(locale, options);
   const value = when.end_date

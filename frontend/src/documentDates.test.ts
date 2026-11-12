@@ -112,7 +112,7 @@ it("retains known fractional digits without inventing unknown source precision",
   expect(formatWhen(when({ ...unknown, at: "2026-03-11T03:40:12.12Z" }), zone).value).toContain(
     "11:40:12.12 PM",
   );
-  expect(formatWhen(when({ ...unknown, at: "2026-03-11T03:40:12Z" }), zone).value).toContain(
-    "11:40:12 PM",
+  expect(formatWhen(when({ ...unknown, at: "2026-03-11T03:40:12Z" }), zone).value).toBe(
+    "Mar 10, 2026, 11:40:12 PM EDT",
   );
 });
