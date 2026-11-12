@@ -1,6 +1,6 @@
 // Which optional columns a results table has room for. Names keep at least
-// MIN_NAME pixels, and columns drop in a fixed order as the table narrows: Type
-// first (the icon says it too), then Match, then Modified.
+// MIN_NAME pixels, and columns drop in a fixed order as the table narrows:
+// facts first, then Type (the icon says it too), Match, and Modified.
 const CHECKBOX = 44;
 const SIZE = 76;
 const ACTIONS = 44;

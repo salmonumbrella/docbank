@@ -87,3 +87,32 @@ it("preserves hour-precision instants when zone offsets introduce minutes", () =
   expect(formatWhen(fromIndia, utc).value).toContain("3:30 AM");
   expect(precisionLabel(fromIndia.precision)).toBe("to the hour");
 });
+
+it("retains known fractional digits without inventing unknown source precision", () => {
+  const zone = { name: "America/Toronto", supported: true };
+  const known = {
+    precision: "fraction",
+    zone_state: "offset",
+    source_zone: "+05:30",
+    source_offset_seconds: 19800,
+  };
+  expect(
+    formatWhen(
+      when({ ...known, at: "2026-03-11T03:40:12.12Z", local: "2026-03-11T09:10:12.1200" }),
+      zone,
+    ).value,
+  ).toContain("11:40:12.1200 PM");
+  expect(
+    formatWhen(
+      when({ ...known, at: "2026-03-11T03:40:12Z", local: "2026-03-11T09:10:12.0000" }),
+      zone,
+    ).value,
+  ).toContain("11:40:12.0000 PM");
+  const unknown = { precision: "fraction", zone_state: "unknown" };
+  expect(formatWhen(when({ ...unknown, at: "2026-03-11T03:40:12.12Z" }), zone).value).toContain(
+    "11:40:12.12 PM",
+  );
+  expect(formatWhen(when({ ...unknown, at: "2026-03-11T03:40:12Z" }), zone).value).toContain(
+    "11:40:12 PM",
+  );
+});

@@ -58,10 +58,16 @@ function formatClock(
   precision: string,
 ) {
   const fraction = precision === "fraction" ? source.match(/\.(\d+)/)?.[1] : undefined;
-  if (!fraction) return formatter.format(date);
+  if (precision !== "fraction") return formatter.format(date);
   return formatter
     .formatToParts(date)
-    .map((part) => (part.type === "fractionalSecond" ? fraction : part.value))
+    .map((part) =>
+      part.type === "fractionalSecond"
+        ? (fraction ?? "")
+        : part.type === "decimal" && !fraction
+          ? ""
+          : part.value,
+    )
     .join("");
 }
 
@@ -114,7 +120,7 @@ export function formatWhen(
       timeZoneName: "short",
     });
     return {
-      value: formatClock(formatter, instant, when.at!, when.precision),
+      value: formatClock(formatter, instant, when.local || when.at!, when.precision),
       zoneNote,
       floating,
     };
