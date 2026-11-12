@@ -161,13 +161,17 @@ func checkTimelineHydrationChunking(t *testing.T, open func(*testing.T) *Store) 
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
-	placements := make([]TimelinePlacement, 0, 250)
-	for i := range 250 {
+	placements := make([]TimelinePlacement, 0, 401)
+	for i := range 401 {
 		seed := fmt.Sprintf("%x", 0x1000+i)
 		node, err := s.CreateFile(ctx, s.RootID(), "chunk-"+seed+".txt", fakeHash(seed), 1, "text/plain")
 		require.NoError(t, err)
 		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		address := fmt.Sprintf("person-%03d@example.test", i)
+		actor := &record.Events[0].Actors[0]
+		actor.Address, actor.ActorKey = address, "email:"+address
+		actor.Claim = fmt.Sprintf(`{"address":%q}`, address)
 		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
 		require.True(t, ok)
 		record.Primaries = append(record.Primaries, primary)
@@ -175,7 +179,7 @@ func checkTimelineHydrationChunking(t *testing.T, open func(*testing.T) *Store) 
 		require.NoError(t, err)
 		placements = append(placements, TimelinePlacement{NodeID: node.ID, VersionID: node.CurrentVersionID, EventID: record.Events[0].EventID})
 	}
-	for _, tc := range []struct{ count, statements int }{{1, 3}, {250, 5}} {
+	for _, tc := range []struct{ count, statements int }{{1, 3}, {401, 6}} {
 		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			q := &timelineCountingQuerier{metadataQuerier: tx}
 			items, err := s.hydrateTimelineItems(ctx, q, placements[:tc.count], false)
