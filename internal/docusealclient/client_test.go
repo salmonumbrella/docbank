@@ -370,3 +370,57 @@ func TestTemplatesEmptyNameUsesPlaceholder(t *testing.T) {
 		t.Fatalf("placeholder credential echoed or not rejected: page=%+v err=%v", page, err)
 	}
 }
+
+// An invitation POST is never replayed, and only a complete 201 receipt confirms it.
+func TestSubmissionOutcomeClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   error
+	}{
+		{"redirect", 302, "", ErrCreationUnknown},
+		{"timeout", 408, "private diagnostic", ErrCreationUnknown},
+		{"server error", 500, "private diagnostic", ErrCreationUnknown},
+		{"unprocessable", 422, "private diagnostic", ErrCreationFailed},
+		{"rate limited", 429, "private diagnostic", ErrCreationFailed},
+		{"wrong success", 200, `[]`, ErrCreationUnknown},
+		{"malformed receipt", 201, `{}`, ErrCreationUnknown},
+		{"wrong external id", 201, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"other"}]`, ErrCreationUnknown},
+		{"valid receipt", 201, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key","embed_src":"private-link"}]`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if r.Method != http.MethodPost || r.URL.Path != "/submissions" {
+					t.Error("unexpected request")
+				}
+				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})}}
+			receipt, err := c.CreateSubmission(t.Context(), 7, []SubmitterInput{{Role: "Signer", Name: "Example", Email: "signer@example.com", ExternalID: "key"}})
+			if !errors.Is(err, tc.want) || calls != 1 {
+				t.Fatalf("err=%v calls=%d", err, calls)
+			}
+			if tc.want == nil && (receipt.SubmissionID != "10" || len(receipt.SubmitterIDs) != 1 || receipt.SubmitterIDs[0] != "11") {
+				t.Fatalf("receipt=%+v", receipt)
+			}
+		})
+	}
+}
+
+func TestSubmissionTransportFailureIsUnknownAndNotRetried(t *testing.T) {
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, io.ErrUnexpectedEOF} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			calls := 0
+			c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls++
+				return nil, failure
+			})}}
+			_, err := c.CreateSubmission(t.Context(), 7, []SubmitterInput{{Role: "Signer", Email: "signer@example.com", ExternalID: "key"}})
+			if !errors.Is(err, ErrCreationUnknown) || calls != 1 {
+				t.Fatalf("err=%v calls=%d", err, calls)
+			}
+		})
+	}
+}
