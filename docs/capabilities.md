@@ -254,7 +254,7 @@ processing profiles, and new imports do not run this workflow automatically.
 
 ## Connect to DocuSeal
 
-[Check a DocuSeal connection and list templates](usage/contracts.md) without sending documents.
+[Send a DocuSeal template and inspect local signing history](usage/contracts.md) without sending stored documents.
 
 ## What Docbank does not do
 

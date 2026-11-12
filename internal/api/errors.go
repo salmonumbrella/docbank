@@ -19,6 +19,7 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
+	RequestID                string              `json:"request_id,omitzero"`
 	PartyID                  string              `json:"party_id,omitzero"`
 	Cursor                   string              `json:"cursor,omitzero"`
 	Redaction                *redaction.Problem  `json:"redaction,omitempty"`
@@ -121,6 +122,8 @@ var storeErrCodes = []struct {
 	{store.ErrNotDir, http.StatusUnprocessableEntity, "not_dir"},
 	{store.ErrNotFile, http.StatusUnprocessableEntity, "not_file"},
 	{store.ErrInvalidName, http.StatusUnprocessableEntity, "invalid_name"},
+	{store.ErrInvalidSignatureRequest, http.StatusUnprocessableEntity, "invalid_signature_request"},
+	{store.ErrSignatureRequestOpen, http.StatusConflict, "signature_request_open"},
 	{store.ErrInvalidContract, http.StatusUnprocessableEntity, "invalid_contract"},
 	{store.ErrPartyNotOwn, http.StatusUnprocessableEntity, "party_not_own"},
 	{store.ErrInvalidParty, http.StatusUnprocessableEntity, "invalid_party"},

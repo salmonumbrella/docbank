@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -70,6 +71,7 @@ func TestSignatureRequestUncertainCreationKeepsLocalHistory(t *testing.T) {
 
 // The provider receives only the template and signers, in template role order.
 func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
+	var live *testStore
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/templates/7":
@@ -111,6 +113,19 @@ func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
 					return
 				}
 			}
+			key, ok := got.Submitters[0]["external_id"].(string)
+			parts := strings.Split(key, ":")
+			if !ok || len(parts) != 3 {
+				t.Error("invalid external key")
+				w.WriteHeader(500)
+				return
+			}
+			persisted, err := live.GetSignatureRequest(r.Context(), parts[1])
+			if err != nil || persisted.State != "creating" || len(persisted.Signers) != 2 {
+				t.Error("intent was not durable before POST")
+				w.WriteHeader(500)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprintf(w, `[{"id":11,"submission_id":10,"role":"Tenant","external_id":%q,"embed_src":"https://example.com/private-link"},{"id":12,"submission_id":10,"role":"Owner","external_id":%q}]`, got.Submitters[0]["external_id"], got.Submitters[1]["external_id"])
@@ -120,9 +135,10 @@ func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
 	}))
 	defer provider.Close()
 	t.Setenv("DOCUSEAL_DISCLOSURE_TEST_KEY", "synthetic-key")
-	ts, _ := newTestServer(t, func(d *api.Deps) {
+	ts, liveStore := newTestServer(t, func(d *api.Deps) {
 		d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_DISCLOSURE_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
 	})
+	live = liveStore
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Private agreement", "summary": "Private terms"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var c api.Contract
@@ -163,4 +179,61 @@ func TestSignatureRequestRejectsMismatchedRolesBeforePost(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	require.Contains(t, body, "invalid_signature_request")
 	require.Zero(t, posts.Load())
+}
+
+// Local history is available even when the optional connection is disabled.
+func TestSignatureRequestHistoryAvailableWithoutConnection(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var c api.Contract
+	require.NoError(t, json.Unmarshal([]byte(body), &c))
+	resp, body = do(t, ts, http.MethodGet, "/api/v1/contracts/"+c.ContractID+"/signature-requests", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	var page struct {
+		Items  []jsontext.Value `json:"items"`
+		Limit  int              `json:"limit"`
+		Offset int              `json:"offset"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.NotNil(t, page.Items)
+	require.Empty(t, page.Items)
+	require.Equal(t, 50, page.Limit)
+	require.Zero(t, page.Offset)
+}
+
+func TestSignatureRequestDefiniteProviderFailureAllowsRetry(t *testing.T) {
+	for _, status := range []int{http.StatusUnprocessableEntity, http.StatusTooManyRequests} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var posts atomic.Int32
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts.Add(1)
+					http.Error(w, "private provider diagnostic", status)
+					return
+				}
+				_, _ = w.Write([]byte(`{"id":7,"name":"Template","submitters":[{"name":"Signer"}]}`))
+			}))
+			defer provider.Close()
+			t.Setenv("DOCUSEAL_RETRY_TEST_KEY", "synthetic-key")
+			ts, _ := newTestServer(t, func(d *api.Deps) {
+				d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_RETRY_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
+			})
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
+			require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+			var c api.Contract
+			require.NoError(t, json.Unmarshal([]byte(body), &c))
+			path := "/api/v1/contracts/" + c.ContractID + "/signature-requests"
+			input := map[string]any{"template_id": 7, "signers": []any{map[string]any{"role": "Signer", "email": "signer@example.com", "name": "Example"}}}
+			for range 2 {
+				resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": `"1"`}, input)
+				require.Equal(t, http.StatusBadGateway, resp.StatusCode, body)
+				require.Contains(t, body, "docuseal_creation_failed")
+				require.NotContains(t, body, "private provider diagnostic")
+			}
+			require.EqualValues(t, 2, posts.Load())
+		})
+	}
 }

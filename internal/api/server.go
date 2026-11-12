@@ -239,6 +239,7 @@ func NewServer(d Deps) *Server {
 	registerTagRoutes(humaAPI, d, g)
 	registerPartyRoutes(humaAPI, d, g)
 	registerContractRoutes(humaAPI, d, g)
+	registerSignatureRequestRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)
@@ -421,6 +422,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/people/by-id/{person_id}/split", http.MethodPost},
 		{"/api/v1/parties/{party_id}", http.MethodPatch},
 		{"/api/v1/parties/{party_id}/retire", http.MethodPost},
+		{"/api/v1/contracts/{contract_id}/signature-requests", http.MethodPost},
 		{"/api/v1/contracts/{contract_id}", http.MethodPatch},
 		{"/api/v1/contracts/{contract_id}", http.MethodDelete},
 		{"/api/v1/contracts/{contract_id}/parties/{party_id}", http.MethodPut},

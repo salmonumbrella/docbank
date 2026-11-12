@@ -95,8 +95,7 @@ party in the own role returns `party_not_own`, and a retired party returns
 
 ## DocuSeal connection
 
-Docbank can check an optional DocuSeal connection and list its templates. This
-connection does not send documents or create signing requests. Configure
+Docbank can check an optional DocuSeal connection, list templates, and send a template for signature. Configure
 `[integrations.docuseal]` as described in [Configuration](../configuration.md#docuseal-connection),
 then restart the daemon.
 
@@ -110,3 +109,37 @@ another page. A full final page can be followed by an empty page. Template names
 are display text, capped at 512 bytes with control characters replaced and quoted in human output. A name containing the API key, before or after display conversion, causes the page to fail. Roles
 are exact identities for later signing: invalid or oversized roles cause the
 page to fail rather than being rewritten. Each provider response is limited to 2 MiB. If a template page exceeds that limit, Docbank retries the GET with a smaller page, down to one template; a single oversized template returns an error. Pages contain at most 100 templates, 1,024 roles per template and 4,096 bytes per role.
+
+
+## Send a template for signature
+
+Choose a DocuSeal template with one exact role per signer. Docbank sends the
+provider the template ID and each signer's role, name, email and an opaque
+external ID. It does not send contract terms, parties or document bytes. The
+provider emails the signers using the document already in its template.
+
+```console
+docbank contract sign request <contract-id> --template 7 --signer 'Tenant=tenant@example.com:Example Tenant'
+docbank contract sign status <contract-id>
+docbank contract sign status <request-id> --request
+```
+
+Repeat `--signer` for each role. For a role or email containing a delimiter,
+use a JSON object such as `--signer '{"role":"Buyer=Tenant","email":"tenant@example.com","name":"Example Tenant"}'`.
+Names may be empty and are limited to 512 UTF-8 bytes; emails are bare addresses
+of at most 254 characters. History is stored locally and remains readable when
+the integration is disabled. Backups include signer names and email addresses.
+
+Only one request may be open for a contract. A confirmed send moves a draft to
+`pending_signature`, preserving concurrent edits. Other contract statuses stay
+unchanged. If the provider outcome is unknown, the request stays `creating`;
+inspect its ID before retrying and do not send another invitation blindly.
+Archive requests in DocuSeal manually. Deleting a contract is refused while a
+request is open; terminal request history is removed with the contract, while
+stored documents remain. Signature mutations are refused in audited vaults.
+If audit is enabled between admission and settlement, even a confirmed provider
+send can remain `creating` with an unknown outcome.
+
+The API uses `POST` and `GET /api/v1/contracts/{contract_id}/signature-requests`
+and `GET /api/v1/signature-requests/{request_id}`. The POST requires the
+contract revision in `If-Match`; the individual request returns its own ETag.

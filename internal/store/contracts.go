@@ -257,6 +257,16 @@ func (s *Store) DeleteContract(ctx context.Context, id string, rev int64) error 
 		if c.Revision != rev {
 			return ErrStaleRevision
 		}
+		open, err := hasOpenSignatureTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if open {
+			return ErrSignatureRequestOpen
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM contract_signature_requests WHERE contract_id=$1`, id); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM contracts WHERE contract_id=$1`, id)
 		return err
 	})

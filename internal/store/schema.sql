@@ -3285,3 +3285,17 @@ CREATE TABLE IF NOT EXISTS contract_parties (
  party_id TEXT NOT NULL REFERENCES parties(party_id), role TEXT NOT NULL,
  PRIMARY KEY(contract_id, party_id, role)
 );
+
+CREATE TABLE IF NOT EXISTS contract_signature_requests (
+ request_id TEXT PRIMARY KEY NOT NULL, contract_id TEXT NOT NULL REFERENCES contracts(contract_id),
+ provider TEXT NOT NULL, endpoint_origin TEXT NOT NULL, api_path TEXT NOT NULL,
+ template_id TEXT NOT NULL, template_name TEXT NOT NULL, provider_submission_id TEXT,
+ state TEXT NOT NULL, last_error_code TEXT NOT NULL, revision INTEGER NOT NULL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS signature_requests_history ON contract_signature_requests(contract_id, created_at, request_id);
+CREATE TABLE IF NOT EXISTS contract_signature_signers (
+ request_id TEXT NOT NULL REFERENCES contract_signature_requests(request_id) ON DELETE CASCADE,
+ position INTEGER NOT NULL, role TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL,
+ provider_submitter_id TEXT, state TEXT NOT NULL, PRIMARY KEY(request_id, position)
+);

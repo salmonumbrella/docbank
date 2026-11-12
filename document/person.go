@@ -198,3 +198,16 @@ func ValidPersonCandidateActorKey(key string) bool {
 	}
 	return ValidateActorKeyV1(key) == nil
 }
+
+// ValidBarePersonEmail checks the person-email syntax without imposing an owner-specific size limit.
+func ValidBarePersonEmail(raw string) bool {
+	if !ValidPersonIdentityText(raw) || strings.TrimSpace(raw) != raw {
+		return false
+	}
+	a, err := mail.ParseAddress(raw)
+	if err != nil || a.Name != "" || a.Address != raw {
+		return false
+	}
+	normalized, err := normalizeActorEmail(a.Address)
+	return err == nil && normalized != "" && !strings.HasSuffix(normalized, "@")
+}

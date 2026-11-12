@@ -2535,3 +2535,17 @@ CREATE TABLE {{schema}}.contract_parties (
  party_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.parties(party_id), role TEXT COLLATE "C" NOT NULL,
  PRIMARY KEY(contract_id, party_id, role)
 );
+
+CREATE TABLE {{schema}}.contract_signature_requests (
+ request_id TEXT COLLATE "C" PRIMARY KEY NOT NULL, contract_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.contracts(contract_id),
+ provider TEXT COLLATE "C" NOT NULL, endpoint_origin TEXT COLLATE "C" NOT NULL, api_path TEXT COLLATE "C" NOT NULL,
+ template_id TEXT COLLATE "C" NOT NULL, template_name TEXT COLLATE "C" NOT NULL, provider_submission_id TEXT COLLATE "C",
+ state TEXT COLLATE "C" NOT NULL, last_error_code TEXT COLLATE "C" NOT NULL, revision BIGINT NOT NULL,
+ created_at TEXT COLLATE "C" NOT NULL, updated_at TEXT COLLATE "C" NOT NULL
+);
+CREATE INDEX signature_requests_history ON {{schema}}.contract_signature_requests(contract_id, created_at, request_id);
+CREATE TABLE {{schema}}.contract_signature_signers (
+ request_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.contract_signature_requests(request_id) ON DELETE CASCADE,
+ position BIGINT NOT NULL, role TEXT COLLATE "C" NOT NULL, name TEXT COLLATE "C" NOT NULL, email TEXT COLLATE "C" NOT NULL,
+ provider_submitter_id TEXT COLLATE "C", state TEXT COLLATE "C" NOT NULL, PRIMARY KEY(request_id, position)
+);

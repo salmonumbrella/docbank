@@ -49,6 +49,8 @@ func checkMetadataExportRecovery(t *testing.T, postgres bool) {
 	require.NoError(t, err)
 	contract, err := s.CreateContract(ctx, ContractInput{Title: "Retained agreement", Parties: []ContractPartyInput{{PartyID: party.PartyID, Role: "own"}}})
 	require.NoError(t, err)
+	signature, err := s.BeginSignatureRequest(ctx, contract.ContractID, contract.Revision, signatureFixture())
+	require.NoError(t, err)
 	// A wall-clock correction can place an update before creation. Exercise
 	// both native exporters and recovery with the retained contract present.
 	// PostgreSQL setup owns immutable timestamp seeding; operations use the runtime role.
@@ -99,6 +101,9 @@ func checkMetadataExportRecovery(t *testing.T, postgres bool) {
 	require.NoError(t, err)
 	require.Equal(t, contract.CreatedAt, recoveredContract.CreatedAt)
 	require.Equal(t, contract.UpdatedAt, recoveredContract.UpdatedAt)
+	recoveredSignature, err := target.GetSignatureRequest(ctx, signature.RequestID)
+	require.NoError(t, err)
+	require.Equal(t, signature, recoveredSignature)
 	require.Len(t, recoveredContract.Parties, 1)
 	require.Equal(t, party.PartyID, recoveredContract.Parties[0].PartyID)
 	var restored bytes.Buffer

@@ -236,6 +236,8 @@ var postgresEnrollmentCatalogs = []string{
 	"parties",
 	"contracts",
 	"contract_parties",
+	"contract_signature_requests",
+	"contract_signature_signers",
 	"photo_assets",
 	"photo_checkouts",
 	"photo_hidden_credentials",

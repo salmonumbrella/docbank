@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/docusealclient"
 )
 
@@ -32,22 +33,10 @@ const cacheControlNoStore = "no-store"
 
 func registerDocuSealRoutes(api huma.API, d Deps) {
 	client := func(ctx context.Context) (*docusealclient.Client, error) {
-		connection, err := d.Cfg.Integrations.DocuSeal.Resolve(ctx, d.VaultRoot)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, docuSealProblem(err)
-			}
-			if d.Cfg.Integrations.DocuSeal.DocuSealDisabled() {
-				return nil, NewError(503, "docuseal_unconfigured", "Enable and configure [integrations.docuseal]")
-			}
-			return nil, NewError(503, "docuseal_config_invalid", err.Error())
-		}
-		c, err := docusealclient.New(connection)
-		if err != nil {
-			return nil, NewError(503, "docuseal_config_invalid", "Check DocuSeal egress settings")
-		}
-		return c, nil
+		_, c, err := resolveDocuSeal(ctx, d)
+		return c, err
 	}
+
 	type statusOutput struct {
 		CacheControl string `header:"Cache-Control"`
 		Body         docusealclient.Status
@@ -82,4 +71,22 @@ func registerDocuSealRoutes(api huma.API, d Deps) {
 		}
 		return &templatesOutput{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
+}
+
+func resolveDocuSeal(ctx context.Context, d Deps) (config.DocuSealConnection, *docusealclient.Client, error) {
+	connection, err := d.Cfg.Integrations.DocuSeal.Resolve(ctx, d.VaultRoot)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return config.DocuSealConnection{}, nil, docuSealProblem(err)
+		}
+		if d.Cfg.Integrations.DocuSeal.DocuSealDisabled() {
+			return config.DocuSealConnection{}, nil, NewError(503, "docuseal_unconfigured", "Enable and configure [integrations.docuseal]")
+		}
+		return config.DocuSealConnection{}, nil, NewError(503, "docuseal_config_invalid", err.Error())
+	}
+	c, err := docusealclient.New(connection)
+	if err != nil {
+		return config.DocuSealConnection{}, nil, NewError(503, "docuseal_config_invalid", "Check DocuSeal egress settings")
+	}
+	return connection, c, nil
 }

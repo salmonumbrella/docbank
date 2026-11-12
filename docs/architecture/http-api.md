@@ -152,6 +152,8 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /text-citations/resolve` | reopen an exact quote from retained rendition text | Implemented |
 | `POST /text-citations/outline` | read headings and whole-section bounds from retained text | Implemented |
 | `POST /text-citations/section` | read an exact page of a retained text section | Implemented |
+| `POST /contracts/{contract_id}/signature-requests` | send a template with the contract revision | Implemented |
+| `GET /contracts/{contract_id}/signature-requests`, `GET /signature-requests/{request_id}` | read local signing history | Implemented |
 | `GET /integrations/docuseal/status` | check the configured DocuSeal connection | Implemented |
 | `GET /integrations/docuseal/templates` | list a bounded page of templates using the `after` cursor | Implemented |
 | `POST /kata/cite` | quote a verified document passage into a new or existing Kata issue | Implemented |

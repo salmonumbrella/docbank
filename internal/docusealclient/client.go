@@ -2,6 +2,7 @@
 package docusealclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -258,4 +259,120 @@ func safeText(s string, limit int) bool {
 		}
 	}
 	return true
+}
+
+type SubmitterInput struct {
+	Role       string `json:"role"`
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	ExternalID string `json:"external_id"`
+}
+type SubmissionReceipt struct {
+	SubmissionID string
+	SubmitterIDs []string
+}
+
+var ErrCreationUnknown = errors.New("docuseal_creation_unknown")
+var ErrCreationFailed = errors.New("docuseal_creation_failed")
+
+type templateWire struct {
+	ID         int64   `json:"id"`
+	Name       *string `json:"name"`
+	Submitters []struct {
+		Name string `json:"name"`
+	} `json:"submitters"`
+}
+
+func (c *Client) Template(ctx context.Context, id int64) (Template, error) {
+	if id <= 0 {
+		return Template{}, errors.New("invalid template ID")
+	}
+	var wire templateWire
+	if err := c.get(ctx, fmt.Sprintf("/templates/%d", id), &wire); err != nil {
+		return Template{}, err
+	}
+	if wire.ID != id || wire.Name == nil || wire.Submitters == nil {
+		return Template{}, errors.New("docuseal_invalid_response")
+	}
+	name := displayText(*wire.Name)
+	if strings.Contains(*wire.Name, c.connection.APIKey) || strings.Contains(name, c.connection.APIKey) {
+		return Template{}, errors.New("docuseal_invalid_response")
+	}
+	item := Template{ID: id, Name: name, Roles: make([]string, 0, len(wire.Submitters))}
+	for _, r := range wire.Submitters {
+		if strings.Contains(r.Name, c.connection.APIKey) {
+			return Template{}, errors.New("docuseal_invalid_response")
+		}
+		item.Roles = append(item.Roles, r.Name)
+	}
+	if !ValidTemplatePage(TemplatePage{Templates: []Template{item}}) {
+		return Template{}, errors.New("docuseal_invalid_response")
+	}
+	return item, nil
+}
+func (c *Client) CreateSubmission(ctx context.Context, id int64, signers []SubmitterInput) (SubmissionReceipt, error) {
+	body, err := json.Marshal(struct {
+		TemplateID int64            `json:"template_id"`
+		SendEmail  bool             `json:"send_email"`
+		Submitters []SubmitterInput `json:"submitters"`
+	}{id, true, signers})
+	if err != nil {
+		return SubmissionReceipt{}, ErrCreationUnknown
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.connection.Endpoint+c.connection.APIPath+"/submissions", bytes.NewReader(body))
+	if err != nil {
+		return SubmissionReceipt{}, ErrCreationUnknown
+	}
+	req.Header.Set("X-Auth-Token", c.connection.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return SubmissionReceipt{}, ErrCreationUnknown
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
+			return SubmissionReceipt{}, ErrCreationFailed
+		}
+		return SubmissionReceipt{}, ErrCreationUnknown
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
+	if err != nil || len(data) > maxResponse {
+		return SubmissionReceipt{}, ErrCreationUnknown
+	}
+	var wire []struct {
+		ID           *int64  `json:"id"`
+		SubmissionID *int64  `json:"submission_id"`
+		Role         *string `json:"role"`
+		ExternalID   *string `json:"external_id"`
+	}
+	if json.Unmarshal(data, &wire) != nil || len(wire) != len(signers) {
+		return SubmissionReceipt{}, ErrCreationUnknown
+	}
+	expected := map[string]int{}
+	for i, s := range signers {
+		if _, ok := expected[s.ExternalID]; ok {
+			return SubmissionReceipt{}, ErrCreationUnknown
+		}
+		expected[s.ExternalID] = i
+	}
+	result := SubmissionReceipt{SubmitterIDs: make([]string, len(signers))}
+	seen := map[int64]bool{}
+	var submission int64
+	for _, s := range wire {
+		if s.ID == nil || *s.ID <= 0 || s.SubmissionID == nil || *s.SubmissionID <= 0 || s.Role == nil || s.ExternalID == nil || seen[*s.ID] {
+			return SubmissionReceipt{}, ErrCreationUnknown
+		}
+		i, ok := expected[*s.ExternalID]
+		if !ok || result.SubmitterIDs[i] != "" || *s.Role != signers[i].Role || (submission != 0 && submission != *s.SubmissionID) {
+			return SubmissionReceipt{}, ErrCreationUnknown
+		}
+		submission = *s.SubmissionID
+		seen[*s.ID] = true
+		result.SubmitterIDs[i] = strconv.FormatInt(*s.ID, 10)
+	}
+	result.SubmissionID = strconv.FormatInt(submission, 10)
+	return result, nil
 }

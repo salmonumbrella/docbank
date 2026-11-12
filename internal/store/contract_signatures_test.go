@@ -1,0 +1,104 @@
+package store
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func signatureFixture() SignatureRequestInput {
+	return SignatureRequestInput{EndpointOrigin: "https://sign.example.com", APIPath: "/api", TemplateID: "7", TemplateName: "Example", Signers: []SignatureSignerInput{{Role: "Signer", Name: "Example", Email: "signer@example.com"}}}
+}
+
+// Admission, settling and deletion share one transactional revision fence on each backend.
+func checkSignatureLifecycle(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Before"})
+	require.NoError(t, err)
+	_, err = s.BeginSignatureRequest(ctx, c.ContractID, c.Revision+1, signatureFixture())
+	require.ErrorIs(t, err, ErrStaleRevision)
+	req, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.NoError(t, err)
+	require.Equal(t, "creating", req.State)
+	_, err = s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.ErrorIs(t, err, ErrSignatureRequestOpen)
+	require.ErrorIs(t, s.DeleteContract(ctx, c.ContractID, c.Revision), ErrSignatureRequestOpen)
+	c, err = s.UpdateContract(ctx, c.ContractID, c.Revision, ContractInput{Title: "Concurrent edit", Status: "draft"})
+	require.NoError(t, err)
+	req, err = s.FinishSignatureCreation(ctx, req.RequestID, req.Revision, SignatureCreationResult{SubmissionID: "10", SubmitterIDs: []string{"11"}})
+	require.NoError(t, err)
+	require.Equal(t, "sent", req.State)
+	c, err = s.GetContract(ctx, c.ContractID, "2026-01-01")
+	require.NoError(t, err)
+	require.Equal(t, "Concurrent edit", c.Title)
+	require.Equal(t, "pending_signature", c.Status)
+	_, err = s.FinishSignatureCreation(ctx, req.RequestID, req.Revision-1, SignatureCreationResult{Uncertain: true, ErrorCode: "docuseal_creation_unknown"})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	listed, err := s.ListSignatureRequests(ctx, c.ContractID, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+}
+func TestSignatureMetadataRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Example"})
+	require.NoError(t, err)
+	req, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.NoError(t, err)
+	var out bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &out))
+	dst := newTestStore(t)
+	require.NoError(t, dst.ImportMetadata(ctx, &out))
+	got, err := dst.GetSignatureRequest(ctx, req.RequestID)
+	require.NoError(t, err)
+	require.Equal(t, req, got)
+}
+
+// Definite failure is terminal and permits a fresh intent; it does not change the contract.
+func checkSignatureFailedRetry(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Active", Status: "active"})
+	require.NoError(t, err)
+	req, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.NoError(t, err)
+	req, err = s.FinishSignatureCreation(ctx, req.RequestID, req.Revision, SignatureCreationResult{ErrorCode: "docuseal_creation_failed"})
+	require.NoError(t, err)
+	require.Equal(t, "failed", req.State)
+	next, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.NoError(t, err)
+	require.NotEqual(t, req.RequestID, next.RequestID)
+	next, err = s.FinishSignatureCreation(ctx, next.RequestID, next.Revision, SignatureCreationResult{SubmissionID: "10", SubmitterIDs: []string{"11"}})
+	require.NoError(t, err)
+	c, err = s.GetContract(ctx, c.ContractID, "2026-01-01")
+	require.NoError(t, err)
+	require.Equal(t, "active", c.Status)
+	require.EqualValues(t, 1, c.Revision)
+}
+func TestSignatureEmailUnicodeIngress(t *testing.T) {
+	v := signatureFixture().Signers[0]
+	v.Email = strings.Repeat("界", 120) + "@example.com"
+	require.True(t, ValidSignatureSigner(v))
+	v.Email = strings.Repeat("界", 250) + "@example.com"
+	require.False(t, ValidSignatureSigner(v))
+}
+
+func checkSignatureTerminalHistoryDeletion(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Example"})
+	require.NoError(t, err)
+	req, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.NoError(t, err)
+	_, err = s.FinishSignatureCreation(ctx, req.RequestID, req.Revision, SignatureCreationResult{ErrorCode: "docuseal_creation_failed"})
+	require.NoError(t, err)
+	require.NoError(t, s.DeleteContract(ctx, c.ContractID, c.Revision))
+	_, err = s.GetSignatureRequest(ctx, req.RequestID)
+	require.ErrorIs(t, err, ErrNotFound)
+}

@@ -197,6 +197,7 @@ func IsRetryableMutationError(err error) bool {
 }
 
 type problemError struct {
+	requestID          string
 	code               string
 	observedScopeCount int
 	detail             string
@@ -537,6 +538,9 @@ func apiProblemError(e api.Error) error {
 		cause = errors.Join(cause, e.Redaction)
 	}
 	problem := &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
+	if (e.Code == "docuseal_creation_unknown" || e.Code == "docuseal_creation_failed") && validUUIDv4(e.RequestID) {
+		problem.requestID = e.RequestID
+	}
 	if e.BackupForget != nil || e.BackupPrune != nil {
 		return &BackupCleanupError{Forget: e.BackupForget, Prune: e.BackupPrune, err: problem}
 	}
@@ -3399,4 +3403,13 @@ func (c *Connection) Shutdown(ctx context.Context, token string) error {
 	defer cancel()
 	_, err := c.API().ShutdownDaemon(ctx, &apiclient.ShutdownDaemonRequestOptions{Header: &apiclient.ShutdownDaemonHeaders{XDocbankDaemonToken: token}})
 	return err
+}
+
+// SignatureRequestErrorID returns an opaque request ID from a signing failure.
+func SignatureRequestErrorID(err error) string {
+	var problem *problemError
+	if errors.As(err, &problem) {
+		return problem.requestID
+	}
+	return ""
 }
