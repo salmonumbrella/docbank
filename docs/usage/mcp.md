@@ -723,8 +723,8 @@ With contract writes enabled, a synthetic workflow is:
 
 1. Call `create_contract` with `{"title":"Service agreement","starts_on":"2026-01-01"}`.
 2. Call `get_contract` with the returned `contract_id` to inspect the record
-   and revision. Existing party UUIDs are available in contract details; party
-   management remains in the CLI or HTTP API.
+   and revision. The operator can supply party UUIDs from contract details or
+   `docbank party list`. Party management remains in the CLI or HTTP API.
 3. Call `update_contract` with `{"contract_id":"<id>","revision":1,"patch":{"starts_on":null}}`
    to clear the date. Omitted patch fields remain unchanged.
 4. Call `link_contract_document` with the returned revision, exact numeric

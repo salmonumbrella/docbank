@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -922,4 +923,63 @@ func TestSearchReadRerankOutputAndFalseBaseline(t *testing.T) {
 func writeReadToolProfiles(t *testing.T, response http.ResponseWriter) {
 	t.Helper()
 	writeDaemonJSON(t, response, []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"query"}, QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}})
+}
+
+func TestBoundedToolSuccessExactIntegerSerialization(t *testing.T) {
+	schema := &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{"revision": {Type: "integer"}}, Required: []string{"revision"}}
+	output := struct {
+		Revision int64 `json:"revision"`
+	}{9007199254740993}
+	result, err := boundedToolSuccess(mustResolveSchema(schema), output, nil)
+	require.NoError(t, err)
+	wire, err := json.Marshal(result)
+	require.NoError(t, err)
+	var decoded struct {
+		Structured struct {
+			Revision int64 `json:"revision"`
+		} `json:"structuredContent"`
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(wire, &decoded))
+	require.Equal(t, output.Revision, decoded.Structured.Revision)
+	require.NotEmpty(t, decoded.Content)
+	var text struct {
+		Revision int64 `json:"revision"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(decoded.Content[0].Text), &text))
+	require.Equal(t, output.Revision, text.Revision)
+	_, err = boundedToolSuccess(mustResolveSchema(&jsonschema.Schema{Type: "string"}), output, nil)
+	require.Error(t, err)
+	_, err = boundedToolSuccess(mustResolveSchema(&jsonschema.Schema{Type: "string"}), strings.Repeat("x", maxToolResponseBytes), nil)
+	require.ErrorIs(t, err, errToolResultTooLarge)
+}
+
+func TestBoundedToolSuccessPreservesEmptyCollections(t *testing.T) {
+	output := struct {
+		Items  []string          `json:"items"`
+		Labels map[string]string `json:"labels"`
+	}{}
+	schema := &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{
+		"items": {Type: "array"}, "labels": {Type: "object"},
+	}, Required: []string{"items", "labels"}}
+	result, err := boundedToolSuccess(mustResolveSchema(schema), output, nil)
+	require.NoError(t, err)
+	wire, err := json.Marshal(result)
+	require.NoError(t, err)
+	var decoded struct {
+		Structured struct {
+			Items  []string          `json:"items"`
+			Labels map[string]string `json:"labels"`
+		} `json:"structuredContent"`
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(wire, &decoded))
+	require.NotNil(t, decoded.Structured.Items)
+	require.NotNil(t, decoded.Structured.Labels)
+	require.NotEmpty(t, decoded.Content)
+	require.JSONEq(t, `{"items":[],"labels":{}}`, decoded.Content[0].Text)
 }

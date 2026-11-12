@@ -38,7 +38,7 @@ func contractDetailProperties() schema {
 	p["created_at"] = dateTimeSchema()
 	p["updated_at"] = dateTimeSchema()
 	p["parties"] = arraySchema(objectSchema(schema{"party_id": uuidSchema(), roleField: stringSchema(32), "display_name": stringSchema(200), conflictKindField: stringSchema(32), "own": booleanSchema(), "retired_at": schema{"anyOf": []schema{dateTimeSchema(), {contractSchemaType: "null"}}}}, "party_id", roleField, "display_name", conflictKindField, "own", "retired_at"), 0)
-	p["documents"] = arraySchema(objectSchema(schema{nodeField: integerSchema(1, contractSafeInteger), versionField: uuidSchema(), "blob_sha256": sha256Schema(), sizeField: integerSchema(0, contractSafeInteger), roleField: stringSchema(32), "added_at": dateTimeSchema(), "current": booleanSchema(), "available": booleanSchema()}, nodeField, versionField, "blob_sha256", sizeField, roleField, "added_at", "current", "available"), 0)
+	p["documents"] = arraySchema(objectSchema(schema{nodeField: integerSchema(1, 0), versionField: uuidSchema(), "blob_sha256": sha256Schema(), sizeField: integerSchema(0, 0), roleField: stringSchema(32), "added_at": dateTimeSchema(), "current": booleanSchema(), "available": booleanSchema()}, nodeField, versionField, "blob_sha256", sizeField, roleField, "added_at", "current", "available"), 0)
 	return p
 }
 func listContractsSchemas() (schema, schema) {
@@ -66,5 +66,5 @@ func updateContractSchemas() (schema, schema) {
 	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0), "patch": patch}, "contract_id", "revision", "patch"), contractWriteReceiptSchema()
 }
 func linkContractDocumentSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0), nodeField: integerSchema(1, contractSafeInteger), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", nodeField, versionField, roleField), contractWriteReceiptSchema()
+	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0), nodeField: integerSchema(1, 0), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", nodeField, versionField, roleField), contractWriteReceiptSchema()
 }
