@@ -2564,8 +2564,9 @@ A never-activated type reports revision 0; its first activation uses
 type and return `409 audit_mutation_unsupported` in an audited vault.
 
 `GET /records` requires `type`. Inactive types are hidden unless `include_inactive=true`. Repeated `field=field_id=JSON-value` selectors
-match field values; `before=field_id=YYYY-MM-DD` and `after=field_id=YYYY-MM-DD`
+match text and label fields; `before=field_id=YYYY-MM-DD` and `after=field_id=YYYY-MM-DD`
 are exclusive. `q` matches a literal ASCII case-insensitive title substring.
 `status` compares the effective status before pagination. `as_of` selects the
 status date and is returned in the page. See [Records and contracts](../usage/records.md)
-for the contract fields and lifecycle.
+for the contract fields and lifecycle. On a date-range patch, omitted endpoints
+remain unchanged, null endpoints clear, and a null field clears the range.

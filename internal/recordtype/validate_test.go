@@ -29,6 +29,7 @@ func TestContractValidation(t *testing.T) {
 		{"unknown field", func(r *Record) { r.Fields = map[string]any{"other": "x"} }},
 		{"invalid label", func(r *Record) { r.Fields = map[string]any{"contract_type": "Bad label"} }},
 		{"long terms", func(r *Record) { r.Fields = map[string]any{"summary": strings.Repeat("x", 8193)} }},
+		{"year zero", func(r *Record) { r.Fields = map[string]any{"signed_on": "0000-01-01"} }},
 		{"invalid date", func(r *Record) { r.Fields = map[string]any{"signed_on": "2026-02-30"} }},
 		{"reversed term", func(r *Record) {
 			r.Fields = map[string]any{"term": map[string]any{"start": "2026-03-01", "end": "2026-02-01"}}

@@ -271,7 +271,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				if version == 48 {
 					_, err := db.ExecContext(t.Context(), `INSERT OR REPLACE INTO main.vault_change_head(singleton,epoch) VALUES(1,'synthetic-epoch')`)
 					require.NoError(t, err)
-					_, err = db.ExecContext(t.Context(), `INSERT INTO main.vault_changes(seq,kind,node_id,node_revision) VALUES(900,'fixture',1,1)`)
+					_, err = db.ExecContext(t.Context(), `INSERT INTO main.vault_changes(seq,kind,node_id,node_revision) VALUES(900,'created',1,1)`)
 					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), `INSERT OR REPLACE INTO vector_membership_epochs(vector_space_id,revision) VALUES('synthetic-space',17)`)
 					require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 					var changes, revision, scans int
 					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT epoch FROM vault_change_head WHERE singleton=1`).Scan(&epoch))
 					require.Equal(t, "synthetic-epoch", epoch)
-					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vault_changes WHERE seq=900 AND kind='fixture'`).Scan(&changes))
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vault_changes WHERE seq=900 AND kind='created'`).Scan(&changes))
 					require.Equal(t, 1, changes)
 					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision FROM vector_membership_epochs WHERE vector_space_id='synthetic-space'`).Scan(&revision))
 					require.Equal(t, 17, revision)

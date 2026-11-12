@@ -204,7 +204,15 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		return &recordPageOutput{cacheControlNoStore, RecordPage{Records: out, Total: total, Limit: opts.Limit, Offset: opts.Offset, AsOf: opts.AsOf}}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body RecordCreateInput }) (*recordOutput, error) {
-		input := recordtype.Record{Title: in.Body.Title, Status: "draft", Fields: in.Body.Fields.Value}
+		input := recordtype.Record{Title: in.Body.Title, Fields: in.Body.Fields.Value}
+		if def, ok := recordtype.Builtin(in.Body.TypeID); ok && !in.Body.Status.Set {
+			for _, status := range def.Status.Values {
+				if status.Initial && !status.Retired {
+					input.Status = status.ID
+					break
+				}
+			}
+		}
 		if in.Body.Note.Set {
 			input.Note = in.Body.Note.Value
 		}
@@ -212,7 +220,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 			input.Status = in.Body.Status.Value
 		}
 		var out *recordOutput
-		err = g.mutate(ctx, func() error {
+		err := g.mutate(ctx, func() error {
 			r, e := d.Store.CreateRecord(ctx, in.Body.TypeID, input)
 			if e != nil {
 				return FromStoreError(e)

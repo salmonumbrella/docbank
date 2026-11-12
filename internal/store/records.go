@@ -317,6 +317,16 @@ func (s *Store) UpdateRecord(ctx context.Context, id string, revision int64, pat
 			candidate.Status = *patch.Status
 		}
 		for k, v := range patch.Fields {
+			if recordFieldType(state.Definition, k) == "date_range" {
+				if delta, ok := v.(map[string]any); ok {
+					merged := map[string]any{}
+					if previous, ok := current.Fields[k].(map[string]any); ok {
+						maps.Copy(merged, previous)
+					}
+					maps.Copy(merged, delta)
+					v = merged
+				}
+			}
 			candidate.Fields[k] = v
 		}
 		normalized, err := recordtype.NormalizeRecord(state.Definition, candidate)
@@ -564,7 +574,18 @@ func validateRecordListOptions(def recordtype.Definition, opts RecordListOptions
 		}
 	}
 	for id, value := range opts.Fields {
-		normalized, err := recordtype.NormalizeRecord(def, recordtype.Record{Title: "x", Status: "draft", Fields: map[string]any{id: value}})
+		fieldType := recordFieldType(def, id)
+		if fieldType != "text" && fieldType != "label" {
+			return fmt.Errorf("%w: invalid field selector", ErrInvalidRecord)
+		}
+		initial := ""
+		for _, status := range def.Status.Values {
+			if status.Initial && !status.Retired {
+				initial = status.ID
+				break
+			}
+		}
+		normalized, err := recordtype.NormalizeRecord(def, recordtype.Record{Title: "x", Status: initial, Fields: map[string]any{id: value}})
 		if err != nil || len(normalized.Fields) != 1 || !reflect.DeepEqual(normalized.Fields[id], value) {
 			return fmt.Errorf("%w: invalid field selector", ErrInvalidRecord)
 		}

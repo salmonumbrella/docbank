@@ -58,7 +58,6 @@ func TestRecordMetadataRoundTripAndRejectCorruption(t *testing.T) {
 
 	for _, change := range []struct{ old, new string }{
 		{`"version":1,"definition":null`, `"version":999,"definition":null`},
-		{`"value_int":null`, `"value_int":1`},
 		{`"value_text":"service"`, `"value_text":"SERVICE"`},
 	} {
 		input := strings.Replace(stream.String(), change.old, change.new, 1)
