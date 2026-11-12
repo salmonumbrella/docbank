@@ -1,0 +1,116 @@
+name: Tax T4b-1 hosted checks
+
+on:
+  push:
+    branches: [build/tax-t4b1-checks]
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Tax validation and balance
+        run: go test -tags fts5 ./internal/taxrecord -run '^TestTax' -count=1
+      - name: Storage and retained authority
+        run: go test -tags fts5 ./internal/store -run '^(TestTax.*|TestStorageSchemaVersionContract)$' -count=1
+      - name: Backend contract
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$/^organization$/^Tax(Events(Authority|Lifecycle)|Document(LinksLifecycle|EvidenceAndDuplicates))$' -count=1
+      - name: HTTP and schema
+        run: go test -tags fts5 ./internal/api -run '^TestTax.*' -count=1
+      - name: Client receipts and protocol
+        run: go test -tags fts5 ./internal/daemonconn -run '^TestTax.*|^TestEnsureDiscoveryRejectsProtocolMismatch$' -count=1
+      - name: CLI
+        run: go test -tags fts5 ./cmd/docbank -run '^TestTax.*' -count=1
+
+  postgres:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_PASSWORD: docbank_test # gitleaks:allow -- disposable CI service credential
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable # gitleaks:allow -- disposable CI service credential
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Tax event authority and balance
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres$/^organization$/^Tax(Events(Authority|Lifecycle)|Document(LinksLifecycle|EvidenceAndDuplicates))$' -count=1
+
+  lint:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+      - run: |
+          PATH="$(go env GOPATH)/bin:$PATH" make lint
+          git diff --exit-code
+
+  docs-and-generated:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - run: |
+          make generate-api
+          git diff --exit-code
+      - run: |
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+      - run: make docs-build
