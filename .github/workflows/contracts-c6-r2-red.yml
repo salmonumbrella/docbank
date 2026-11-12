@@ -1,0 +1,36 @@
+name: Contracts C6 round-two regressions
+on:
+  push:
+    branches: [ci/contracts-c6-r2-red]
+permissions:
+  contents: read
+jobs:
+  regressions:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOFLAGS: -trimpath
+      GOPROXY: https://proxy.golang.org|direct
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Restore Go cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-lint
+      - name: Ambiguous internal response and coded control
+        if: always()
+        run: go test -v -tags fts5 ./internal/mcp -run '^TestDaemonProcessingStartInternalResponseIsUnknown$' -count=1
+      - name: Contract invalid integer encoding
+        if: always()
+        run: go test -v -tags fts5 ./internal/mcp -run '^TestContractMCPWriteInvalidIntegerEncoding$' -count=1
