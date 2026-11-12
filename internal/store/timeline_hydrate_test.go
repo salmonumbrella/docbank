@@ -170,7 +170,8 @@ func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T)
 			event.Actors = append([]document.DocumentEventActorV1(nil), event.Actors...)
 			address := privacy + "@example.test"
 			event.Actors[0].Address, event.Actors[0].ActorKey = address, "email:"+address
-			event.Actors[0].Claim, event.Actors[0].DisplayName = address, privacy
+			event.Actors[0].Claim = fmt.Sprintf(`{"address":%q}`, address)
+			event.Actors[0].DisplayName = privacy
 			event.Actors[0].Sensitive = privacy == "actor"
 			event.Sensitive = privacy == "event"
 			event.SourceKey = fmt.Sprintf("metadata/dc2/private-%d", j)
@@ -382,6 +383,15 @@ func checkTimelineHydrationStalePeopleHeads(t *testing.T, open func(*testing.T) 
 	check(1)
 	publishEvent("df3")
 	check(0) // A new event generation invalidates the old people head.
+	publishPeople()
+	check(1)
+	input, err := s.PrepareDocumentPeopleInputs(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	oldResolver := documentPeoplePublicationForInput(t, input)
+	oldResolver.ResolverFingerprint = fakeHash("df4")
+	_, err = s.PublishDocumentPeople(ctx, oldResolver)
+	require.NoError(t, err)
+	check(0) // An otherwise current head from an older resolver is not safe to hydrate.
 	publishPeople()
 	check(1)
 	_, err = s.RebuildDocumentPeople(ctx, "90000000-0000-4000-8000-000000000046")

@@ -300,8 +300,10 @@ func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store
 	require.NoError(t, err)
 	_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: skipped, Limit: 10})
 	require.ErrorIs(t, err, ErrTimelineDateNotInZone)
-	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped, skipped)
-	require.ErrorIs(t, err, ErrTimelineDateNotInZone)
+	for _, endpoints := range [][2]civil.Date{{skipped, skipped}, {skipped.AddDays(-1), skipped}, {skipped, skipped.AddDays(1)}} {
+		_, err = svc.TimelineDays(t.Context(), "owner", scope, endpoints[0], endpoints[1])
+		require.ErrorIs(t, err, ErrTimelineDateNotInZone)
+	}
 	counts, err := svc.TimelineDays(t.Context(), "owner", scope, skipped.AddDays(-1), skipped.AddDays(1))
 	require.NoError(t, err)
 	require.Equal(t, []TimelineDayCount{{Date: "2011-12-29", Count: 1, DateOnly: 1}}, counts.Days)
