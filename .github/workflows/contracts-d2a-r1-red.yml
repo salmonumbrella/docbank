@@ -1,0 +1,83 @@
+name: Contracts D2a provider status RED checkpoint
+on:
+  push:
+    branches: [ci/contracts-d2a-r1-red-65fcb4bca]
+permissions:
+  contents: read
+jobs:
+  checkpoint:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - name: Render integrated API without generated client dependency
+        id: render
+        run: |
+          cp internal/api/openapi.yaml /tmp/import-openapi.yaml
+          cp internal/apiclient/client.gen.go /tmp/import-client.go
+          cp frontend/src/generated/docbank.ts /tmp/import-client.ts
+          cp frontend/src/generated/photoSourceExtensions.ts /tmp/import-photo.ts
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+              "os"
+              "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+              out, err := api.OpenAPIYAML()
+              if err != nil { panic(err) }
+              if _, err := os.Stdout.Write(out); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi > internal/api/openapi.yaml
+          make generate-photo-policy
+          go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+          npm --prefix frontend run generate:api
+          cmp /tmp/import-openapi.yaml internal/api/openapi.yaml
+          cmp /tmp/import-client.go internal/apiclient/client.gen.go
+          cmp /tmp/import-client.ts frontend/src/generated/docbank.ts
+          cmp /tmp/import-photo.ts frontend/src/generated/photoSourceExtensions.ts
+      - name: CGO 1 docusealclient provider status regression
+        if: ${{ always() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 1
+        run: go test -v -tags fts5 ./internal/docusealclient -run '^TestSubmissionOutcomeClassification$'
+      - name: CGO 1 api provider status regression
+        if: ${{ always() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 1
+        run: go test -v -tags fts5 ./internal/api -run '^TestSignatureRequestDisclosesOnlySigners$'
+      - name: CGO 0 docusealclient provider status regression
+        if: ${{ always() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 0
+        run: go test -v -tags fts5 ./internal/docusealclient -run '^TestSubmissionOutcomeClassification$'
+      - name: CGO 0 api provider status regression
+        if: ${{ always() && steps.render.outcome == 'success' }}
+        env:
+          CGO_ENABLED: 0
+        run: go test -v -tags fts5 ./internal/api -run '^TestSignatureRequestDisclosesOnlySigners$'
