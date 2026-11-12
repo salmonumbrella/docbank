@@ -62,10 +62,14 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		ctx = browserPeopleScope(ctx)
 		value, err := query.Parse(in.Body)
 		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
+			return nil, queryInputError(err)
 		}
+		submitted := value
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
 				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
 				if positioned.End > positioned.Offset {
@@ -75,7 +79,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			}
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query")
 		}
-		canonical, fingerprint, err := query.CanonicalWithFingerprint(compiled.Query)
+		canonical, fingerprint, err := query.CanonicalWithFingerprint(submitted)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not encode query")
 		}
@@ -97,10 +101,13 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		ctx = browserPeopleScope(ctx)
 		value, err := query.Parse(in.Body)
 		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
+			return nil, queryInputError(err)
 		}
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
 				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
 				if positioned.End > positioned.Offset {
@@ -110,7 +117,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			}
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query highlights")
 		}
-		fingerprint, err := query.Fingerprint(compiled.Query)
+		fingerprint, err := query.Fingerprint(value)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not fingerprint query highlights")
 		}
@@ -126,4 +133,23 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		}
 		return &struct{ Body QueryHighlightPreview }{Body: preview}, nil
 	})
+}
+
+// dateQueryError preserves the timeline contract's error codes at every query entry point.
+func dateQueryError(err error) *Error {
+	if date, ok := errors.AsType[*query.DateError](err); ok {
+		problem := NewError(http.StatusBadRequest, date.Code, date.Err.Error())
+		if positioned, ok := errors.AsType[*query.ExpressionError](err); ok && positioned.End > positioned.Offset {
+			problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
+		}
+		return problem
+	}
+	return nil
+}
+
+func queryInputError(err error) error {
+	if problem := dateQueryError(err); problem != nil {
+		return problem
+	}
+	return NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 }

@@ -2075,6 +2075,13 @@ export interface DerivativePurgePlanRequest {
   content_version_ids?: string[];
 }
 
+export interface DocumentDateFilter {
+  from: string;
+  kinds?: string[];
+  precisions?: string[];
+  to: string;
+}
+
 export interface DocumentEventCoverage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3335,11 +3342,6 @@ export interface GPSBounds {
   west: string;
 }
 
-export interface PersonFilter {
-  person_id: string;
-  roles: string[];
-}
-
 export interface Filters {
   /** @nullable */
   aesthetics_max?: string | null;
@@ -3371,6 +3373,7 @@ export interface Filters {
   color_red_max?: string | null;
   /** @nullable */
   color_red_min?: string | null;
+  document_date?: DocumentDateFilter;
   exclude_collection_ids?: string[];
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
@@ -3400,7 +3403,6 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
-  people?: PersonFilter[];
   person_ids?: string[];
   /** @nullable */
   rating_max?: number | null;
@@ -5418,6 +5420,22 @@ export interface WorkspaceQueryCoverage {
   profile_fingerprint?: string;
 }
 
+export type SavedQueryDateSchemaPrecisionsItem = typeof SavedQueryDateSchemaPrecisionsItem[keyof typeof SavedQueryDateSchemaPrecisionsItem];
+
+
+export const SavedQueryDateSchemaPrecisionsItem = {
+  exact: 'exact',
+  day: 'day',
+  coarse: 'coarse',
+} as const;
+
+export interface SavedQueryDateSchema {
+  from: string;
+  kinds?: string[];
+  precisions?: SavedQueryDateSchemaPrecisionsItem[];
+  to: string;
+}
+
 export type SavedQueryFiltersSchemaFlagsItem = typeof SavedQueryFiltersSchemaFlagsItem[keyof typeof SavedQueryFiltersSchemaFlagsItem];
 
 
@@ -5465,15 +5483,6 @@ export const SavedQueryFiltersSchemaMediaFamiliesItem = {
   cad: 'cad',
   unknown: 'unknown',
 } as const;
-
-export interface SavedQueryPersonFilterSchema {
-  person_id: string;
-  /**
-     * @minItems 1
-     * @maxItems 64
-     */
-  roles: string[];
-}
 
 export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
 
@@ -5574,6 +5583,7 @@ export interface SavedQueryFiltersSchema {
      * @nullable
      */
   color_red_min?: string | null;
+  document_date?: SavedQueryDateSchema;
   /** @maxItems 64 */
   exclude_collection_ids?: string[];
   /** @maxItems 64 */
@@ -5644,8 +5654,6 @@ export interface SavedQueryFiltersSchema {
   /** @maxItems 64 */
   paths?: string[];
   /** @maxItems 64 */
-  people?: SavedQueryPersonFilterSchema[];
-  /** @maxItems 64 */
   person_ids?: string[];
   /**
      * @minimum 0
@@ -5711,6 +5719,7 @@ export const SavedQuerySortSchemaField = {
   capture_time: 'capture_time',
   import_time: 'import_time',
   added_time: 'added_time',
+  document_date: 'document_date',
 } as const;
 
 export interface SavedQuerySortSchema {
@@ -5742,6 +5751,7 @@ export interface SavedQueryV1Schema {
   syntax?: SavedQueryV1SchemaSyntax;
   /** @maxLength 8192 */
   text?: string;
+  timezone?: string;
   v?: SavedQueryV1SchemaV;
 }
 
@@ -6252,8 +6262,6 @@ export interface WorkspaceFacetValue {
   count: number;
   key: string;
   label: string;
-  /** @maxItems 11 */
-  roles?: string[];
   selected: boolean;
 }
 
@@ -6773,6 +6781,8 @@ export interface Query {
   sort: Sort;
   syntax: string;
   text: string;
+  /** @nullable */
+  timezone?: string | null;
   v: number;
 }
 
@@ -8208,7 +8218,6 @@ export const SavedQueryRunRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
-  person_role: 'person_role',
 } as const;
 
 export type SavedQueryRunRequestPageSize = typeof SavedQueryRunRequestPageSize[keyof typeof SavedQueryRunRequestPageSize];
@@ -8223,7 +8232,7 @@ export const SavedQueryRunRequestPageSize = {
 export interface SavedQueryRunRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 9 */
+  /** @maxItems 8 */
   facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
   photos?: boolean;
@@ -8279,8 +8288,6 @@ export interface WorkspaceQueryRow {
   excerpt?: string;
   /** Display-file flag in a photo snapshot; absent in a document snapshot. */
   flag?: WorkspaceQueryRowFlag;
-  /** @maxItems 16 */
-  matched_roles?: string[];
   media_family: string;
   mime_type: string;
   modified_at: string;
@@ -8316,7 +8323,7 @@ export interface WorkspaceQueryResponse {
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
-  /** @maxItems 9 */
+  /** @maxItems 8 */
   facets: WorkspaceQueryResponseFacetsItem[];
   fallback_reason?: string;
   generation: WorkspaceQueryGeneration;
@@ -8339,6 +8346,8 @@ export interface WorkspaceQueryResponse {
   snapshot_fingerprint: string;
   /** @pattern ^[0-9a-f]{32}$ */
   snapshot_id: string;
+  timezone?: string;
+  timezone_defaulted: boolean;
   /** @minimum 0 */
   total: number;
   /** @minimum 0 */
@@ -9302,6 +9311,17 @@ export interface WebTabSession {
   upload_secret: string;
 }
 
+/**
+ * Full date disclosure requires an API key
+ */
+export type WorkspaceQueryCreateRequestDisclosure = typeof WorkspaceQueryCreateRequestDisclosure[keyof typeof WorkspaceQueryCreateRequestDisclosure];
+
+
+export const WorkspaceQueryCreateRequestDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -9314,7 +9334,6 @@ export const WorkspaceQueryCreateRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
-  person_role: 'person_role',
 } as const;
 
 export type WorkspaceQueryCreateRequestPageSize = typeof WorkspaceQueryCreateRequestPageSize[keyof typeof WorkspaceQueryCreateRequestPageSize];
@@ -9329,7 +9348,9 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 9 */
+  /** Full date disclosure requires an API key */
+  disclosure?: WorkspaceQueryCreateRequestDisclosure;
+  /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
   photos?: boolean;

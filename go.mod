@@ -6,6 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
+	cloud.google.com/go v0.123.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/config v1.33.13
@@ -34,13 +35,14 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.10
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
+	github.com/sqlc-dev/meyer v0.1.2
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.20
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/xdg-go/stringprep v1.0.4
 	github.com/yuin/goldmark/v2 v2.1.13
 	go.kenn.io/kata v0.22.0
-	go.kenn.io/kit v0.51.0
+	go.kenn.io/kit v0.52.1-0.20261112172830-31ed8eb6bcd4
 	golang.org/x/crypto v0.59.0
 	golang.org/x/image v0.47.0
 	golang.org/x/mod v0.42.0

@@ -44,11 +44,14 @@ type ExpressionError struct {
 	Offset  int
 	End     int
 	Message string
+	Cause   error
 }
 
 func (e *ExpressionError) Error() string {
 	return fmt.Sprintf("expression bytes %d:%d: %s", e.Offset, e.End, e.Message)
 }
+
+func (e *ExpressionError) Unwrap() error { return e.Cause }
 
 // ParseExpression parses one bounded simple or advanced search expression.
 func ParseExpression(text, syntax string) (*Expression, error) {
@@ -627,7 +630,7 @@ func expressionTokenStartsOperand(kind expressionTokenKind) bool {
 }
 
 var expressionFields = withPDFFields(withQualityFields(map[string]struct{}{
-	"xmp":  {},
+	"xmp": {}, "date": {}, "date_kind": {}, "date_precision": {},
 	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {}, "person": {},
 	"author": {}, "from": {}, "to": {}, "cc": {}, "bcc": {}, "custodian": {}, "participant": {}, "organizer": {}, "attendee": {}, "between": {}, "mentions": {},
 	"mime": {}, "extension": {}, "media_family": {},

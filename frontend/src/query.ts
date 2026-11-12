@@ -1,3 +1,4 @@
+import { documentDateKinds } from "./generated/documentDateKinds.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import formatMetadata from "../../document/format_metadata.json";
@@ -54,6 +55,7 @@ const qualityFields = [
 ] as const;
 const optionalFilterFields = new Set([
   ...qualityFields,
+  "document_date",
   "unevaluated",
   "paths",
   "exclude_paths",
@@ -129,7 +131,8 @@ export interface QuerySort {
     | "relevance"
     | "capture_time"
     | "import_time"
-    | "added_time";
+    | "added_time"
+    | "document_date";
   direction: "asc" | "desc";
 }
 
@@ -140,7 +143,15 @@ export interface GPSBounds {
   east: string;
 }
 
+export interface DocumentDateFilter {
+  from: string;
+  to: string;
+  kinds?: string[];
+  precisions?: ("exact" | "day" | "coarse")[];
+}
+
 export interface QueryFilters {
+  document_date?: DocumentDateFilter;
   unevaluated?: boolean;
   focus_min?: string;
   focus_max?: string;
@@ -202,6 +213,7 @@ export interface Query {
   mode: "lexical" | "semantic" | "hybrid";
   filters: QueryFilters;
   sort: QuerySort;
+  timezone?: string;
 }
 
 export interface HighlightTerm {
@@ -218,7 +230,7 @@ export function parseQuery(raw: string): Query {
   preflightJSON(raw, true);
   const input: unknown = JSON.parse(raw);
   const object = requireObject(input, "query");
-  requireOnlyKeys(object, ["v", "text", "syntax", "mode", "filters", "sort"], "query");
+  requireOnlyKeys(object, ["v", "text", "syntax", "mode", "filters", "sort", "timezone"], "query");
 
   const filtersInput = object.filters === undefined ? {} : requireObject(object.filters, "filters");
   requireOnlyKeys(filtersInput, [...optionalFilterFields], "filters");
@@ -231,6 +243,7 @@ export function parseQuery(raw: string): Query {
     syntax: optionalString(object.syntax, "simple", "syntax") as Query["syntax"],
     mode: optionalString(object.mode, "lexical", "mode") as Query["mode"],
     filters: parseFilters(filtersInput),
+    timezone: optionalNullableString(object.timezone, "timezone"),
     sort: {
       field: optionalString(sortInput.field, "name", "sort.field") as QuerySort["field"],
       direction: optionalString(
@@ -250,6 +263,7 @@ export function canonicalQuery(value: Query): string {
   for (const field of qualityFields) {
     if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field];
   }
+  if (normalized.filters.document_date) filters.document_date = normalized.filters.document_date;
   if (normalized.filters.unevaluated) filters.unevaluated = true;
   if (normalized.filters.collapse_duplicates) filters.collapse_duplicates = true;
   if (normalized.filters.collection_ids?.length)
@@ -309,6 +323,7 @@ export function canonicalQuery(value: Query): string {
     sort: { direction: normalized.sort.direction, field: normalized.sort.field },
     syntax: normalized.syntax,
     text: normalized.text,
+    ...(normalized.timezone === undefined ? {} : { timezone: normalized.timezone }),
     v: normalized.v,
   });
   requireCanonicalBound(encoded, "query");
@@ -400,6 +415,7 @@ function normalizePeople(value: PersonFilter[] | undefined): PersonFilter[] | un
 
 function parseFilters(input: Record<string, unknown>): QueryFilters {
   return {
+    document_date: input.document_date == null ? undefined : parseDocumentDate(input.document_date),
     kinds: optionalStringArray(input.kinds, "filters.kinds") as QueryFilters["kinds"],
     cameras: optionalStringArray(input.cameras, "filters.cameras"),
     lenses: optionalStringArray(input.lenses, "filters.lenses"),
@@ -454,6 +470,38 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
   };
 }
 
+function parseDocumentDate(value: unknown): DocumentDateFilter {
+  const obj = requireObject(value, "filters.document_date");
+  requireOnlyKeys(obj, ["from", "to", "kinds", "precisions"], "filters.document_date");
+  const from = optionalString(obj.from, "", "filters.document_date.from");
+  const to = optionalString(obj.to, "", "filters.document_date.to");
+  const validDate = (date: string) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+    !date.startsWith("0000-") &&
+    !Number.isNaN(Date.parse(date)) &&
+    new Date(date).toISOString().slice(0, 10) === date;
+  if (!validDate(from) || !validDate(to) || from > to)
+    throw new Error("document date range is invalid");
+  const kinds = normalizeSet(
+    optionalStringArray(obj.kinds, "kinds"),
+    64,
+    (v) => documentDateKinds.has(v),
+    "kinds",
+  );
+  const precisions = normalizeSet(
+    optionalStringArray(obj.precisions, "precisions"),
+    64,
+    (v) => ["exact", "day", "coarse"].includes(v),
+    "precisions",
+  ) as DocumentDateFilter["precisions"];
+  return {
+    from,
+    ...(kinds?.length ? { kinds } : {}),
+    ...(precisions?.length ? { precisions } : {}),
+    to,
+  };
+}
+
 function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   const v = value.v;
   const syntax = value.syntax;
@@ -478,6 +526,7 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
         "capture_time",
         "import_time",
         "added_time",
+        "document_date",
       ] as string[]
     ).includes(sort.field) ||
     !(["asc", "desc"] as string[]).includes(sort.direction)
@@ -490,11 +539,14 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
     mode,
     filters: normalizeFilters(value.filters ?? {}),
     sort,
+    timezone: value.timezone,
   };
 }
 
 function normalizeFilters(value: QueryFilters): QueryFilters {
   const result: QueryFilters = {
+    document_date:
+      value.document_date === undefined ? undefined : parseDocumentDate(value.document_date),
     kinds: normalizeSet(
       value.kinds,
       64,

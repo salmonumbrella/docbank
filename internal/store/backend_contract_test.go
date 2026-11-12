@@ -2152,6 +2152,20 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPhotoTechnicalMetadataVersionBinding(t, newPostgresQueryStore)
 		}},
+		{"DocumentDateFailedHeadIsNotVisible", func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateFailedHeadIsNotVisible(t, newTestStore, false)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateFailedHeadIsNotVisible(t, newPostgresQueryStore, true)
+		}},
+		{"DocumentDateKeysFollowGeneration", func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateKeysFollowGeneration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateKeysFollowGeneration(t, newPostgresQueryStore)
+		}},
 		{"PublishDocumentEventsAcceptsCanonicalEmptyProjection", func(t *testing.T) {
 			t.Helper()
 			checkPublishDocumentEventsAcceptsCanonicalEmptyProjection(t, newTestStore)
