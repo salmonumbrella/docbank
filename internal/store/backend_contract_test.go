@@ -2262,6 +2262,7 @@ var backendSuites = []backendSuite{
 		{"SignatureUncertainHistory", func(t *testing.T) { t.Helper(); checkSignatureUncertainHistory(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSignatureUncertainHistory(t, newPostgresQueryStore) }},
 		{"SignatureFailedRetry", func(t *testing.T) { t.Helper(); checkSignatureFailedRetry(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSignatureFailedRetry(t, newPostgresQueryStore) }},
 		{"SignatureTerminalHistoryDeletion", func(t *testing.T) { t.Helper(); checkSignatureTerminalHistoryDeletion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSignatureTerminalHistoryDeletion(t, newPostgresQueryStore) }},
+		{"SignatureRevisionExhaustion", func(t *testing.T) { t.Helper(); checkSignatureRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkSignatureRevisionExhaustion(t, true) }},
 		{"SignatureLifecycle", func(t *testing.T) { t.Helper(); checkSignatureLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSignatureLifecycle(t, newPostgresQueryStore) }},
 		{"ContractLifecycle", func(t *testing.T) {
 			t.Helper()

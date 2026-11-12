@@ -1,6 +1,9 @@
 package store
 
 import (
+	"bytes"
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -113,4 +116,106 @@ func checkSignatureUncertainHistory(t *testing.T, open func(*testing.T) *Store) 
 	page, err := s.ListSignatureRequests(ctx, c.ContractID, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, all, page)
+}
+
+// Exercise imported boundary revisions on each native backend.
+func checkSignatureRevisionExhaustion(t *testing.T, postgres bool) {
+	t.Helper()
+	for _, action := range []string{"draft-begin", "active", "concurrent-edit", "request-revision"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := t.Context()
+			source := newTestStore(t)
+			status := "draft"
+			if action == "active" {
+				status = "active"
+			}
+			c, err := source.CreateContract(ctx, ContractInput{Title: "Example", Status: status})
+			require.NoError(t, err)
+			var req SignatureRequest
+			if action == "request-revision" {
+				req, err = source.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+				require.NoError(t, err)
+			}
+			var exported bytes.Buffer
+			require.NoError(t, source.ExportMetadata(ctx, &exported))
+			lines := strings.Split(exported.String(), "\n")
+			target := `"type":"contract"`
+			id := c.ContractID
+			revision := int64(math.MaxInt64)
+			if action == "concurrent-edit" {
+				revision--
+			}
+			if action == "request-revision" {
+				target = `"type":"contract_signature_request"`
+				id = req.RequestID
+			}
+			found := false
+			for i, line := range lines {
+				if strings.Contains(line, target) && strings.Contains(line, id) {
+					lines[i] = strings.Replace(line, `"revision":1`, `"revision":`+strconv.FormatInt(revision, 10), 1)
+					require.NotEqual(t, line, lines[i])
+					found = true
+				}
+			}
+			require.True(t, found)
+			s := newTestStore(t)
+			require.NoError(t, s.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+			if postgres {
+				s, _ = copyRetentionStore(t, s)
+			}
+			before, err := s.GetContract(ctx, c.ContractID, "2026-01-01")
+			require.NoError(t, err)
+			if action != "request-revision" {
+				require.Equal(t, revision, before.Revision)
+			}
+			if action == "request-revision" {
+				req, err = s.GetSignatureRequest(ctx, req.RequestID)
+				require.NoError(t, err)
+				require.Equal(t, revision, req.Revision)
+			}
+			if action == "concurrent-edit" || action == "active" {
+				req, err = s.BeginSignatureRequest(ctx, c.ContractID, before.Revision, signatureFixture())
+				require.NoError(t, err)
+			}
+			if action == "concurrent-edit" {
+				before, err = s.UpdateContract(ctx, c.ContractID, before.Revision, ContractInput{Title: "Changed", Status: "draft"})
+				require.NoError(t, err)
+				require.Equal(t, int64(math.MaxInt64), before.Revision)
+			}
+			var snapshot bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &snapshot))
+			if action == "draft-begin" {
+				_, err = s.BeginSignatureRequest(ctx, c.ContractID, before.Revision, signatureFixture())
+				require.ErrorIs(t, err, ErrInvalidContract)
+				requests, e := s.ListSignatureRequests(ctx, c.ContractID, 50, 0)
+				require.NoError(t, e)
+				require.Empty(t, requests)
+			} else {
+				_, err = s.FinishSignatureCreation(ctx, req.RequestID, req.Revision, SignatureCreationResult{SubmissionID: "10", SubmitterIDs: []string{"11"}})
+				if action == "active" {
+					require.NoError(t, err)
+				} else if action == "concurrent-edit" {
+					require.ErrorIs(t, err, ErrInvalidContract)
+				} else {
+					require.Error(t, err)
+				}
+			}
+			after, err := s.GetContract(ctx, c.ContractID, "2026-01-01")
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			if action != "active" {
+				if action != "draft-begin" {
+					got, e := s.GetSignatureRequest(ctx, req.RequestID)
+					require.NoError(t, e)
+					require.Equal(t, req, got)
+					require.Equal(t, "creating", got.State)
+					require.Nil(t, got.ProviderSubmissionID)
+					require.Nil(t, got.Signers[0].ProviderSubmitterID)
+				}
+				var afterExport bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &afterExport))
+				require.Equal(t, snapshot.Bytes(), afterExport.Bytes())
+			}
+		})
+	}
 }
