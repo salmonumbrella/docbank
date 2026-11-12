@@ -3181,24 +3181,32 @@
     );
     const session = webSession;
     const request = generation;
-    // The live or frozen selection the chip belongs to.
+    // The live or frozen selection the chip belongs to, and the search draft
+    // it would replace: a newer typed search or Advanced edit wins.
     const selection = selectedSource?.key;
+    const draft = queryDraftRevision;
+    const typed = searchQuery;
     const click = ++personSearchClick;
     const current = () =>
       session === webSession &&
       request === generation &&
       selection === selectedSource?.key &&
+      draft === queryDraftRevision &&
+      typed === searchQuery &&
       click === personSearchClick;
     try {
       await previewQuery(session, query, new AbortController().signal);
     } catch (cause) {
       if (!current()) return;
-      // The fixed person:<id> query is well formed, so 422 means an unknown reference.
+      // The fixed person:<id> query is well formed, so 422 means an unknown
+      // reference. Anything else goes to the existing failToast: 401 resets the
+      // session, and other failures show as a toast, which frozen results also
+      // display (the error banner lives only in the live toolbar).
       if (cause instanceof APIError && cause.status === 422)
         showToast(
           "This historical person is no longer available for search. Their recorded attribution is still shown.",
         );
-      else handleFailure(cause);
+      else failToast(cause, session);
       return;
     }
     if (!current()) return;

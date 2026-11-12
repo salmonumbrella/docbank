@@ -7,6 +7,7 @@ import App from "./App.svelte";
 import { canonicalQuery, highlightSetFingerprint, type HighlightSet, type Query } from "./query.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import type { SnapshotPage, SnapshotRow } from "./snapshots.js";
+import { versionFactsResponse } from "./document-facts-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -955,6 +956,8 @@ it("resolves referenced import names when paging interrupts a pending read", asy
   const json = (value: unknown) => new Response(JSON.stringify(value));
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     if (url === `/api/v1/collections/${collectionID}`) {
       await pending;
       return json(collection);
@@ -1046,6 +1049,8 @@ it("keeps a tagged snapshot and its selection when the inspector removes the act
   let removed = false;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     requests.push(url);
     if (url.includes("/path?")) return json(root);
     if (url.includes("/children?"))
@@ -1314,8 +1319,9 @@ it("checks a person chip's search first and acts only for the current selection 
   const holding = new Set<string>();
   const held = new Map<string, () => void>();
   // Each person preview's own promise, observed through the real function.
-  // It settles only after App's continuation, which registered first, has
-  // run, so awaiting it needs no timer.
+  // The spy's catch reaction registers before App awaits the same promise, so
+  // on settlement the catch job runs, then App's continuation, and only then
+  // does the derived promise resolve: awaiting it needs no timer.
   const previews = new Map<string, Promise<unknown>>();
   const realPreview = preview.previewQuery;
   vi.spyOn(preview, "previewQuery").mockImplementation((...args) => {
@@ -1462,4 +1468,94 @@ it("checks a person chip's search first and acts only for the current selection 
   expect(searches).toEqual([initialQuery.text]);
   await release(ines);
   await waitFor(() => expect(searches).toEqual([initialQuery.text, `person:${ines}`]));
+
+  // A newer typed search or Advanced edit made while a check is pending wins.
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await fireEvent.input(screen.getByRole("searchbox", { name: "Search documents" }), {
+    target: { value: "budget" },
+  });
+  await release(mara);
+  expect(screen.getByRole("searchbox", { name: "Search documents" })).toHaveProperty(
+    "value",
+    "budget",
+  );
+  await clickHeld(mara, "Mara Okonkwo-Fell");
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Query syntax"), { target: { value: "minutes" } });
+  await release(mara);
+  expect(searches).toEqual([initialQuery.text, `person:${ines}`]);
+  expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe("minutes");
+});
+
+it("rereads facts on Refresh and drops the view's reads when leaving Documents", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const root = {
+    id: 1000,
+    name: "",
+    kind: "dir",
+    path: "/",
+    revision: 1,
+    size: 0,
+    created_at: "2026-09-11T00:00:00Z",
+    modified_at: "2026-09-11T00:00:00Z",
+  };
+  const memo = {
+    ...root,
+    id: 3,
+    parent_id: root.id,
+    name: "memo.txt",
+    path: "/memo.txt",
+    kind: "file",
+    current_version_id: "11111111-1111-4111-8111-111111111111",
+    blob_hash: "a".repeat(64),
+    size: 74,
+    mime_type: "text/plain",
+  };
+  const listing = { items: [], total: 0, limit: 1000, offset: 0 };
+  // Facts reads for the inspected version, and whether each was later aborted.
+  const reads: { resource: string; signal?: AbortSignal | null }[] = [];
+  let hold = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const facts = /^\/api\/v1\/versions\/[^/]+\/(dates|people)$/.exec(url);
+    if (facts) {
+      reads.push({ resource: facts[1]!, signal: init?.signal });
+      if (hold) return new Promise<Response>(() => {});
+      return versionFactsResponse(url)!;
+    }
+    if (url === "/api/v1/path?path=%2F") return Response.json(root);
+    if (url.includes("/children?"))
+      return Response.json({ directory: root, items: [memo], total: 1, limit: 1000, offset: 0 });
+    if (url.startsWith("/api/v1/tags?") || url.startsWith("/api/v1/nodes/3/tags?"))
+      return Response.json(listing);
+    if (url === "/api/v1/nodes/3") return Response.json(memo);
+    if (url.startsWith("/api/v1/audit/status?"))
+      return Response.json({ enabled: false, scopes: [] });
+    if (url.startsWith("/api/v1/trash?")) return Response.json(listing);
+    if (url.includes("processing-profiles")) return Response.json([]);
+    throw new Error(`unexpected request: ${url}`);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "memo.txt" }));
+  await waitFor(() =>
+    expect(reads.map((read) => read.resource).sort()).toEqual(["dates", "people"]),
+  );
+  // The same view's owner already holds published facts, so only Refresh,
+  // which replaces the owner, reads them again.
+  hold = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+  await waitFor(() => expect(reads.length).toBeGreaterThanOrEqual(4));
+  const pending = reads.slice(2);
+  expect(pending.some((read) => read.signal && !read.signal.aborted)).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
+  await screen.findByRole("main", { name: "Trash" });
+  expect(pending.every((read) => read.signal?.aborted)).toBe(true);
 });
