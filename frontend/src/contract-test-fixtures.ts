@@ -1,4 +1,4 @@
-import type { Contract, ContractDocument, Node } from "./generated/docbank.js";
+import type { Contract, ContractDocument, Node, Party } from "./generated/docbank.js";
 
 export const contractID = "11111111-1111-4111-8111-111111111111";
 export const signedVersionID = "22222222-2222-4222-8222-222222222222";
@@ -92,4 +92,21 @@ export function nodeFixture(overrides: Partial<Node> = {}): Node {
     modified_at: "2027-01-02T10:00:00Z",
     ...overrides,
   } as Node;
+}
+
+export function party(overrides: Partial<Party> = {}): Party {
+  return {
+    party_id: "77777777-7777-4777-8777-777777777777",
+    kind: "organization",
+    display_name: "Zenith Storage Ltd",
+    legal_name: "",
+    country: null,
+    own: false,
+    person_id: null,
+    retired_at: null,
+    revision: 1,
+    created_at: "2026-12-01T09:00:00Z",
+    updated_at: "2026-12-01T09:00:00Z",
+    ...overrides,
+  };
 }

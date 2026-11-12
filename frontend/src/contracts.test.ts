@@ -3,6 +3,9 @@ import {
   addCivilDays,
   contractDocumentSource,
   contractListParams,
+  contractPatch,
+  draftFrom,
+  partyChanges,
   contractTypeOptions,
   contractStatusLabel,
   contractTypeLabel,
@@ -117,6 +120,31 @@ describe("contract helpers", () => {
     expect(contractTypeLabel("_").trim()).not.toBe("");
     expect(contractTypeLabel("_")).not.toBe(contractTypeLabel(""));
     expect(contractTypeLabel("any_type")).not.toBe(options[0]!.label);
+  });
+});
+
+describe("contract edits", () => {
+  it("patches only changed fields, clearing a date to null and text to empty", () => {
+    const base = contract();
+    const draft = { ...draftFrom(base), title: "Northwind lease", expires_on: null, summary: "" };
+    expect(contractPatch(base, draft)).toStrictEqual({
+      title: "Northwind lease",
+      expires_on: null,
+      summary: "",
+    });
+    expect(contractPatch(base, draftFrom(base))).toStrictEqual({});
+  });
+
+  it("detaches removed parties before attaching added ones, keyed by role", () => {
+    const base = contract();
+    const [own, northwind, riverbend] = base.parties;
+    const zenith = { ...northwind!, party_id: "77777777-7777-4777-8777-777777777777" };
+    const asOwn = { ...northwind!, role: "own" };
+    expect(partyChanges(base.parties, [zenith, own!, asOwn, northwind!])).toStrictEqual([
+      { attach: false, party: riverbend },
+      { attach: true, party: zenith },
+      { attach: true, party: asOwn },
+    ]);
   });
 });
 

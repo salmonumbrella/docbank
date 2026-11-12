@@ -107,13 +107,24 @@ describe("contracts page", () => {
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
-  it("shows the empty register hint", async () => {
-    serve((url) => (list(url) ? page([]) : undefined));
-    show();
-    expect((await screen.findByText(/No contracts yet/)).textContent).toContain(
-      "docbank contract create",
+  it("offers a new contract from the empty register and returns on cancel", async () => {
+    serve((url) =>
+      list(url)
+        ? page([])
+        : url.pathname === "/api/v1/parties"
+          ? Response.json({ items: [], limit: 1000, offset: 0 })
+          : undefined,
     );
+    show();
+    expect(await screen.findByText(/No contracts yet/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    const buttons = screen.getAllByRole("button", { name: "New contract" });
+    expect(buttons).toHaveLength(2);
+    await fireEvent.click(buttons[1]!);
+    expect(await screen.findByRole("heading", { name: "New contract" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Refresh contracts" })).toBeNull();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Cancel" })[0]!);
+    expect(await screen.findByText(/No contracts yet/)).toBeTruthy();
   });
 
   it("filters by status and a seen type, then clears filters", async () => {
