@@ -119,3 +119,47 @@ func checkAssertDocumentPeopleCapacity(t *testing.T, newStore func(*testing.T) *
 	_, err = s.AssertDocumentPeople(t.Context(), version, []DocumentPersonChange{{PersonID: first, Role: "author", Action: "assert", Revision: 1}})
 	require.NoError(t, err)
 }
+
+func checkAssertDocumentPeopleAliases(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
+	ctx := t.Context()
+	_, version := seedPeopleVersion(t, s)
+	survivor, err := s.CreatePerson(ctx, "Synthetic survivor", "operator")
+	require.NoError(t, err)
+	alias, err := s.CreatePerson(ctx, "Synthetic alias", "operator")
+	require.NoError(t, err)
+	op, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, alias.PersonID, op, survivor.Revision, alias.Revision)
+	require.NoError(t, err)
+	byAlias := DocumentPersonChange{PersonID: alias.PersonID, Role: "author", Action: "assert", Revision: 1}
+	bySurvivor := byAlias
+	bySurvivor.PersonID = survivor.PersonID
+	var before, after int64
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&before))
+	_, err = s.AssertDocumentPeople(ctx, version, []DocumentPersonChange{byAlias, bySurvivor})
+	require.ErrorIs(t, err, ErrInvalidPerson)
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&after))
+	require.Equal(t, before, after)
+	rows, err := s.DocumentPersonAssertions(ctx, version)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	out, err := s.AssertDocumentPeople(ctx, version, []DocumentPersonChange{byAlias})
+	require.NoError(t, err)
+	require.Len(t, out.Facts.Assertions, 1)
+	require.Equal(t, survivor.PersonID, out.Facts.Assertions[0].PersonID)
+	require.Equal(t, []DocumentPersonChange{{PersonID: survivor.PersonID, Role: "author", Action: "withdrawn", Revision: 1}}, out.Undo)
+	_, err = s.AssertDocumentPeople(ctx, version, out.Undo)
+	require.NoError(t, err)
+	rows, err = s.DocumentPersonAssertions(ctx, version)
+	require.NoError(t, err)
+	require.Equal(t, "withdrawn", rows[0].Action)
+	retired, err := s.CreatePerson(ctx, "Synthetic retired", "operator")
+	require.NoError(t, err)
+	_, err = s.RetirePerson(ctx, retired.PersonID, retired.Revision)
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPeople(ctx, version, []DocumentPersonChange{{PersonID: retired.PersonID, Role: "author", Action: "assert", Revision: 1}})
+	// Retired people can resolve to a deleted alias and are concealed as not found.
+	require.ErrorIs(t, err, ErrNotFound)
+}

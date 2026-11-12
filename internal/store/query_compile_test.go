@@ -478,8 +478,19 @@ func TestQueryPersonCurrentPublishedEdges(t *testing.T) {
 	require.NotEmpty(t, publication.People.Edges)
 	id := publication.People.Edges[0].PersonID
 	require.NotEmpty(t, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+id)))
-	_, err = s.db.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
+	node, writtenVersion := seedPeopleVersion(t, s)
+	first, err := s.CreatePerson(ctx, "Synthetic Author A", "operator")
 	require.NoError(t, err)
+	second, err := s.CreatePerson(ctx, "Synthetic Author B", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPeople(ctx, writtenVersion, []DocumentPersonChange{
+		{PersonID: first.PersonID, Role: "author", Action: "assert", Revision: 1},
+		{PersonID: second.PersonID, Role: "author", Action: "assert", Revision: 1},
+	})
+	require.NoError(t, err)
+	for _, personID := range []string{first.PersonID, second.PersonID} {
+		require.Contains(t, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+personID)), node)
+	}
 	require.Empty(t, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+id)))
 }
 

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-22
+last_edited: 2026-11-12
 title: People
 description: Browse people and their photos, rename or merge people, and manage canonical records through the API and CLI.
 ---
@@ -21,6 +21,19 @@ and `disclosure=full` requires an API key. Each assertion includes the person’
 `display_name`, even when no derived edge is published. Browser sessions and MCP's
 `get_document_people` use safe disclosure, which omits blind-copy evidence and
 provisional people without visible support. When a public origin is configured, `open.web` opens the exact node and version; otherwise `open` is absent. The response reports the people derivation state using the existing people staleness check. Unresolved names require fresh event evidence and may be absent when that evidence is stale.
+
+
+The document people API can apply a batch of author decisions with
+`PUT /api/v1/versions/{version_id}/people/assertions`. An `assert` adds a
+hand-tagged person; `withdrawn` removes that decision and lets document
+metadata derive the person again. `suppress` hides the derived person for that
+role even after a rebuild. The response contains an inverse batch for Undo;
+a later edit to the same decision makes that inverse stale.
+
+A successful decision invalidates derived people for **all** documents while
+the background rebuild runs. Derived `person:` matches can temporarily
+disappear; asserted matches are searchable immediately. The rebuild may take
+minutes on a large vault.
 
 ## People in Photos
 
@@ -126,9 +139,9 @@ revision. Send that revision with the next edit to the source person.
 Replaying the same split request returns the original revision, even after a
 later source edit.
 
-After every successful person edit, the daemon rebuilds the links between
-documents and people in the background. Until that finishes, document views can
-show the earlier links. The person records themselves are already current.
+After a successful person edit, the daemon rebuilds document links in the
+background. Derived links and matches can be unavailable until they are
+republished. Person records and asserted matches are already current.
 
 MCP can read people but cannot edit them. Edit people through the CLI or HTTP
 API. The CLI and MCP go through the daemon and do not open the vault directly.

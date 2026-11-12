@@ -155,6 +155,17 @@ func TestPersonMetadataRoundTrip(t *testing.T) {
 	_, err = source.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: version.ID,
 		PersonID: person.PersonID, Role: "author", Action: "assert", Note: "synthetic", Revision: 1})
 	require.NoError(t, err)
+	for _, decision := range []struct{ name, action, note string }{
+		{"Synthetic Suppressed", "suppress", "hidden metadata"},
+		{"Synthetic Withdrawn", "withdrawn", "restore derivation"},
+	} {
+		p, err := source.CreatePerson(t.Context(), decision.name, "operator")
+		require.NoError(t, err)
+		_, err = source.AssertDocumentPeople(t.Context(), version.ID, []DocumentPersonChange{{PersonID: p.PersonID, Role: "author", Action: decision.action, Note: decision.note, Revision: 1}})
+		require.NoError(t, err)
+		_, err = source.AssertDocumentPeople(t.Context(), version.ID, []DocumentPersonChange{{PersonID: p.PersonID, Role: "author", Action: decision.action, Note: decision.note, Revision: 1}})
+		require.NoError(t, err)
+	}
 	evidence, err := canonical.Marshal([]PersonCandidateOccurrence{{ContentVersionID: version.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "claim-1"}})
 	require.NoError(t, err)
 	require.NoError(t, source.withLogicalTx(t.Context(), func(tx *sql.Tx) error {
@@ -201,6 +212,21 @@ func TestPersonMetadataRoundTrip(t *testing.T) {
 	require.Equal(t, data.Bytes(), repeated.Bytes())
 	target := newTestStore(t)
 	require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(data.Bytes())))
+	originalAssertions, err := source.DocumentPersonAssertions(t.Context(), version.ID)
+	require.NoError(t, err)
+	restoredAssertions, err := target.DocumentPersonAssertions(t.Context(), version.ID)
+	require.NoError(t, err)
+	require.Equal(t, originalAssertions, restoredAssertions)
+	for _, a := range restoredAssertions {
+		if a.Note == "hidden metadata" {
+			require.Equal(t, "suppress", a.Action)
+			require.EqualValues(t, 2, a.Revision)
+		}
+		if a.Note == "restore derivation" {
+			require.Equal(t, "withdrawn", a.Action)
+			require.EqualValues(t, 2, a.Revision)
+		}
+	}
 	restored, _, err := target.PersonByID(t.Context(), person.PersonID)
 	require.NoError(t, err)
 	require.Equal(t, person, restored)

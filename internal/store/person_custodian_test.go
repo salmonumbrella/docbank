@@ -552,6 +552,8 @@ func checkPeopleByDisplayNameEvidenceVisibility(t *testing.T, newStore func(*tes
 				}
 				require.Equal(t, sensitiveID, global[0].PersonID)
 				require.Equal(t, "Published Sensitive", global[0].DisplayName)
+				_, err = s.AssertDocumentPeople(WithVisiblePeopleOnly(ctx), versions[1], []DocumentPersonChange{{PersonID: sensitiveID, Role: "author", Action: "assert", Revision: 1}})
+				require.ErrorIs(t, err, ErrNotFound)
 				require.Equal(t, visibleID, global[1].PersonID)
 				require.Len(t, browser, 1)
 				require.Equal(t, visibleID, browser[0].PersonID)

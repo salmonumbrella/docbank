@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -256,4 +257,84 @@ func TestDocumentPeopleWithdrawnKeepsDerivedEdge(t *testing.T) {
 	got, _ = ResolveDocumentPeople(in)
 	require.Len(t, got.Edges, 1)
 	require.Equal(t, "operator_assertion", got.Edges[0].EvidenceKind)
+}
+
+func TestDocumentPeopleDecisionsSurviveRestoreAndRebuild(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		source := openDocumentEventTestStore(t)
+		type decision struct{ version, person, action, note string }
+		var decisions []decision
+		for i, tc := range []struct{ address, action, note string }{
+			{"hidden@example.test", "suppress", "hide derived"},
+			{"restored@example.test", "withdrawn", "allow derived"},
+		} {
+			node, err := source.CreateFile(ctx, source.RootID(), fmt.Sprintf("synthetic-%d.eml", i), testDigest(tc.address), 10, "message/rfc822")
+			require.NoError(t, err)
+			publishDocumentEventTestMetadata(t, source, node.BlobHash, tc.address, []document.SourceMetadataFieldV1{stringField("email.from", "From", false, tc.address)})
+			decisions = append(decisions, decision{version: node.CurrentVersionID, action: tc.action, note: tc.note})
+		}
+		require.NoError(t, RebuildDocumentEvents(ctx, source))
+		for i := range decisions {
+			input, err := source.PrepareDocumentPeopleInputs(ctx, decisions[i].version)
+			require.NoError(t, err)
+			require.Len(t, input.Actors, 1)
+			people := input.Bindings[input.Actors[0].ActorKey]
+			require.Len(t, people, 1)
+			decisions[i].person = people[0].PersonID
+			change := store.DocumentPersonChange{PersonID: people[0].PersonID, Role: "sender", Action: decisions[i].action, Note: decisions[i].note, Revision: 1}
+			_, err = source.AssertDocumentPeople(ctx, decisions[i].version, []store.DocumentPersonChange{change})
+			require.NoError(t, err)
+			_, err = source.AssertDocumentPeople(ctx, decisions[i].version, []store.DocumentPersonChange{change})
+			require.NoError(t, err)
+		}
+		author, err := source.CreatePerson(ctx, "Synthetic Author", "operator")
+		require.NoError(t, err)
+		_, err = source.AssertDocumentPeople(ctx, decisions[0].version, []store.DocumentPersonChange{{PersonID: author.PersonID, Role: "author", Action: "assert", Note: "hand tag", Revision: 1}})
+		require.NoError(t, err)
+		snapshot, err := source.BeginMetadataSnapshot(ctx)
+		require.NoError(t, err)
+		var backup bytes.Buffer
+		require.NoError(t, snapshot.ExportBackup(ctx, &backup))
+		require.NoError(t, snapshot.Close())
+		target := openDocumentEventTestStore(t)
+		require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+		for _, d := range decisions {
+			rows, err := target.DocumentPersonAssertions(ctx, d.version)
+			require.NoError(t, err)
+			found := false
+			for _, row := range rows {
+				if row.PersonID == d.person {
+					found = true
+					require.Equal(t, d.action, row.Action)
+					require.Equal(t, d.note, row.Note)
+					require.EqualValues(t, 2, row.Revision)
+				}
+			}
+			require.True(t, found)
+		}
+		require.NoError(t, RebuildDocumentEvents(ctx, target))
+		require.NoError(t, RebuildDocumentPeople(ctx, target))
+		for _, d := range decisions {
+			edges, _, err := target.DocumentPeopleForVersion(ctx, d.version)
+			require.NoError(t, err)
+			present := false
+			for _, edge := range edges {
+				if edge.PersonID == d.person && edge.Role == "sender" {
+					present = true
+				}
+			}
+			require.Equal(t, d.action == "withdrawn", present)
+			if d.action == "suppress" {
+				asserted := false
+				for _, edge := range edges {
+					if edge.PersonID == author.PersonID && edge.Role == "author" {
+						asserted = true
+					}
+				}
+				require.True(t, asserted)
+			}
+		}
+	})
 }

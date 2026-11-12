@@ -656,6 +656,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t, newPostgresQueryStore)
 		}},
+		{"PeopleByDisplayNameLinkedContact", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameLinkedContact(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameLinkedContact(t, newPostgresQueryStore) }},
 		{"PeopleByDisplayNameEvidenceVisibility", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newPostgresQueryStore) }},
 		{"PeopleByDisplayNameOperatorCandidateAcceptance", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameOperatorCandidateAcceptance(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
@@ -827,6 +828,7 @@ var backendSuites = []backendSuite{
 		{"SplitPersonMovesCustodianAndExternalUID", func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newPostgresQueryStore) }},
 		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
 		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
+		{"AssertDocumentPeopleAliases", func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleAliases(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleAliases(t, newPostgresQueryStore) }},
 		{"AssertDocumentPeopleCapacity", func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleCapacity(t, newPostgresQueryStore) }},
 		{"AssertDocumentPeopleRejects", func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleRejects(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleRejects(t, newPostgresQueryStore) }},
 		{"AssertDocumentPeopleAtomicUndo", func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleAtomicUndo(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkAssertDocumentPeopleAtomicUndo(t, newPostgresQueryStore) }},

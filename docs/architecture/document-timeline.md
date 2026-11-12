@@ -175,9 +175,13 @@ evidence. The rebuild counts every retained version. Missing event data and
 retryable failures keep it running. Terminal unavailable results finish the
 receipt as `failed`.
 
-Person rename, retire, merge, and split edits invalidate derived document
-links by advancing the binding epoch. The daemon backfill republishes them
-after the authority change.
+Person edits and document-person decisions advance a global binding epoch,
+invalidating every derived document-person head until backfill republishes it.
+During that pass derived `person:` matches may disappear; assertions match
+immediately. A withdrawn decision returns its pair to derivation, while a
+suppression removes the derived pair. No resolver fingerprint bump is needed
+for this distinction: previously withdrawn assertions were limited to depicted
+people, for which there are no derived edges.
 
 Embedded callers run `Vault.RebuildDocumentEvents` before
 `Vault.RebuildDocumentPeople` and read coverage with `Vault.DocumentPeopleCoverage`.

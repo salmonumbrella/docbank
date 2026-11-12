@@ -106,3 +106,50 @@ func checkPeopleBrowseNameIndexPostgres(t *testing.T) {
 	require.Equal(t, "Person 0000", page[0].DisplayName)
 	require.Equal(t, "Person 0023", page[23].DisplayName)
 }
+
+func checkPeopleByDisplayNameLinkedContact(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
+	ctx := t.Context()
+	photo := browsePhotoNode(t, s, "linked-person.jpg", fakeHash("linked-person"), "image/jpeg")
+	_, version := seedPeopleVersion(t, s)
+	for _, tc := range []struct {
+		name, state string
+		linked      bool
+	}{
+		{"Synthetic Linked A", "current", true},
+		{"Synthetic Linked B", "unlinked", false},
+		{"Synthetic Linked C", "", false},
+	} {
+		person, err := s.CreatePerson(ctx, tc.name, "operator")
+		require.NoError(t, err)
+		if tc.state != "" {
+			_, err = s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic", UID: tc.name, UIDKind: "vcard_uid", UIDState: tc.state}, person.Revision)
+			require.NoError(t, err)
+		}
+		_, err = s.MarkPersonInPhoto(ctx, photo.CurrentVersionID, person.PersonID, "")
+		require.NoError(t, err)
+		_, err = s.AssertDocumentPeople(ctx, version, []DocumentPersonChange{{PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1}})
+		require.NoError(t, err)
+		facts, err := s.DocumentPeopleFacts(ctx, version, true)
+		require.NoError(t, err)
+		require.Equal(t, tc.linked, len(facts.Persons[person.PersonID].External) > 0)
+	}
+	for _, options := range []PeopleSearchOptions{{}, {RecentFirst: true}, {PhotoSummary: true}, {RecentFirst: true, PhotoSummary: true}} {
+		afterName, afterID := "", ""
+		var names []string
+		flags := map[string]bool{}
+		for {
+			page, _, err := s.PeopleByDisplayName(ctx, "Synthetic Linked", afterName, afterID, 1, true, options)
+			require.NoError(t, err)
+			if len(page) == 0 {
+				break
+			}
+			names = append(names, page[0].DisplayName)
+			flags[page[0].DisplayName] = page[0].LinkedContact
+			afterName, afterID, options.AfterRecent = page[0].DisplayNameFolded, page[0].PersonID, page[0].RecentRank
+		}
+		require.ElementsMatch(t, []string{"Synthetic Linked A", "Synthetic Linked B", "Synthetic Linked C"}, names)
+		require.Equal(t, map[string]bool{"Synthetic Linked A": true, "Synthetic Linked B": false, "Synthetic Linked C": false}, flags)
+	}
+}
