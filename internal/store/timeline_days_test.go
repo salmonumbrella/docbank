@@ -353,10 +353,14 @@ func checkTimelineAnomalousInstantPlacement(t *testing.T, open func(*testing.T) 
 		zone, day, instant string
 		minute             int
 	}{
+		{"America/Santiago", "2026-09-05", "2026-09-06T03:30:00", 1410},
 		{"America/Santiago", "2026-09-06", "2026-09-06T04:10:00", 10},
+		{"America/Havana", "2026-03-08", "2026-03-08T05:10:00", 10},
+		{"America/Toronto", "2026-03-08", "2026-03-08T07:10:00", 130},
+		{"America/Toronto", "2026-11-01", "2026-11-01T06:10:00", 130},
 		{"America/St_Johns", "2010-11-07", "2010-11-07T03:00:00", 30},
 	} {
-		t.Run(tc.zone, func(t *testing.T) {
+		t.Run(tc.zone+"/"+tc.day, func(t *testing.T) {
 			s := open(t)
 			ctx := t.Context()
 			node, err := s.CreateFile(ctx, s.RootID(), "instant.txt", fakeHash("da1"), 1, "text/plain")
