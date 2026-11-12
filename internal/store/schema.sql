@@ -3292,6 +3292,3 @@ CREATE TABLE IF NOT EXISTS record_values (
     value_currency TEXT,
     PRIMARY KEY(record_id, field_id)
 );
-CREATE INDEX IF NOT EXISTS idx_record_values_date ON record_values(type_id, field_id, value_date);
-CREATE INDEX IF NOT EXISTS idx_record_values_date_end ON record_values(type_id, field_id, value_date_end);
-CREATE INDEX IF NOT EXISTS idx_record_values_text ON record_values(type_id, field_id, value_text);

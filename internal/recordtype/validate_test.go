@@ -1,6 +1,7 @@
 package recordtype
 
 import (
+	"encoding/json/v2"
 	"strings"
 	"testing"
 )
@@ -76,5 +77,59 @@ func TestEffectiveStatusExpiryBoundary(t *testing.T) {
 		if got := EffectiveStatus(def, tc.status, fields, tc.asOf); got != tc.want {
 			t.Errorf("%s %s: got %s want %s", tc.status, tc.asOf, got, tc.want)
 		}
+	}
+}
+
+func TestBuiltinContractDefinitionInvariants(t *testing.T) {
+	def, ok := Builtin("contract")
+	if !ok || def.Version < 1 {
+		t.Fatal("missing builtin")
+	}
+	groups := map[string]bool{}
+	for _, g := range def.Groups {
+		if groups[g.ID] || g.ID == "" {
+			t.Fatal("invalid group")
+		}
+		groups[g.ID] = true
+	}
+	fields := map[string]string{}
+	for _, f := range def.Fields {
+		if fields[f.ID] != "" || !groups[f.Group] {
+			t.Fatal("invalid field")
+		}
+		fields[f.ID] = f.Type
+	}
+	statuses := map[string]bool{}
+	initial := 0
+	for _, status := range def.Status.Values {
+		if statuses[status.ID] || status.ID == "" {
+			t.Fatal("invalid status")
+		}
+		statuses[status.ID] = true
+		if status.Initial {
+			initial++
+		}
+	}
+	if initial != 1 {
+		t.Fatal("expected one initial status")
+	}
+	for _, d := range def.Status.Derived {
+		if statuses[d.ID] || d.WhenPast != "term.end" || fields["term"] != "date_range" || len(d.OnlyFrom) == 0 {
+			t.Fatal("unsupported derived status")
+		}
+		statuses[d.ID] = true
+		for _, from := range d.OnlyFrom {
+			if !statuses[from] {
+				t.Fatal("unknown source status")
+			}
+		}
+	}
+}
+
+func TestBuiltinDefinitionRejectsUnknownMembers(t *testing.T) {
+	var definition Definition
+	input := strings.Replace(string(contractJSON), `"id":`, `"unexpected":true,"id":`, 1)
+	if err := json.Unmarshal([]byte(input), &definition, json.RejectUnknownMembers(true)); err == nil {
+		t.Fatal("unknown built-in definition member was accepted")
 	}
 }

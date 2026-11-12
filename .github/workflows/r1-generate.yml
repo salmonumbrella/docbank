@@ -90,7 +90,9 @@ jobs:
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
         run: |
-          go test -tags fts5 ./internal/recordtype ./internal/store ./internal/api ./internal/daemonconn ./cmd/docbank -run 'TestContract|TestEffectiveStatus|TestRecord|TestEveryReleasedSchemaFixtureUpgrades|TestReleasedSchemaFixturesMatchVersions|TestReleasedStorageSchemasRequireAdapters|TestStorageSchema|TestBackendContractsSQLite/records|TestCommandGroups' -count=1
+          go test -tags fts5 ./internal/recordtype ./internal/store ./internal/api ./internal/daemonconn ./cmd/docbank -run '^Test(Builtin|Contract|EffectiveStatus|Record|EveryReleasedSchemaFixtureUpgrades|ReleasedSchemaFixturesMatchVersions|ReleasedStorageSchemasRequireAdapters|StorageSchema|CommandGroups)' -count=1 -v
+          go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite/records/' -count=1 -v
+          go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite/metadata-export/(MetadataExportRecovery|MetadataProcessingJobs)$' -count=1 -v
 
   postgres:
     if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
@@ -127,7 +129,51 @@ jobs:
       - name: PostgreSQL record contracts
         env:
           DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:${{ github.run_id }}@127.0.0.1:5432/docbank_test?sslmode=disable
-        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/(records|schema)/' -count=1 -v
+        run: |
+          go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/(records|schema)/' -count=1 -v
+          go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/metadata-export/(MetadataExportRecovery|MetadataProcessingJobs)$' -count=1 -v
+
+  postgres-long-text-red:
+    if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
+    needs: generate
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+          POSTGRES_DB: docbank_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U docbank_test" --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: record-types-generated
+          path: .
+      - name: Confirm previous text index rejects the shared long-text case
+        env:
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:${{ github.run_id }}@127.0.0.1:5432/docbank_test?sslmode=disable
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show aec09a44244ecf477b752a9e0e4eeec53ee8f1fe:internal/store/pgschema/schema.sql > internal/store/pgschema/schema.sql
+          if go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/records/RecordLongText$' -count=1 -v 2>&1 | tee /tmp/r1-long-text-red.log; then
+            echo 'Expected the old index to reject the long text' >&2
+            exit 1
+          fi
+          grep -i 'index row size' /tmp/r1-long-text-red.log
 
   docs:
     if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
@@ -187,7 +233,7 @@ jobs:
       - name: Stage downloaded generated artifacts for Huma
         if: always()
         run: |
-          git add internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts internal/store/testdata/schema-contracts/000049-f16644bb4084c3ff99e244d5adf26e9d963e8676ccf3269504e4b94aa8e1a154-record-types.schema
+          git add internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts internal/store/testdata/schema-contracts
       - name: Check Huma contract
         if: always()
         run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...
@@ -224,6 +270,10 @@ jobs:
           bin/docbank record edit "$id" --title 'Synthetic agreement' --expect-revision 1 --json | jq -e '.revision == 1'
           if bin/docbank record edit "$id" --title Changed --expect-revision 2; then exit 1; fi
           bin/docbank record list --type contract --status expired --as-of 2026-01-02 --field contract_type=service --before term.end=2026-01-02 --q SYNTHETIC --json | jq -e '.total == 1'
+          bin/docbank record edit "$id" --title 'Updated agreement' --set summary='Synthetic terms' --expect-revision 1 --json | jq -e '.revision == 2 and .title == "Updated agreement" and .fields.summary == "Synthetic terms"'
+          bin/docbank record show "$id" --json | jq -e '.revision == 2 and .fields.summary == "Synthetic terms"'
+          bin/docbank record edit "$id" --clear summary --expect-revision 2 --json | jq -e '.revision == 3 and (.fields.summary == null)'
+          bin/docbank record show "$id" --json | jq -e '.revision == 3 and (.fields.summary == null)'
           bin/docbank types deactivate contract
           bin/docbank record list --type contract --as-of 2026-01-02 --json | jq -e '.total == 0'
           bin/docbank record list --type contract --include-inactive --as-of 2026-01-02 --json | jq -e '.total == 1'

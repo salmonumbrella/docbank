@@ -86,7 +86,7 @@ func installErrorFormatter() {
 		if op := ctx.Operation(); op != nil {
 			switch op.OperationID {
 			case "listRecordTypes", "getRecordType", "activateRecordType", "deactivateRecordType", "listRecords", "getRecord", "createRecord", "updateRecord", "retireRecord":
-				return NewError(status, "invalid_record", "invalid record request")
+				return huma.NewError(status, msg)
 			}
 		}
 		return huma.NewError(status, msg, errs...)

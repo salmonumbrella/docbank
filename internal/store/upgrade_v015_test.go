@@ -268,8 +268,33 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				node := createReleasedFixtureFile(t, legacy, "released.jpg", fakeHash("e5"), 8, "image/jpeg")
 				seedReleasedPhotoAsset(t, db, node.ID)
 				seedReleasedMtime(t, db, node.ID, "2024-03-05T10:00:00Z")
+				var derivedJobID, derivedWaiterID, stagedJobID, stagedWaiterID string
+				var derivedWaiter, stagedWaiterBefore RenditionJobWaiter
+				var stagedClaim RenditionJobClaim
+				var stagedAt time.Time
 				if version == 48 {
-					_, err := db.ExecContext(t.Context(), `INSERT OR REPLACE INTO main.vault_change_head(singleton,epoch) VALUES(1,'synthetic-epoch')`)
+					request := photoDescriptionJobRequest(t, legacy, node.CurrentVersionID, producerB, true)
+					grantRenditionJobConsent(t, legacy, request)
+					job, waiter, err := legacy.EnqueueRenditionJob(t.Context(), request)
+					require.NoError(t, err)
+					derivedJobID, derivedWaiterID, derivedWaiter = job.ID, waiter.ID, waiter
+					// Seed an independently claimed photo job with both immutable roots.
+					seedRenditionCatalogVersions(t, legacy)
+					staged := photoDescriptionJobRequest(t, legacy, node.CurrentVersionID, producerA, true)
+					grantRenditionJobConsent(t, legacy, staged)
+					at := time.Now().UTC().Add(time.Minute)
+					stagedJob, stagedWaiter, claim := startPhotoDescription(t, legacy, staged, at)
+					stagedJobID, stagedWaiterID, stagedWaiterBefore, stagedClaim, stagedAt = stagedJob.ID, stagedWaiter.ID, stagedWaiter, claim, at
+					build := catalogRenditionBuild(legacy, staged.Profile)
+					build.ID, build.SourceSHA256 = stagedJob.ID, stagedJob.SourceSHA256
+					build.CapturedArtifactPolicy = staged.CapturedArtifactPolicy
+					build.CapturedArtifactPolicyFingerprint = stagedJob.CapturedArtifactPolicyFingerprint
+					build.Artifacts = build.Artifacts[:1]
+					build.DeclaredArtifactCount = len(build.Artifacts)
+					require.NoError(t, legacy.StageRenditionJobBuild(t.Context(), claim, build, at.Add(time.Second)))
+					_, err = legacy.StageRenditionJobGeneration(t.Context(), claim, testSHA256([]byte("synthetic-photo-generation")), at.Add(2*time.Second))
+					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT OR REPLACE INTO main.vault_change_head(singleton,epoch) VALUES(1,'synthetic-epoch')`)
 					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), `INSERT INTO main.vault_changes(seq,kind,node_id,node_revision) VALUES(900,'created',1,1)`)
 					require.NoError(t, err)
@@ -308,6 +333,15 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 					incarnation, err = legacy.CurrentProcessingIncarnation(t.Context())
 					require.NoError(t, err)
 				}
+				if version == 48 {
+					_, err = db.ExecContext(t.Context(), `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,created_at) VALUES(?,?,?,?,?)`, "00000000-0000-4000-8000-000000000049", node.CurrentVersionID, producerA, "Synthetic caption", nowRFC3339())
+					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT OR REPLACE INTO photo_xmp_unsettled(asset_id) SELECT asset_id FROM photo_files WHERE node_id=?`, node.ID)
+					require.NoError(t, err)
+					var pending int
+					require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_xmp_unsettled_pending`).Scan(&pending))
+					require.Zero(t, pending, "the released insert trigger consumes its transient pending queue")
+				}
 				require.NoError(t, db.Close())
 				s, err := Open(t.Context(), path, driver.driver)
 				require.NoError(t, err)
@@ -318,6 +352,44 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 					assert.Equal(t, incarnation, current, "an in-place upgrade keeps the installation identity")
 				}
 				if version == 48 {
+					job, err := s.RenditionJobByID(t.Context(), derivedJobID)
+					require.NoError(t, err)
+					require.Equal(t, RenditionJobQueued, job.State)
+					waiter, err := s.RenditionJobWaiterByID(t.Context(), derivedWaiterID)
+					require.NoError(t, err)
+					require.Equal(t, derivedWaiter, waiter)
+					var explicit int
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, derivedWaiterID).Scan(&explicit))
+					require.Equal(t, 1, explicit)
+					stagedJob, err := s.RenditionJobByID(t.Context(), stagedJobID)
+					require.NoError(t, err)
+					require.Equal(t, RenditionPhaseGenerationStaged, stagedJob.Phase)
+					waiter, err = s.RenditionJobWaiterByID(t.Context(), stagedWaiterID)
+					require.NoError(t, err)
+					require.Equal(t, stagedWaiterBefore, waiter)
+					_, err = s.RenditionJobWorkByClaim(t.Context(), stagedClaim, stagedAt.Add(3*time.Second))
+					require.NoError(t, err)
+					var roots, stagedExplicit int
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM current_rendition_roots WHERE root_id IN (?,?) AND active=1`, "rendition_job_build_"+stagedJobID, "rendition_job_generation_"+stagedJobID).Scan(&roots))
+					require.Equal(t, 2, roots)
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, stagedWaiterID).Scan(&stagedExplicit))
+					require.Equal(t, 1, stagedExplicit)
+					var exported bytes.Buffer
+					require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+					require.NotContains(t, exported.String(), derivedJobID)
+					require.NotContains(t, exported.String(), derivedWaiterID)
+					require.NotContains(t, exported.String(), `"type":"rendition_job","job_id":"`+stagedJobID+`"`)
+					require.NotContains(t, exported.String(), `"root_id":"rendition_job_build_`+stagedJobID+`"`)
+					restored := newTestStore(t)
+					require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+					require.NoError(t, restored.ValidateMetadata(t.Context()))
+					var suggestions, unsettled, pending int
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_suggestions WHERE content_version_id=? AND caption='Synthetic caption'`, node.CurrentVersionID).Scan(&suggestions))
+					require.Equal(t, 1, suggestions)
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_xmp_unsettled WHERE asset_id IN (SELECT asset_id FROM photo_files WHERE node_id=?)`, node.ID).Scan(&unsettled))
+					require.Equal(t, 1, unsettled)
+					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_xmp_unsettled_pending`).Scan(&pending))
+					require.Zero(t, pending)
 					var epoch string
 					var changes, revision, scans int
 					require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT epoch FROM vault_change_head WHERE singleton=1`).Scan(&epoch))

@@ -101,5 +101,27 @@ func TestRecordValidationDoesNotExposeContent(t *testing.T) {
 		require.Less(t, resp.StatusCode, 500)
 		require.NotContains(t, string(data), "synthetic-secret")
 	}
+	_, _ = do(t, ts, http.MethodPost, "/api/v1/record-types/contract/activate", map[string]string{"If-Match": `"0"`}, nil)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/records", nil, map[string]any{"type_id": "contract", "title": "Example", "fields": map[string]any{"synthetic-secret": "x"}})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode)
+	require.NotContains(t, body, "synthetic-secret")
 	require.NotContains(t, logs.String(), "synthetic-secret")
+}
+
+func TestRecordHumaErrorIdentity(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/record-types/contract/activate", nil, nil)
+	require.Equal(t, http.StatusPreconditionRequired, response.StatusCode, body)
+	require.Contains(t, body, `"code":"precondition_required"`)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/records", strings.NewReader(strings.Repeat("x", (512<<10)+1)))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = ts.Client().Do(request)
+	require.NoError(t, err)
+	data, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode, string(data))
+	require.Contains(t, string(data), `"code":"validation"`)
 }

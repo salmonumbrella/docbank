@@ -181,6 +181,10 @@ physical identity column deliberately differs from the mandatory v0.9 startup
 query, so the unversioned released binary also fails closed rather than
 silently writing with obsolete storage rules.
 
+A v0.17.0 vault crosses a full metadata JSONL cutover on first open; allow
+time and disk space for a new database and the retained source copy. Its
+recovery copy is `<database>.schema-v48.bak`.
+
 For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. For a
 v0.15.0 source it is `<database>.schema-v28.bak`. If v0.15.1 refused that vault
 with `schema version 28 has no supported JSONL cutover`, open it with v0.15.2

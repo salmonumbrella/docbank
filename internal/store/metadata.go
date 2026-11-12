@@ -662,7 +662,10 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportMetadataTables(ctx, tx, write, embeddingMetadataTables); err != nil {
 		return err
 	}
-	if err := currentRenditionRootMetadata.export(ctx, tx, write); err != nil {
+	roots := *currentRenditionRootMetadata
+	dialect := metadataJSONDialect{postgres: layout.postgres}
+	roots.suffix = "WHERE root_kind IN ('retention','audit') OR (root_kind='job' AND active=1 AND EXISTS (SELECT 1 FROM rendition_jobs j WHERE " + backedUpRenditionJobs(dialect) + " AND (current_rendition_roots.root_id='rendition_job_build_' || j.job_id OR current_rendition_roots.root_id='rendition_job_generation_' || j.job_id))) ORDER BY root_id"
+	if err := roots.export(ctx, tx, write); err != nil {
 		return err
 	}
 	if err := exportMetadataTables(ctx, tx, write, emailMetadataTables); err != nil {
@@ -1005,10 +1008,10 @@ func stringPtr(v sql.NullString) *string {
 // bytes: a restore must call VerifyRenditionBlobBytes after every loose or
 // packed blob is available and before publishing the target.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
-	return s.importMetadata(ctx, r)
+	return s.importMetadata(ctx, r, nil)
 }
 
-func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
+func (s *Store) importMetadata(ctx context.Context, r io.Reader, beforeValidation func(context.Context, *sql.Tx) error) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -1041,6 +1044,11 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 			`UPDATE vault_metadata SET vault_uid = ? WHERE singleton = 1`, header.VaultID,
 		); err != nil {
 			return fmt.Errorf("restoring vault identity: %w", err)
+		}
+		if beforeValidation != nil {
+			if err := beforeValidation(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err

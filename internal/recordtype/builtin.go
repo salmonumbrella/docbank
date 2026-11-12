@@ -14,7 +14,7 @@ func Builtin(id string) (Definition, bool) {
 		return Definition{}, false
 	}
 	var d Definition
-	if err := json.Unmarshal(contractJSON, &d); err != nil {
+	if err := json.Unmarshal(contractJSON, &d, json.RejectUnknownMembers(true)); err != nil {
 		panic(err)
 	}
 	return d, true

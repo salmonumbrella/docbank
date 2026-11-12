@@ -205,12 +205,7 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body RecordCreateInput }) (*recordOutput, error) {
 		input := recordtype.Record{Title: in.Body.Title, Fields: in.Body.Fields.Value}
 		if def, ok := recordtype.Builtin(in.Body.TypeID); ok && !in.Body.Status.Set {
-			for _, status := range def.Status.Values {
-				if status.Initial && !status.Retired {
-					input.Status = status.ID
-					break
-				}
-			}
+			input.Status = def.InitialStatus()
 		}
 		if in.Body.Note.Set {
 			input.Note = in.Body.Note.Value
