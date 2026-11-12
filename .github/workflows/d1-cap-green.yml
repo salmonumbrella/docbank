@@ -1,0 +1,30 @@
+name: D1 capped focused verification
+on:
+  push:
+    branches: [scratch/d1-cap-green-a8762ad]
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+        suite: [client, cli]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Client package
+        if: matrix.suite == 'client'
+        run: go test -tags fts5 -count=1 -v ./internal/docusealclient/
+      - name: CLI regressions
+        if: matrix.suite == 'cli'
+        run: go test -tags fts5 -count=1 -v ./cmd/docbank/ -run '^(TestContractSignDaemonWalk|TestContractSignTemplateNameEscapesBidi)$'
