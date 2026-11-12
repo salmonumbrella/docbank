@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Request, type TestInfo } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -250,10 +250,95 @@ test("shows document dates and people in the inspector and both tables", async (
         try {
           await expect.poll(poll, { timeout: 120_000, intervals: [1_000] }).toBe(true);
         } catch (error) {
+          // Best effort: diagnostics never replace the readiness failure below.
+          await diagnose(name, resource).catch(() => {});
           throw new Error(`${name} ${resource} not ready: ${JSON.stringify(last)}`, {
             cause: error,
           });
         }
+      };
+      // On a readiness timeout, attach what the synthetic daemon knows about
+      // the document: the exact current version and its source metadata
+      // (sensitive values redacted), the metadata and event workers' jobs, and
+      // retry or failure lines from the daemon log. Each probe is bounded and
+      // records its own error instead of throwing.
+      const diagnose = async (name: string, resource: string) => {
+        const probe = async (fn: () => Promise<unknown>) => {
+          try {
+            return { ok: true, value: await fn() };
+          } catch (error) {
+            return { ok: false, error: String(error).slice(0, 2_000) };
+          }
+        };
+        const cli = async (...args: string[]) =>
+          JSON.parse(
+            (await exec(binary, args, { cwd: repository, env, timeout: 15_000 })).stdout,
+          ) as unknown;
+        const clip = (value: unknown) => {
+          const text = typeof value === "string" ? value : JSON.stringify(value);
+          return text.length > 300 ? `${text.slice(0, 300)}…` : value;
+        };
+        const stat = await probe(async () => {
+          const node = (await cli("document", "stat", `/board/${name}`, "--json")) as {
+            id?: number;
+            current_version_id?: string;
+            source_metadata?: {
+              contract_version?: string;
+              fields?: {
+                key: string;
+                namespace?: string;
+                source_field?: string;
+                sensitive?: boolean;
+                value?: unknown;
+              }[];
+              warnings?: unknown[];
+            };
+          };
+          const metadata = node.source_metadata;
+          return {
+            id: node.id,
+            current_version_id: node.current_version_id,
+            polled_version_id: version[name],
+            version_match: node.current_version_id === version[name],
+            source_metadata: metadata
+              ? {
+                  contract_version: metadata.contract_version,
+                  fields: (metadata.fields ?? []).slice(0, 80).map((field) => ({
+                    key: field.key,
+                    namespace: field.namespace,
+                    source_field: field.source_field,
+                    sensitive: field.sensitive ?? false,
+                    value: field.sensitive ? "[sensitive]" : clip(field.value),
+                  })),
+                  warnings: (metadata.warnings ?? []).slice(0, 40).map(clip),
+                }
+              : null,
+          };
+        });
+        const jobs = await probe(async () => {
+          const listing = (await cli("jobs", "--json")) as { items?: unknown[] };
+          return (listing.items ?? [])
+            .filter((item) => /source-metadata|document-events/u.test(JSON.stringify(item)))
+            .slice(0, 20);
+        });
+        const log = await probe(async () => {
+          const dir = path.join(vault, "logs");
+          const files = (await readdir(dir)).filter((file) => file.startsWith("docbank")).sort();
+          const lines: string[] = [];
+          for (const file of files.slice(-2))
+            for (const line of (await readFile(path.join(dir, file), "utf8")).split("\n"))
+              if (
+                /retry|retrying|source.?metadata|document.?events|level=(warn|error)|"level":"(WARN|ERROR)"/iu.test(
+                  line,
+                )
+              )
+                lines.push(line.slice(0, 500));
+          return { files, lines: lines.slice(-60) };
+        });
+        await testInfo.attach(`document-facts-${proof}-${name}-${resource}-readiness.json`, {
+          body: JSON.stringify({ name, resource, stat, jobs, log }, null, 2),
+          contentType: "application/json",
+        });
       };
       const claim = (facts: Facts, kind: string, when: Record<string, unknown>) =>
         facts.claims?.some(
