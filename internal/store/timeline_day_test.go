@@ -186,3 +186,39 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 	svc.Revoke("owner")
 	require.Equal(t, snapshotCacheStats{}, svc.stats())
 }
+
+func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	for _, tc := range []struct {
+		zone, date     string
+		minutes, ticks int
+	}{
+		{"America/Santiago", "2026-09-06", 1380, 23},
+		{"America/Havana", "2026-03-08", 1380, 23},
+		{"America/Toronto", "2026-03-08", 1380, 23},
+		{"America/Toronto", "2026-11-01", 1500, 25},
+		{"America/St_Johns", "2010-11-07", 1500, 26},
+	} {
+		t.Run(tc.zone+"/"+tc.date, func(t *testing.T) {
+			date, err := civiltime.ParseDate(tc.date)
+			require.NoError(t, err)
+			scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: tc.zone}
+			page, err := svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+			require.NoError(t, err)
+			require.Equal(t, tc.minutes, page.Bounds.Minutes)
+			require.Len(t, page.Bounds.Ticks, tc.ticks)
+		})
+	}
+	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "Pacific/Apia"}
+	skipped, err := civiltime.ParseDate("2011-12-30")
+	require.NoError(t, err)
+	_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: skipped, Limit: 10})
+	require.ErrorIs(t, err, civiltime.ErrDateNotInZone)
+	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped, skipped)
+	require.ErrorIs(t, err, civiltime.ErrDateNotInZone)
+	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped.AddDays(-1), skipped.AddDays(1))
+	require.NoError(t, err)
+}

@@ -234,4 +234,18 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 	require.Equal(t, ids["date"], page.DateOnly[0].NodeID)
 	require.Len(t, page.MonthOnly, 2)
 	require.EqualValues(t, days.Days[0].Count, len(page.Items)+len(page.DateOnly))
+
+	// The instant crosses the calendar boundary in Toronto. Floating and
+	// date-only claims keep their civil date in either view zone.
+	scope.Zone = "America/Toronto"
+	page, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, ids["floating"], page.Items[0].NodeID)
+	require.Len(t, page.DateOnly, 1)
+	require.Equal(t, ids["date"], page.DateOnly[0].NodeID)
+	page, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date.AddDays(-1), Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, ids["exact"], page.Items[0].NodeID)
 }

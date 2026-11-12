@@ -27,6 +27,7 @@ var backendSuites = []backendSuite{
 		{"TimelinePlacementTiers", func(t *testing.T) { checkTimelinePlacementTiers(t, newTestStore) }, func(t *testing.T) { checkTimelinePlacementTiers(t, newPostgresQueryStore) }},
 		{"TimelineFreshnessTerminalAttempts", func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newTestStore) }, func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newPostgresQueryStore) }},
 		{"TimelineScopeRejected", nil, func(t *testing.T) { checkTimelineScopeRejected(t, newPostgresQueryStore) }},
+		{"TimelineDayBoundsOperations", func(t *testing.T) { checkTimelineDayBoundsOperations(t, newTestStore) }, func(t *testing.T) { checkTimelineDayBoundsOperations(t, newPostgresQueryStore) }},
 		{"TimelineDayStripAccounting", func(t *testing.T) { checkTimelineDayStripAccounting(t, newTestStore) }, func(t *testing.T) { checkTimelineDayStripAccounting(t, newPostgresQueryStore) }},
 		{"TimelineDayFrozenAfterTrash", func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newTestStore) }, func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newPostgresQueryStore) }},
 	}},
