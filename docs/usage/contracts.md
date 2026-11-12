@@ -92,3 +92,21 @@ A repeated PUT is a revision-fenced no-op; deleting a missing link returns
 party in the own role returns `party_not_own`, and a retired party returns
 `party_retired`. List filters include type, party ID and exclusive expiry;
 `limit` and `offset` select pages, with a short page indicating the end.
+
+## DocuSeal connection
+
+Docbank can check an optional DocuSeal connection and list its templates. This
+connection does not send documents or create signing requests. Configure
+`[integrations.docuseal]` as described in [Configuration](../configuration.md#docuseal-connection),
+then restart the daemon.
+
+```console
+docbank contract sign check
+docbank contract sign templates
+```
+
+Both commands accept `--json`. A full page returns a continuation ID; pass it with `--after` to check for
+another page. A full final page can be followed by an empty page. Template names
+are display text, capped at 512 bytes with control characters replaced and quoted in human output. A name containing the API key, before or after display conversion, causes the page to fail. Roles
+are exact identities for later signing: invalid or oversized roles cause the
+page to fail rather than being rewritten. Each provider response is limited to 2 MiB. If a template page exceeds that limit, Docbank retries the GET with a smaller page, down to one template; a single oversized template returns an error. Pages contain at most 100 templates, 1,024 roles per template and 4,096 bytes per role.
