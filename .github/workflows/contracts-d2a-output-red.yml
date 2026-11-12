@@ -1,0 +1,40 @@
+name: Contracts D2a CLI output regressions
+on:
+  push:
+    branches: [ci/contracts-d2a-output-red-0c1be68b8]
+permissions:
+  contents: read
+jobs:
+  cli:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOFLAGS: -trimpath
+      GOPROXY: https://proxy.golang.org|direct
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 go mod download
+      - name: Confirmed send output failure
+        run: go test -v -tags fts5 ./cmd/docbank -run '^TestSignatureRequestConfirmedOutputFailure$' -count=1
+      - name: Signature history continuation
+        if: ${{ !cancelled() }}
+        run: go test -v -tags fts5 ./cmd/docbank -run '^TestSignatureHistoryContinuation$' -count=1
+      - name: Existing signature, contract and party CLI checks
+        if: ${{ !cancelled() }}
+        run: go test -v -tags fts5 ./cmd/docbank -run '^(TestSignature|TestContract|TestParty)' -count=1
