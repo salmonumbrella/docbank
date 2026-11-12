@@ -78,6 +78,17 @@ func OpenAPIYAML() ([]byte, error) {
 			Name string `json:"name"`
 		}{typ.PkgPath(), name}
 	}
+	// Server inputs track presence; clients send the public wire types.
+	for schemaName, goType := range map[string]string{"RecordCreateInput": "api.RecordCreateRequest", "RecordUpdateInput": "api.RecordUpdateRequest"} {
+		schema := registry.Map()[schemaName]
+		schema.Extensions = map[string]any{
+			"x-go-type": goType,
+			"x-go-type-import": struct {
+				Path string `json:"path"`
+				Name string `json:"name"`
+			}{"go.kenn.io/docbank/internal/api", "api"},
+		}
+	}
 	// The patch decoder tracks presence separately, while clients send the
 	// public optional-field request type with the same wire representation.
 	patch := registry.Map()["UpdateSavedQueryRequest"]

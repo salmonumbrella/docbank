@@ -277,6 +277,13 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?)`, node.CurrentVersionID, "synthetic-detector")
 					require.NoError(t, err)
+					ingestID := uuid.New().String()
+					_, err = db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,'watch','synthetic-watch')`, ingestID, nowRFC3339())
+					require.NoError(t, err)
+					identity, err := provenanceIdentity(metadataProvenance{NodeID: node.ID, IngestID: ingestID, OriginalPath: "example"})
+					require.NoError(t, err)
+					_, err = db.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,'example')`, identity, node.ID, ingestID)
+					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES('synthetic-watch','example',?,?,8)`, node.ID, fakeHash("e5"))
 					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('synthetic-watch','example','2026-01-01T00:00:00.000000000Z')`)
@@ -344,7 +351,11 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				currentNode, err := s.NodeByID(t.Context(), node.ID)
 				var absenceCount int
 				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM watch_source_absences`).Scan(&absenceCount))
-				require.Zero(t, absenceCount)
+				if version == 48 {
+					require.Equal(t, 1, absenceCount)
+				} else {
+					require.Zero(t, absenceCount)
+				}
 				require.NoError(t, err)
 				face, _, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
 				require.NoError(t, err)

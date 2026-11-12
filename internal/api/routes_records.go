@@ -1,9 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -11,6 +15,56 @@ import (
 	"go.kenn.io/docbank/internal/recordtype"
 	"go.kenn.io/docbank/internal/store"
 )
+
+// The server tracks presence separately so null cannot collapse into omission.
+type optionalRecordString struct {
+	Set   bool
+	Value string
+}
+
+func (v *optionalRecordString) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(raw, []byte("null")) {
+		return errors.New("record field cannot be null")
+	}
+	v.Set = true
+	return jsonv2.Unmarshal(raw, &v.Value)
+}
+func (optionalRecordString) Schema(_ huma.Registry) *huma.Schema {
+	return &huma.Schema{Type: huma.TypeString}
+}
+
+type optionalRecordFields struct {
+	Set   bool
+	Value map[string]any
+}
+
+func (v *optionalRecordFields) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(raw, []byte("null")) {
+		return errors.New("record fields cannot be null")
+	}
+	v.Set = true
+	return jsonv2.Unmarshal(raw, &v.Value)
+}
+func (optionalRecordFields) Schema(r huma.Registry) *huma.Schema {
+	return r.Schema(reflect.TypeFor[map[string]any](), true, "")
+}
+
+// RecordCreateInput is server-only; generated clients use RecordCreateRequest.
+type RecordCreateInput struct {
+	TypeID string               `json:"type_id" minLength:"1"`
+	Title  string               `json:"title" minLength:"1" doc:"After trimming and NFC normalization, 1 to 300 characters and at most 1200 UTF-8 bytes."`
+	Note   optionalRecordString `json:"note,omitzero" doc:"At most 8192 UTF-8 bytes after normalization."`
+	Status optionalRecordString `json:"status,omitzero"`
+	Fields optionalRecordFields `json:"fields,omitzero"`
+}
+
+// RecordUpdateInput distinguishes omitted properties from forbidden nulls.
+type RecordUpdateInput struct {
+	Title  optionalRecordString `json:"title,omitzero" doc:"After trimming and NFC normalization, 1 to 300 characters and at most 1200 UTF-8 bytes."`
+	Note   optionalRecordString `json:"note,omitzero" doc:"At most 8192 UTF-8 bytes after normalization."`
+	Status optionalRecordString `json:"status,omitzero"`
+	Fields optionalRecordFields `json:"fields,omitzero"`
+}
 
 func recordToday(asOf string) string {
 	if asOf != "" {
@@ -147,13 +201,13 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return &recordPageOutput{"no-store", RecordPage{Records: out, Total: total, Limit: opts.Limit, Offset: opts.Offset, AsOf: opts.AsOf}}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body RecordCreateRequest }) (*recordOutput, error) {
-		input := recordtype.Record{Title: in.Body.Title, Status: "draft", Fields: in.Body.Fields}
-		if in.Body.Note != nil {
-			input.Note = *in.Body.Note
+	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body RecordCreateInput }) (*recordOutput, error) {
+		input := recordtype.Record{Title: in.Body.Title, Status: "draft", Fields: in.Body.Fields.Value}
+		if in.Body.Note.Set {
+			input.Note = in.Body.Note.Value
 		}
-		if in.Body.Status != nil {
-			input.Status = *in.Body.Status
+		if in.Body.Status.Set {
+			input.Status = in.Body.Status.Value
 		}
 		var out *recordOutput
 		err = g.mutate(ctx, func() error {
@@ -169,13 +223,22 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "updateRecord", Method: http.MethodPatch, Path: "/api/v1/records/{id}", MaxBodyBytes: 512 << 10, Summary: "Edit a record"}, func(ctx context.Context, in *struct {
 		ID      string `path:"id"`
 		IfMatch string `header:"If-Match"`
-		Body    RecordUpdateRequest
+		Body    RecordUpdateInput
 	}) (*recordOutput, error) {
 		revision, err := recordRevision(in.IfMatch, false)
 		if err != nil {
 			return nil, err
 		}
-		patch := store.RecordPatch{Title: in.Body.Title, Note: in.Body.Note, Status: in.Body.Status, Fields: in.Body.Fields}
+		patch := store.RecordPatch{Fields: in.Body.Fields.Value}
+		if in.Body.Title.Set {
+			patch.Title = &in.Body.Title.Value
+		}
+		if in.Body.Note.Set {
+			patch.Note = &in.Body.Note.Value
+		}
+		if in.Body.Status.Set {
+			patch.Status = &in.Body.Status.Value
+		}
 		if patch.Title == nil && patch.Note == nil && patch.Status == nil && len(patch.Fields) == 0 {
 			return nil, invalidRecordRequest()
 		}
