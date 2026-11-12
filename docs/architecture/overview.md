@@ -87,9 +87,10 @@ make that file part of the vault. Only a committed catalog reference does.
 
 The store preserves [tax accounts, records, and events](../usage/tax-records.md)
 as structured metadata. Accounts refer to parties; attached records copy the
-account identity. Events share the record revision, derive cash balances without currency conversion, and determine its state by
-append order. Snapshot recovery validates the retained relationships and state;
-metadata export writes parties, accounts, records, and events in that order.
+account identity. Events share the record revision, derive cash balances without
+currency conversion, and determine its state by append order. Snapshot recovery
+validates the retained relationships and state; metadata export writes parties,
+accounts, records, and events in that order.
 
 Store updates replace the record's content and nullable fields. Callers must
 supply the dates, year, lead time, form code and amount they want to retain;

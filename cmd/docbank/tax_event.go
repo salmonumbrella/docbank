@@ -45,11 +45,13 @@ type eventFlags struct {
 	revision                                      int64
 }
 
-func (f *eventFlags) bind(cmd *cobra.Command, flag, usage string) {
+func (f *eventFlags) bind(cmd *cobra.Command, flag, usage, amountUsage string) {
 	cmd.Flags().StringVar(&f.kind, flag, "", usage)
 	cmd.Flags().StringVar(&f.date, "occurred-on", "", "event date")
 	cmd.Flags().StringVar(&f.reference, "reference", "", "event reference")
 	cmd.Flags().StringVar(&f.note, "note", "", "event note")
+	cmd.Flags().StringVar(&f.amount, "amount", "", amountUsage)
+	cmd.Flags().StringVar(&f.currency, "currency", "", "currency code")
 	cmd.Flags().Int64Var(&f.revision, "revision", 0, "expected revision (default: current)")
 	_ = cmd.MarkFlagRequired(flag)
 	_ = cmd.MarkFlagRequired("occurred-on")
@@ -91,9 +93,7 @@ func newTaxRecordAdvanceCommand() *cobra.Command {
 		}
 		return printTaxEventMutation(cmd, m)
 	}}
-	f.bind(cmd, "state", "new state")
-	cmd.Flags().StringVar(&f.amount, "amount", "", "exact assessment amount")
-	cmd.Flags().StringVar(&f.currency, "currency", "", "currency code")
+	f.bind(cmd, "state", "new state", "exact assessment amount")
 	return cmd
 }
 func newTaxEventCommand() *cobra.Command {
@@ -114,9 +114,7 @@ func newTaxEventCommand() *cobra.Command {
 		}
 		return printTaxEventMutation(cmd, m)
 	}}
-	f.bind(add, "kind", "event kind: note, payment, refund")
-	add.Flags().StringVar(&f.amount, "amount", "", "exact cash amount")
-	add.Flags().StringVar(&f.currency, "currency", "", "currency code")
+	f.bind(add, "kind", "event kind: note, payment, refund", "exact cash amount")
 	var reason string
 	var revision int64
 	void := &cobra.Command{Use: "void <record-id> <event-id>", Short: "Void a tax event", Example: "docbank tax event void 11111111-1111-4111-8111-111111111111 33333333-3333-4333-8333-333333333333 --reason correction", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {

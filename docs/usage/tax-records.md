@@ -142,9 +142,10 @@ receipts do not include the balance.
 The balance subtracts non-void payments from a payable amount or refunds from a
 refundable amount when currencies match. Other cash events include opposite kinds
 and unmatched or missing record currency; all non-void cash on an `unknown` or
-`nil` record counts as other. Nil amounts yield zero and unknown amounts yield
-null. An overpayment produces a negative balance. Editing direction or currency
-can change which cash events apply; an edit that would overflow is rejected.
+`nil` record counts as other. A `nil` direction yields a zero balance; an
+`unknown` direction yields null. An overpayment produces a negative balance.
+Editing direction or currency can change which cash events apply; an edit that
+would overflow is rejected.
 References are masked
 in mutation receipts and ordinary detail reads; only record show with `--reveal`
 returns complete references. Empty references stay empty; masking follows the

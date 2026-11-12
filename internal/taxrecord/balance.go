@@ -14,7 +14,7 @@ func CalculateBalance(record RecordValues, events []EventFact) (Balance, error) 
 	result := Balance{Currency: record.Currency}
 	var sum int64
 	for _, e := range events {
-		if e.Voided || (e.Kind != "payment" && e.Kind != "refund") {
+		if e.Voided || !IsCashEvent(e.Kind) {
 			continue
 		}
 		selected := record.Currency != "" && e.Currency == record.Currency && ((record.Direction == "payable" && e.Kind == "payment") || (record.Direction == "refundable" && e.Kind == "refund"))

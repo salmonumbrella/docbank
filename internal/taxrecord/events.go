@@ -27,6 +27,11 @@ func ValidStateForKind(kind, state string) bool {
 	return slices.Contains(filingStates, state)
 }
 
+// IsCashEvent reports whether kind records a payment or refund.
+func IsCashEvent(kind string) bool {
+	return kind == "payment" || kind == "refund"
+}
+
 // NormalizeEvent bounds and canonicalizes event input.
 func NormalizeEvent(recordKind string, v EventValues) (EventValues, error) {
 	if len(v.Note) > 8192 {
@@ -42,7 +47,7 @@ func NormalizeEvent(recordKind string, v EventValues) (EventValues, error) {
 
 // ValidateEvent validates canonical authority accepted at this stage.
 func ValidateEvent(recordKind string, v EventValues) error {
-	cash := v.Kind == "payment" || v.Kind == "refund"
+	cash := IsCashEvent(v.Kind)
 	if v.Kind == "note" || cash {
 		if v.SetsState != "" {
 			return invalid("sets_state", "invalid state")

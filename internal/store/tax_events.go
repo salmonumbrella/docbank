@@ -182,7 +182,7 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 		if err = taxInsert(ctx, tx, "tax_events", taxEventColumns, []any{e.EventID, e.RecordID, e.Kind, e.OccurredOn, e.SetsState, e.AmountMinor, e.Currency, e.Reference, e.Note, e.RecordedAt, e.VoidedAt, e.VoidReason, e.RecordRevision}); err != nil {
 			return err
 		}
-		if v.Kind == "payment" || v.Kind == "refund" {
+		if taxrecord.IsCashEvent(v.Kind) {
 			facts, err := getTaxBalanceFacts(ctx, tx, id)
 			if err != nil {
 				return err
@@ -210,11 +210,14 @@ func updateTaxEventParent(ctx context.Context, tx *sql.Tx, r TaxRecord, revision
 func (s *Store) VoidTaxEvent(ctx context.Context, recordID, eventID string, revision int64, reason string) (TaxEventMutation, error) {
 	var result TaxEventMutation
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		d, err := getTaxRecordDetail(ctx, tx, recordID)
+		r, err := getTaxRecord(ctx, tx, recordID)
 		if err != nil {
 			return err
 		}
-		r := d.Record
+		events, err := getTaxRecordEvents(ctx, tx, recordID)
+		if err != nil {
+			return err
+		}
 		if r.Revision != revision {
 			return ErrStaleRevision
 		}
@@ -222,9 +225,9 @@ func (s *Store) VoidTaxEvent(ctx context.Context, recordID, eventID string, revi
 			return ErrTaxRetired
 		}
 		var target *TaxEvent
-		for i := range d.Events {
-			if d.Events[i].EventID == eventID {
-				target = &d.Events[i]
+		for i := range events {
+			if events[i].EventID == eventID {
+				target = &events[i]
 				break
 			}
 		}
@@ -244,7 +247,7 @@ func (s *Store) VoidTaxEvent(ctx context.Context, recordID, eventID string, revi
 		r.UpdatedAt = max(nowRFC3339(), r.UpdatedAt)
 		target.VoidedAt = &r.UpdatedAt
 		target.VoidReason = reason
-		r.State, err = taxrecord.StateFromEvents(r.Kind, taxEventFacts(d.Events))
+		r.State, err = taxrecord.StateFromEvents(r.Kind, taxEventFacts(events))
 		if err != nil {
 			return err
 		}
