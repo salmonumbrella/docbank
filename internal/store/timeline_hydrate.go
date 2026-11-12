@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 
@@ -134,6 +135,40 @@ func (s *Store) hydrateTimelineItems(ctx context.Context, q metadataQuerier, pla
 			}
 			if !slices.Contains(item.People[index].Roles, role) {
 				item.People[index].Roles = append(item.People[index].Roles, role)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		visible := "1=1"
+		if hideLocked {
+			visible = personVersionVisibleSQL("parent_cv.version_id")
+		}
+		rows, err = q.QueryContext(ctx, `SELECT r.child_version_id,
+ CASE WHEN COUNT(DISTINCT parent_node.id)=1 AND MAX(CASE WHEN `+visible+` THEN 0 ELSE 1 END)=0
+ THEN MIN(parent_node.id) ELSE NULL END
+ FROM email_document_relations r
+ JOIN email_document_publications p ON p.operation_id=r.operation_id
+ JOIN content_versions parent_cv ON parent_cv.version_id=p.parent_version_id
+ JOIN nodes parent_node ON parent_node.id=parent_cv.node_id AND parent_node.current_version_id=parent_cv.version_id
+ WHERE r.child_version_id IN (`+marks+`) AND parent_node.kind='file' AND parent_node.trashed_at IS NULL
+ GROUP BY r.child_version_id`, args[:len(chunk)]...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var version string
+			var parent sql.NullInt64
+			if err := rows.Scan(&version, &parent); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if parent.Valid {
+				result[byVersion[version]].FamilyParentNodeID = new(parent.Int64)
 			}
 		}
 		if err := rows.Err(); err != nil {

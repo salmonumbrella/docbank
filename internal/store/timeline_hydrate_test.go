@@ -179,7 +179,7 @@ func checkTimelineHydrationChunking(t *testing.T, open func(*testing.T) *Store) 
 		require.NoError(t, err)
 		placements = append(placements, TimelinePlacement{NodeID: node.ID, VersionID: node.CurrentVersionID, EventID: record.Events[0].EventID})
 	}
-	for _, tc := range []struct{ count, statements int }{{1, 3}, {401, 6}} {
+	for _, tc := range []struct{ count, statements int }{{1, 4}, {401, 8}} {
 		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			q := &timelineCountingQuerier{metadataQuerier: tx}
 			items, err := s.hydrateTimelineItems(ctx, q, placements[:tc.count], false)
@@ -194,4 +194,82 @@ func checkTimelineHydrationChunking(t *testing.T, open func(*testing.T) *Store) 
 		})
 		require.NoError(t, err)
 	}
+}
+
+func checkTimelineHydrationEmailFamily(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	f := newEmailFixture(t, s, "family-parent.jpg")
+	original, err := s.NodeByPath(ctx, "/family-parent.jpg")
+	require.NoError(t, err)
+	imageParent, version, err := s.ReplaceContent(ctx, original.ID, original.Revision, original.BlobHash, original.Size, "image/jpeg")
+	require.NoError(t, err)
+	f.publication.ContentVersionID = version.ID
+	view, err := s.PublishEmailGeneration(ctx, f.publication)
+	require.NoError(t, err)
+	first, err := s.PublishEmailDocuments(ctx, attachmentRequest(t, s, view, "timeline-family-first"))
+	require.NoError(t, err)
+	child := first.Relations[0].Child
+	require.NotNil(t, child)
+	target := requireDocumentEventTarget(t, s, child.VersionID)
+	record := documentEventRecord(t, s.VaultID(), child.VersionID, "dc6")
+	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+	require.True(t, ok)
+	record.Primaries = append(record.Primaries, primary)
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	placement := TimelinePlacement{NodeID: child.NodeID, VersionID: child.VersionID, EventID: record.Events[0].EventID}
+	parentOf := func(hideLocked bool) *int64 {
+		t.Helper()
+		var parent *int64
+		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+			items, err := s.hydrateTimelineItems(ctx, tx, []TimelinePlacement{placement}, hideLocked)
+			if err != nil {
+				return err
+			}
+			require.Len(t, items, 1)
+			parent = items[0].FamilyParentNodeID
+			return nil
+		})
+		require.NoError(t, err)
+		return parent
+	}
+	parent := parentOf(true)
+	require.NotNil(t, parent)
+	require.Equal(t, view.Version.NodeID, *parent)
+	asset, err := s.PhotoAssetForNode(ctx, imageParent.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.Nil(t, parentOf(true), "a locked parent is not disclosed")
+	visibleParent := parentOf(false)
+	require.NotNil(t, visibleParent)
+	require.Equal(t, imageParent.ID, *visibleParent)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	childNode, err := s.NodeByID(ctx, child.NodeID)
+	require.NoError(t, err)
+	other, err := s.CreateFile(ctx, s.RootID(), "other-family.eml", view.Version.BlobHash, view.Version.Size, "message/rfc822")
+	require.NoError(t, err)
+	otherPublication := f.publication
+	otherPublication.ContentVersionID = other.CurrentVersionID
+	otherView, err := s.PublishEmailGeneration(ctx, otherPublication)
+	require.NoError(t, err)
+	request := attachmentRequest(t, s, otherView, "timeline-family-shared")
+	request.Reuse = []document.EmailDocumentReuse{{PartPath: "1.2", Child: *child, Revision: childNode.Revision}}
+	_, err = s.PublishEmailDocuments(ctx, request)
+	require.NoError(t, err)
+	require.Nil(t, parentOf(true), "a shared attachment has no unique scalar parent")
+	_, _, err = s.Trash(ctx, other.ID, UnconditionalRev)
+	require.NoError(t, err)
+	parent = parentOf(true)
+	require.NotNil(t, parent)
+	require.Equal(t, view.Version.NodeID, *parent)
+	_, _, err = s.ReplaceContent(ctx, view.Version.NodeID, UnconditionalRev, fakeHash("dc7"), 1, "message/rfc822")
+	require.NoError(t, err)
+	require.Nil(t, parentOf(true), "historical and trashed parents do not supply grouping")
 }
