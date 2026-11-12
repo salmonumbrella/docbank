@@ -4,6 +4,7 @@ import DocumentFactCells from "./DocumentFactCells.svelte";
 import type { DocumentFacts, FactRead } from "./documentFacts.svelte.js";
 import type { VersionDates, VersionPeople } from "./generated/docbank.js";
 import {
+  assertion,
   claim,
   dates,
   edge,
@@ -60,7 +61,10 @@ it("shows the primary date and an avatar stack with a review count", () => {
   expect(screen.getByText("1 to review")).toBeTruthy();
 });
 
-it("marks floating values and empty, pending and failed reads", () => {
+it("marks floating values, empty cells, and pending and failed reads beside assertions", () => {
+  // tablePeople owns which people survive a pending or failed derivation;
+  // the cells must still render them beside the notice.
+  const asserted = people({ assertions: [assertion("author", "p4", "Teodor Vance")] });
   const { facts } = owner({
     floating: {
       dates: {
@@ -71,55 +75,34 @@ it("marks floating values and empty, pending and failed reads", () => {
       },
       people: { status: "ready", value: people() },
     },
+    empty: {
+      dates: { status: "ready", value: dates([]) },
+      people: { status: "ready", value: people() },
+    },
     pending: {
       dates: { status: "ready", value: dates([], "pending") },
-      people: { status: "error" },
-    },
-  });
-  render(DocumentFactCells, {
-    target: row(),
-    props: { versionID: "floating", facts, zone: toronto },
-  });
-  expect(screen.getByText(/· floating$/u)).toBeTruthy();
-  expect(screen.getByText("—")).toBeTruthy();
-  cleanup();
-  render(DocumentFactCells, {
-    target: row(),
-    props: { versionID: "pending", facts, zone: toronto },
-  });
-  expect(screen.getByText("Pending")).toBeTruthy();
-  expect(screen.getByText("Unavailable")).toBeTruthy();
-});
-
-it("keeps asserted people beside pending and failed people notices", () => {
-  const asserted = {
-    action: "assert",
-    assertion_id: "a1",
-    display_name: "Teodor Vance",
-    person_id: "p4",
-    role: "author",
-    note: "",
-    recorded_at: "2026-03-12T00:00:00Z",
-    revision: 1,
-  };
-  const { facts } = owner({
-    pending: {
-      dates: { status: "ready", value: threeClaims },
-      people: { status: "ready", value: people({ state: "pending", assertions: [asserted] }) },
+      people: { status: "ready", value: { ...asserted, state: "pending" } },
     },
     failed: {
-      dates: { status: "ready", value: threeClaims },
-      people: { status: "ready", value: people({ state: "failed", assertions: [asserted] }) },
+      dates: { status: "error" },
+      people: { status: "ready", value: { ...asserted, state: "failed" } },
     },
   });
+  const show = (versionID: string) => {
+    cleanup();
+    render(DocumentFactCells, { target: row(), props: { versionID, facts, zone: toronto } });
+  };
+  show("floating");
+  expect(screen.getByText(/· floating$/u)).toBeTruthy();
+  show("empty");
+  expect(screen.getAllByText("—")).toHaveLength(2);
   for (const [versionID, notice] of [
     ["pending", "Pending"],
     ["failed", "Unavailable"],
-  ]) {
-    render(DocumentFactCells, { target: row(), props: { versionID, facts, zone: toronto } });
+  ] as const) {
+    show(versionID);
+    expect(screen.getAllByText(notice)).toHaveLength(2);
     expect(screen.getByRole("img", { name: "Teodor Vance" })).toBeTruthy();
-    expect(screen.getByText(notice!)).toBeTruthy();
-    cleanup();
   }
 });
 

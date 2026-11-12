@@ -3,9 +3,10 @@ import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { inspect, promisify } from "node:util";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { SnapshotPage } from "../src/snapshots.js";
+import { captureTheme } from "./capture-themes.js";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -65,32 +66,39 @@ const EMAIL_SENT = "Mar 10, 2026, 11:40:00 PM EDT";
 const PDF_CREATED = "Mar 10, 2026, 11:30:00 PM (no zone)";
 const factsURL = /\/api\/v1\/versions\/([0-9a-f-]{36})\/(dates|people)(?:\?|$)/u;
 
-// The inspector scrolls inside its own panel beside the table, so a viewport
-// capture can clip the Dates and People sections below the preview. Align the
-// facts block with the panel's top, the same anchor on base and branch, and
-// leave the page and the table where they are. Stacked narrow layouts have no
-// inspector scroller and are captured as laid out.
+// A viewport capture can clip the Dates and People sections below the
+// preview: wide, the inspector scrolls inside its own panel; narrow (≤900 px),
+// it stacks under the table and the document scrolls. After every viewport
+// change, align the facts block with the top of its nearest scrolling
+// container, the same anchor on base and branch. Captures stay viewport-sized,
+// never full-page.
 async function revealFacts(page: Page) {
   await page.evaluate(() => {
-    const panel = document.querySelector<HTMLElement>('aside[aria-label="Document inspector"]');
-    const rows = panel?.querySelector<HTMLElement>(".detail-rows");
-    if (!panel || !rows || !/(auto|scroll)/u.test(getComputedStyle(panel).overflowY)) return;
-    panel.scrollTop += rows.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    const rows = document.querySelector<HTMLElement>(
+      'aside[aria-label="Document inspector"] .detail-rows',
+    );
+    if (!rows) return;
+    let box = rows.parentElement;
+    while (box && box !== document.body) {
+      const overflow = getComputedStyle(box).overflowY;
+      if (/(auto|scroll)/u.test(overflow) && box.scrollHeight > box.clientHeight) break;
+      box = box.parentElement;
+    }
+    const scroller = box && box !== document.body ? box : document.scrollingElement;
+    if (!scroller) return;
+    const top = scroller === document.scrollingElement ? 0 : box!.getBoundingClientRect().top;
+    scroller.scrollTop += rows.getBoundingClientRect().top - top;
   });
 }
 
 // Attachments are named document-facts-<base|branch>-<state>-<wide|narrow>-<theme>.png;
 // wide is 1920×1080 and narrow 860×1100.
 async function capture(page: Page, testInfo: TestInfo, name: string, theme: "light" | "dark") {
-  await page.evaluate(async (value) => {
-    localStorage.setItem("docbank-theme", value);
-    document.documentElement.classList.toggle("dark", value === "dark");
-    await document.fonts.ready;
-  }, theme);
   await revealFacts(page);
+  const prefix = `document-facts-${proof}-${name}`;
+  const body = await captureTheme(page, testInfo.outputPath(), prefix, theme);
   // The JSON reporter embeds the body as base64 in the uploaded CI report.
-  const body = await page.screenshot({ animations: "disabled" });
-  await testInfo.attach(`document-facts-${proof}-${name}-${theme}.png`, {
+  await testInfo.attach(`${prefix}-${theme}.png`, {
     body,
     contentType: "image/png",
   });
@@ -144,17 +152,8 @@ test("shows document dates and people in the inspector and both tables", async (
       )
     ).stdout.trim();
   let started = false;
-  let failure: unknown;
   const stop = async () => {
-    if (!started) return;
-    const before = JSON.parse(await run("daemon", "status", "--json"));
-    if (before.running) await run("daemon", "stop");
-    const after = JSON.parse(await run("daemon", "status", "--json"));
-    if (after.running !== false) {
-      throw new Error(
-        `Synthetic daemon ${before.pid ?? "unknown"} did not stop; retained ${scratch}`,
-      );
-    }
+    if (started) await run("daemon", "stop");
     started = false;
   };
   try {
@@ -214,8 +213,9 @@ test("shows document dates and people in the inspector and both tables", async (
       .toEqual(names);
     const version = await versions();
 
-    // An operator author assertion with no derived edge yet: the inspector must
-    // render it from the assertion's own display_name.
+    // An operator author assertion: the inspector renders it from the
+    // assertion's own display_name. (Assertions beside a pending or failed
+    // derivation are covered by the component tests, not here.)
     await stop();
     await fixture("assert", vault, version["board-minutes.pdf"]!, "Jory Pellham");
     started = true;
@@ -223,20 +223,75 @@ test("shows document dates and people in the inspector and both tables", async (
     session = new URLSearchParams(issued.hash.slice(1)).get("web_session") ?? "";
 
     if (proof === "branch") {
-      // Wait for real publication, not a guess: every fixture's dates and the
-      // email's and PDF's people.
-      const published = async (id: string, resource: "dates" | "people") => {
-        const response = await api(`/api/v1/versions/${id}/${resource}`);
-        return response.ok ? ((await response.json()) as { state: string }).state : "";
+      // Wait until each exact saved version serves the safe facts this proof
+      // expects. A state alone is not enough: "none" precedes the first
+      // derivation, and "published" can precede the metadata a claim needs.
+      // On timeout, report the last HTTP status and the (synthetic) payload so
+      // a remote run tells unpublished, empty and mismatched facts apart.
+      type Facts = {
+        state?: string;
+        claims?: { date_kind: string; when: Record<string, unknown> }[];
+        edges?: { role: string; display_name: string }[];
+        assertions?: { role: string; action: string; display_name: string }[];
+        unresolved?: { raw_label: string }[];
       };
-      for (const name of names)
-        for (const resource of ["dates", "people"] as const)
-          await expect
-            .poll(
-              async () => ["published", "none"].includes(await published(version[name]!, resource)),
-              { timeout: 120_000, intervals: [1_000] },
-            )
-            .toBe(true);
+      const expectFacts = async (
+        name: string,
+        resource: "dates" | "people",
+        ready: (facts: Facts) => boolean,
+      ) => {
+        let last: { status: number; body: unknown } = { status: 0, body: undefined };
+        const poll = async () => {
+          const response = await api(`/api/v1/versions/${version[name]}/${resource}`);
+          const body = (await response.json().catch(() => undefined)) as Facts | undefined;
+          last = { status: response.status, body };
+          return response.ok && !!body && ready(body);
+        };
+        try {
+          await expect.poll(poll, { timeout: 120_000, intervals: [1_000] }).toBe(true);
+        } catch (error) {
+          throw new Error(`${name} ${resource} not ready: ${JSON.stringify(last)}`, {
+            cause: error,
+          });
+        }
+      };
+      const claim = (facts: Facts, kind: string, when: Record<string, unknown>) =>
+        facts.claims?.some(
+          (item) =>
+            item.date_kind === kind &&
+            Object.entries(when).every(([key, value]) => item.when[key] === value),
+        ) ?? false;
+      const edge = (facts: Facts, role: string, name: string) =>
+        facts.edges?.some((item) => item.role === role && item.display_name === name) ?? false;
+      await expectFacts("board-update.eml", "dates", (facts) =>
+        claim(facts, "sent", { state: "exact", at: "2026-03-11T03:40:00Z" }),
+      );
+      await expectFacts(
+        "board-update.eml",
+        "people",
+        (facts) =>
+          edge(facts, "sender", "Mara Okonkwo-Fell") &&
+          edge(facts, "recipient", "Ines Albarran") &&
+          edge(facts, "copied", "Teodor Vask") &&
+          !JSON.stringify(facts).includes("Private Reviewer"),
+      );
+      await expectFacts("board-minutes.pdf", "dates", (facts) =>
+        claim(facts, "created", { state: "floating", local: "2026-03-10T23:30:00" }),
+      );
+      await expectFacts(
+        "board-minutes.pdf",
+        "people",
+        (facts) =>
+          facts.state === "published" &&
+          (facts.assertions?.some(
+            (item) => item.display_name === "Jory Pellham" && item.action === "assert",
+          ) ??
+            false) &&
+          (facts.unresolved?.some((item) => item.raw_label === "L. Beerwijk") ?? false),
+      );
+      await expectFacts("board-offsite.ics", "dates", (facts) =>
+        claim(facts, "started", { state: "date", date: "2026-03-09" }),
+      );
     }
 
     // Count facts reads as the browser makes them.
@@ -270,7 +325,7 @@ test("shows document dates and people in the inspector and both tables", async (
     await browse("board");
     await expect(liveRow("board-update.eml")).toBeVisible();
 
-    // Exact email time, configured zone, From/To/Cc chips and no Bcc anywhere.
+    // Exact email time, configured zone, From/To/Cc chips and no Bcc in the facts.
     await liveRow("board-update.eml").click();
     await captureStates(page, testInfo, "folder-email", async (narrow) => {
       await expect(inspector.getByRole("heading", { name: "board-update.eml" })).toBeVisible();
@@ -281,7 +336,11 @@ test("shows document dates and people in the inspector and both tables", async (
       const people = inspector.getByRole("region", { name: "People" });
       for (const name of ["Mara Okonkwo-Fell", "Ines Albarran", "Teodor Vask"])
         await expect(people.getByRole("button", { name })).toBeVisible();
-      await expect(page.getByText("Private Reviewer")).toHaveCount(0);
+      // Safe facts never carry the Bcc recipient. The existing raw email viewer
+      // legitimately shows the Bcc header, so check the facts surfaces only.
+      for (const surface of [people, dates, liveRow("board-update.eml")])
+        await expect(surface.getByText("Private Reviewer")).toHaveCount(0);
+      await expect(page.getByRole("img", { name: "Private Reviewer" })).toHaveCount(0);
       const header = page.getByRole("columnheader", { name: "Document date" });
       if (narrow) await expect(header).toBeHidden();
       else {
@@ -323,7 +382,8 @@ test("shows document dates and people in the inspector and both tables", async (
     );
 
     if (proof === "branch") {
-      // A slow dates read shows its spinner while people are already shown.
+      // A held dates request (an HTTP transport state, not a server
+      // derivation state) shows its spinner while people are already shown.
       let release!: () => void;
       const held = new Promise<void>((resolve) => (release = resolve));
       const datesOf = `**/api/v1/versions/${version["board-update.eml"]}/dates*`;
@@ -336,12 +396,18 @@ test("shows document dates and people in the inspector and both tables", async (
       await expect(
         inspector.getByRole("region", { name: "Dates" }).getByLabel("Loading dates"),
       ).toBeVisible();
+      await expect(
+        inspector
+          .getByRole("region", { name: "People" })
+          .getByRole("button", { name: "Mara Okonkwo-Fell" }),
+      ).toBeVisible();
       await capture(page, testInfo, "dates-loading-wide", "light");
       release();
       await expect(inspector.getByText(EMAIL_SENT)).toBeVisible();
       await page.unroute(datesOf);
 
-      // One endpoint failing leaves the other shown; Retry reads only that one.
+      // One aborted HTTP request (a transport failure, not a failed derivation)
+      // leaves the other resource shown; Retry reads only that one.
       const peopleOf = `**/api/v1/versions/${version["board-minutes.pdf"]}/people*`;
       let failed = false;
       await page.route(peopleOf, async (route) => {
@@ -451,20 +517,11 @@ test("shows document dates and people in the inspector and both tables", async (
         /^person:[0-9a-f-]{36}$/u,
       );
     }
-  } catch (error) {
-    failure = error;
-    throw error;
   } finally {
     try {
       await stop();
+    } finally {
       await rm(scratch, { recursive: true, force: true });
-    } catch (cleanupError) {
-      if (failure !== undefined) {
-        throw new Error(`Document facts proof cleanup failed: ${inspect(cleanupError)}`, {
-          cause: failure,
-        });
-      }
-      throw cleanupError;
     }
   }
 });

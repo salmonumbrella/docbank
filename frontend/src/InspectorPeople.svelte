@@ -18,15 +18,13 @@
 
   const people = $derived(read.status === "ready" ? read.value : undefined);
   const settled = $derived(people?.state !== "pending" && people?.state !== "failed");
-  // Operator assertions are independent of derivation, so they stay visible
-  // beside a pending or failed notice; derived edges and candidates do not.
-  const asserted = $derived(
-    people && !settled
-      ? roleRows({ ...people, edges: [], unresolved: [] }).filter((row) => row.people.length)
-      : [],
+  // roleRows and pendingNames keep independent operator assertions beside a
+  // pending or failed notice and drop derived edges and candidates; only
+  // settled reads show the always-present Authors row.
+  const rows = $derived(
+    people ? roleRows(people).filter((row) => settled || row.people.length > 0) : [],
   );
-  const rows = $derived(people && settled ? roleRows(people) : []);
-  const pending = $derived(people && settled ? pendingNames(people) : []);
+  const pending = $derived(people ? pendingNames(people) : []);
   const found = $derived(rows.some((row) => row.people.length > 0) || pending.length > 0);
 </script>
 
@@ -39,54 +37,39 @@
       People couldn't be loaded.
       <Button size="sm" surface="soft" onclick={onretry}>Retry</Button>
     </p>
-  {:else if !settled}
-    <p class="fact-note" role="status">
-      {people?.state === "pending"
-        ? "People are still being worked out."
-        : "People couldn't be worked out for this version."}
-    </p>
-    {#if asserted.length}
+  {:else}
+    {#if !settled}<p class="fact-note" role="status">
+        {people?.state === "pending"
+          ? "People are still being worked out."
+          : "People couldn't be worked out for this version."}
+      </p>{:else if !found}<p class="fact-note">No people found.</p>{/if}
+    {#if rows.length || pending.length}
       <dl class="people-grid">
-        {#each asserted as row (row.role)}
+        {#each rows as row (row.role)}
           <div>
             <dt>{row.label}</dt>
             <dd>
               {#each row.people as person (person.id)}<PersonChip
                   {person}
                   onselect={onperson}
-                />{/each}
+                />{:else}<span class="muted">—</span>{/each}
             </dd>
           </div>
         {/each}
+        {#if pending.length}
+          <div>
+            <dt>In metadata</dt>
+            <dd>
+              {#each pending as name (name.candidateID)}<span class="pending-chip"
+                  ><UserIcon size={12} aria-hidden="true" /><span>{name.name}</span><span
+                    class="muted">needs review</span
+                  ></span
+                >{/each}
+            </dd>
+          </div>
+        {/if}
       </dl>
     {/if}
-  {:else}
-    {#if !found}<p class="fact-note">No people found.</p>{/if}
-    <dl class="people-grid">
-      {#each rows as row (row.role)}
-        <div>
-          <dt>{row.label}</dt>
-          <dd>
-            {#each row.people as person (person.id)}<PersonChip
-                {person}
-                onselect={onperson}
-              />{:else}<span class="muted">—</span>{/each}
-          </dd>
-        </div>
-      {/each}
-      {#if pending.length}
-        <div>
-          <dt>In metadata</dt>
-          <dd>
-            {#each pending as name (name.candidateID)}<span class="pending-chip"
-                ><UserIcon size={12} aria-hidden="true" /><span>{name.name}</span><span
-                  class="muted">needs review</span
-                ></span
-              >{/each}
-          </dd>
-        </div>
-      {/if}
-    </dl>
   {/if}
 </section>
 

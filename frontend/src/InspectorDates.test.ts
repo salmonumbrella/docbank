@@ -6,10 +6,12 @@ import { claim, dates, threeClaims, toronto } from "./document-facts-test-fixtur
 const originalTZ = process.env.TZ;
 afterEach(() => {
   cleanup();
-  process.env.TZ = originalTZ;
+  // Assigning undefined would store the string "undefined", so unset instead.
+  if (originalTZ === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTZ;
 });
 
-it("lists every claim with the primary first and starred (Acceptance 1)", () => {
+it("lists every claim with the primary first and marked Primary (Acceptance 1)", () => {
   render(InspectorDates, {
     read: { status: "ready", value: threeClaims },
     zone: toronto,
