@@ -1,0 +1,33 @@
+name: Contracts C1 cap CLI focused test
+
+on:
+  push:
+    branches: [ci/contracts-c1-cap-cli-red]
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      GOPROXY: https://proxy.golang.org|direct
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Focused party CLI test
+        run: go test -tags fts5 ./cmd/docbank/ -run '^TestPartyCLIShowsPopulatedAndRetiredParties$' -count=1
