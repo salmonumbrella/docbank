@@ -265,7 +265,7 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		}
 		previousID, previousRevision = event.RecordID, event.RecordRevision
 		fact := taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}
-		balanceFacts = append(balanceFacts, taxrecord.EventFact{Kind: event.Kind, Currency: event.Currency, AmountMinor: event.AmountMinor, Voided: fact.Voided})
+		balanceFacts = append(balanceFacts, fact)
 		if err = p.derived.Apply(fact); err != nil {
 			return err
 		}
