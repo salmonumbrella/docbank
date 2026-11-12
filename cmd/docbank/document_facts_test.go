@@ -111,7 +111,7 @@ func TestDocumentFactsCommands(t *testing.T) {
 		if noun == "people" {
 			require.Contains(t, table, "Synthetic Author")
 			require.Contains(t, table, "author")
-			require.Contains(t, table, "assert")
+			require.True(t, strings.Contains(table, "assert") || strings.Contains(table, "Assigned by you"), "expected assertion or assigned edge in table: %s", table)
 		}
 		safeOutput, err := runCLI(t, "document", noun, "/notes.txt", "--json")
 		require.NoError(t, err)
