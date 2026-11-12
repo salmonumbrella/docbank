@@ -367,7 +367,6 @@ describe("dates and people", () => {
         retained.push(id);
         return () => retained.splice(retained.indexOf(id), 1);
       }),
-      retry: vi.fn(),
     } as unknown as DocumentFacts;
     return { facts, retained };
   };
@@ -379,17 +378,20 @@ describe("dates and people", () => {
     },
   };
 
-  it("shows both sections for the exact selected version and keeps the facts", async () => {
+  it("reads the selected source's version, not the node's current one", async () => {
     const onperson = vi.fn();
-    const { facts, retained } = fakeFacts({ [versionA]: ready });
+    // A frozen or duplicate selection can show a version other than the
+    // node's current one; the facts follow the selection.
+    const { facts, retained } = fakeFacts({ [versionB]: ready });
+    const selected = { ...fileProps.node, current_version_id: versionB };
     render(DocumentInspector, {
       ...fileProps,
-      source: selectedSourceFromNode(fileProps.node, fileProps.path),
+      source: selectedSourceFromNode(selected, fileProps.path),
       facts,
       timelineZone: toronto,
       onperson,
     });
-    expect(retained).toEqual([versionA]);
+    expect(retained).toEqual([versionB]);
     expect(screen.getByText("3 claims")).toBeTruthy();
     expect(screen.getByText("Times show in America/Toronto.")).toBeTruthy();
     for (const label of ["Path", "Modified", "Size"])
@@ -415,9 +417,15 @@ describe("dates and people", () => {
     expect(screen.getByLabelText("Loading dates")).toBeTruthy();
   });
 
-  it("shows neither section for a folder", () => {
-    const { facts, retained } = fakeFacts({});
-    render(DocumentInspector, { ...fileProps, node: folder, path: "/Records", facts });
+  it("shows neither section for a folder, even beside a file source", () => {
+    const { facts, retained } = fakeFacts({ [versionA]: ready });
+    render(DocumentInspector, {
+      ...fileProps,
+      node: folder,
+      path: "/Records",
+      source: selectedSourceFromNode(fileProps.node, fileProps.path),
+      facts,
+    });
     expect(retained).toEqual([]);
     expect(screen.queryByRole("region", { name: "Dates" })).toBeNull();
     expect(screen.queryByRole("region", { name: "People" })).toBeNull();

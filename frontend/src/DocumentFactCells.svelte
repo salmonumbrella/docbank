@@ -25,11 +25,9 @@
     return formatWhen(when, zone);
   });
   const settled = $derived(people?.state !== "pending" && people?.state !== "failed");
-  // A pending or failed derivation still shows the independent operator
-  // assertions; only derived edges and candidates wait for it.
-  const team = $derived(
-    people ? tablePeople(settled ? people : { ...people, edges: [], unresolved: [] }) : undefined,
-  );
+  // tablePeople keeps independent operator assertions while a derivation is
+  // pending or failed; derived edges and candidates wait for it.
+  const team = $derived(people ? tablePeople(people) : undefined);
   const visible = $derived(team?.people.slice(0, 3) ?? []);
   const more = $derived((team?.people.length ?? 0) - visible.length);
 </script>

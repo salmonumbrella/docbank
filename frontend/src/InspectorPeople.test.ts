@@ -1,63 +1,48 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import InspectorPeople from "./InspectorPeople.svelte";
-import { edge, people } from "./document-facts-test-fixtures.js";
+import { assertion, edge, people } from "./document-facts-test-fixtures.js";
 
 afterEach(cleanup);
 
+// Safe disclosure is served by the API (blind copies never reach the browser),
+// and pendingNames owns candidate dedupe; this file tests the rendering.
 const value = people({
-  edges: [
-    edge("author", "p1", "Mara Okonkwo-Fell"),
-    edge("recipient", "p2", "Ines Albarrán"),
-    edge("blind_copy", "p3", "Private Reviewer"),
-  ],
-  assertions: [
-    {
-      action: "assert",
-      assertion_id: "a1",
-      display_name: "Teodor Vance",
-      person_id: "p4",
-      role: "author",
-      note: "",
-      recorded_at: "2026-03-12T00:00:00Z",
-      revision: 1,
-    },
-  ],
+  edges: [edge("author", "p1", "Mara Okonkwo-Fell"), edge("recipient", "p2", "Ines Albarrán")],
+  assertions: [assertion("author", "p4", "Teodor Vance")],
   unresolved: [
     { candidate_id: "k1", raw_label: "L. Beerwijk", role: "author", evidence_kind: "pdf_info" },
-    { candidate_id: "k1", raw_label: "L. Beerwijk", role: "author", evidence_kind: "xmp" },
   ],
 });
 
-it("groups people by role, keeps asserted authors and pending names, never Bcc", async () => {
+it("groups people by role, keeps asserted authors and shows metadata names as text", async () => {
   const onperson = vi.fn();
   render(InspectorPeople, { read: { status: "ready", value }, onperson, onretry: vi.fn() });
   expect(screen.getByRole("button", { name: "Mara Okonkwo-Fell" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Teodor Vance" })).toBeTruthy();
   expect(screen.getByText("To")).toBeTruthy();
   // Acceptance 3: plain text, not a control.
-  const pending = screen.getByText("L. Beerwijk");
-  expect(pending.closest("button")).toBeNull();
-  expect(screen.getAllByText("needs review")).toHaveLength(1);
-  // Acceptance 4.
-  expect(screen.queryByText("Private Reviewer")).toBeNull();
+  expect(screen.getByText("L. Beerwijk").closest("button")).toBeNull();
+  expect(screen.getByText("needs review")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Mara Okonkwo-Fell" }));
   expect(onperson).toHaveBeenCalledWith("p1");
 });
 
-it("keeps operator assertions beside pending and failed derivation notices", async () => {
+it("keeps operator assertions, still selectable, beside pending and failed derivation notices", async () => {
+  const onperson = vi.fn();
   const view = render(InspectorPeople, {
     read: { status: "ready", value: { ...value, state: "pending" } },
-    onperson: vi.fn(),
+    onperson,
     onretry: vi.fn(),
   });
   expect(screen.getByText("People are still being worked out.")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Teodor Vance" })).toBeTruthy();
   expect(screen.queryByText("Mara Okonkwo-Fell")).toBeNull();
   expect(screen.queryByText("needs review")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Teodor Vance" }));
+  expect(onperson).toHaveBeenCalledWith("p4");
   await view.rerender({
     read: { status: "ready", value: { ...value, state: "failed" } },
-    onperson: vi.fn(),
+    onperson,
     onretry: vi.fn(),
   });
   expect(screen.getByText("People couldn't be worked out for this version.")).toBeTruthy();
@@ -66,15 +51,13 @@ it("keeps operator assertions beside pending and failed derivation notices", asy
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
 });
 
-it("shows pending and failed reads with a retry for that resource", async () => {
+it("shows an empty settled read and retries a failed HTTP read", async () => {
   const onretry = vi.fn();
   const view = render(InspectorPeople, {
-    read: { status: "ready", value: people({ state: "pending" }) },
+    read: { status: "ready", value: people() },
     onperson: vi.fn(),
     onretry,
   });
-  expect(screen.getByText("People are still being worked out.")).toBeTruthy();
-  await view.rerender({ read: { status: "ready", value: people() }, onperson: vi.fn(), onretry });
   expect(screen.getByText("No people found.")).toBeTruthy();
   expect(screen.getByText("Authors")).toBeTruthy();
   await view.rerender({ read: { status: "error" }, onperson: vi.fn(), onretry });

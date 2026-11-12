@@ -128,6 +128,7 @@
   import IconAction from "./IconAction.svelte";
   import Toasts from "./Toasts.svelte";
   import { clearToasts, showToast } from "./toast.svelte.js";
+  import { previewQuery } from "./queryPreview.js";
   import { moveToTrash, parentPath, undoTrash } from "./trashActions.js";
   import PhotoImportDrawer from "./PhotoImportDrawer.svelte";
   import DocumentAddMenu from "./DocumentAddMenu.svelte";
@@ -3164,13 +3165,32 @@
   }
 
   // A person chip searches for that person until the People page exists (P08).
+  // The query is checked first, so a historical person the resolver no longer
+  // finds (a retired identity with no alias) leaves the open document in place.
   function searchPerson(id: string): void {
-    void submitSnapshot(
-      parseQuery(
-        JSON.stringify({ v: 1, syntax: "advanced", mode: "lexical", text: `person:${id}` }),
-      ),
-      { page_size: 100 },
+    void searchPersonChecked(id);
+  }
+
+  async function searchPersonChecked(id: string): Promise<void> {
+    const query = parseQuery(
+      JSON.stringify({ v: 1, syntax: "advanced", mode: "lexical", text: `person:${id}` }),
     );
+    const session = webSession;
+    const request = generation;
+    try {
+      await previewQuery(session, query, new AbortController().signal);
+    } catch (cause) {
+      if (session !== webSession || request !== generation) return;
+      // The fixed person:<id> query is well formed, so 422 means an unknown reference.
+      if (cause instanceof APIError && cause.status === 422)
+        showToast(
+          "This historical person is no longer available for search. Their recorded attribution is still shown.",
+        );
+      else handleFailure(cause);
+      return;
+    }
+    if (session !== webSession || request !== generation) return;
+    await submitSnapshot(query, { page_size: 100 });
   }
 
   function runSnapshotAgain(): void {
@@ -4620,7 +4640,14 @@
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
                     {:else}
-                      <Table class="snapshot-table" ariaLabel="Snapshot documents" zebra={false}>
+                      <!-- Document date and People have no server sort; the other
+                           columns still sort through sortSnapshot. -->
+                      <Table
+                        class="snapshot-table"
+                        ariaLabel="Snapshot documents"
+                        zebra={false}
+                        unsorted
+                      >
                         {#snippet header()}
                           <th class="selection-column" scope="col">
                             <Checkbox
