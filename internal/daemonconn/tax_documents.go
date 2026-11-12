@@ -60,8 +60,11 @@ func (c *Connection) LinkTaxDocument(ctx context.Context, id string, revision in
 		return api.TaxDocumentMutation{}, taxMutationFailure(mutationRequestError(response, err), "record")
 	}
 	out, err := c.taxDocumentReceipt(ctx, response, id, "", revision, false)
-	if err == nil && (out.Document.NodeID == nil || *out.Document.NodeID != in.NodeID || out.Document.Role != in.Role || !reflect.DeepEqual(out.Document.EventID, in.EventID) || !reflect.DeepEqual(out.Document.ContentVersionID, in.ContentVersionID)) {
-		return api.TaxDocumentMutation{}, taxMutationFailure(invalidDocumentReceipt(), "record")
+	if err == nil {
+		expected, validationErr := taxrecord.NormalizeDocument(taxrecord.DocumentValues{EventID: in.EventID, ContentVersionID: in.ContentVersionID, ContentSHA256: out.Document.ContentSHA256, Role: in.Role, FormCode: in.FormCode, Note: in.Note})
+		if validationErr != nil || out.Document.NodeID == nil || *out.Document.NodeID != in.NodeID || !out.Document.Live || out.Document.Role != expected.Role || out.Document.FormCode != expected.FormCode || out.Document.Note != expected.Note || !reflect.DeepEqual(out.Document.EventID, in.EventID) || !reflect.DeepEqual(out.Document.ContentVersionID, in.ContentVersionID) {
+			return api.TaxDocumentMutation{}, taxMutationFailure(invalidDocumentReceipt(), "record")
+		}
 	}
 	return out, err
 }
