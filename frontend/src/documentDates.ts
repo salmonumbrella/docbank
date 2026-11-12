@@ -10,26 +10,18 @@ const precisionLabels: Record<string, string> = {
   month: "month only",
   year: "year only",
 };
-const kindLabels: Record<string, string> = {
-  authored: "Authored",
-  document_date: "Document date",
-  vault_recorded: "Recorded in vault",
-  sent: "Sent",
-  received: "Received",
-  created: "Created",
-  modified: "Modified",
-  captured: "Captured",
-  started: "Started",
-  ended: "Ended",
-  printed: "Printed",
-  accessed: "Accessed",
-  produced: "Produced",
-  exported: "Exported",
-  imported: "Imported",
-  observed: "Observed",
-};
+const knownKinds = new Set(
+  "authored document_date sent received created modified captured started ended printed accessed produced exported imported observed".split(
+    " ",
+  ),
+);
 export const precisionLabel = (p: string) => precisionLabels[p] ?? p;
-export const dateKindLabel = (k: string) => kindLabels[k] ?? k;
+export const dateKindLabel = (k: string) => {
+  if (k === "vault_recorded") return "Recorded in vault";
+  if (!knownKinds.has(k)) return k;
+  const label = k.replaceAll("_", " ");
+  return label[0]!.toUpperCase() + label.slice(1);
+};
 export const claimBasisLabel = (claim: VersionDateClaim) =>
   (claim.source_kind_raw || claim.evidence_kind).replaceAll("_", " ");
 
@@ -94,16 +86,35 @@ export function formatWhen(
         zoneNote,
         floating,
       };
+    const instant = new Date(when.at!);
+    // Zone offsets can introduce minutes or seconds absent in the source's
+    // precision. Show those fields to avoid displaying a different instant;
+    // the claim's precision label remains unchanged.
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone.name,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(instant);
+    const minute = parts.find((part) => part.type === "minute")?.value;
+    const second = parts.find((part) => part.type === "second")?.value;
+    const displayPrecision =
+      (when.precision === "hour" || when.precision === "minute") && second !== "00"
+        ? "second"
+        : when.precision === "hour" && minute !== "00"
+          ? "minute"
+          : when.precision;
     const formatter = new Intl.DateTimeFormat(locale, {
       timeZone: zone.name,
       year: "numeric",
       month: "short",
       day: "numeric",
-      ...clockOptions(when.precision),
+      ...clockOptions(displayPrecision),
       timeZoneName: "short",
     });
     return {
-      value: formatClock(formatter, new Date(when.at!), when.at!, when.precision),
+      value: formatClock(formatter, instant, when.at!, when.precision),
       zoneNote,
       floating,
     };

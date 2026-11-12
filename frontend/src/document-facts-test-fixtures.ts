@@ -4,6 +4,7 @@ import type {
   VersionDates,
   VersionPeople,
   VersionPersonEdge,
+  VersionPersonAssertion,
   WhenV1,
 } from "./generated/docbank.js";
 
@@ -59,6 +60,23 @@ export function edge(role: string, person_id: string, display_name = person_id):
     evidence_kind: "",
     linked_contact: false,
     raw_label: display_name,
+  };
+}
+
+export function assertion(
+  role: string,
+  person_id: string,
+  display_name = person_id,
+): VersionPersonAssertion {
+  return {
+    action: "assert",
+    assertion_id: `assert-${person_id}`,
+    display_name,
+    person_id,
+    role,
+    note: "",
+    recorded_at: "",
+    revision: 1,
   };
 }
 

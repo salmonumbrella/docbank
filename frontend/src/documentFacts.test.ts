@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import { DocumentFacts } from "./documentFacts.svelte.js";
+import { dates, people } from "./document-facts-test-fixtures.js";
 
 const requests = vi.hoisted(
   () =>
@@ -19,22 +20,22 @@ vi.mock("./generated/docbank.js", () => {
       new Promise((resolve, reject) => requests.push({ id, resource, options, resolve, reject }));
   return { getVersionDates: read("dates"), getVersionPeople: read("people") };
 });
-let observer: FakeObserver;
+let notify: IntersectionObserverCallback;
+const observer = {
+  show(target: Element) {
+    notify(
+      [{ target, isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    );
+  },
+};
 class FakeObserver {
-  callback: IntersectionObserverCallback;
   constructor(callback: IntersectionObserverCallback) {
-    this.callback = callback;
-    observer = this;
+    notify = callback;
   }
   observe() {}
   unobserve() {}
   disconnect() {}
-  show(target: Element) {
-    this.callback(
-      [{ target, isIntersecting: true } as IntersectionObserverEntry],
-      this as unknown as IntersectionObserver,
-    );
-  }
 }
 const flush = async () => {
   await Promise.resolve();
@@ -54,14 +55,20 @@ it("only loads visible versions and bounds HTTP reads, prioritizing the inspecto
     facts.observeRow(`v${i}`)(el);
     return el;
   });
-  for (let i = 0; i < 5; i++) observer.show(rows[i]!);
+  for (let i = 500; i < 505; i++) observer.show(rows[i]!);
   const release = facts.retain("selected");
   expect(requests).toHaveLength(4);
   expect(requests.every((r) => r.options.session === "session")).toBe(true);
-  requests[0]!.resolve({});
+  requests[0]!.resolve(dates([]));
   await flush();
   expect(requests[4]!.id).toBe("selected");
-  expect(new Set(requests.map((r) => r.id)).size).toBeLessThanOrEqual(6);
+  for (let i = 1; i < 12; i++) {
+    requests[i]!.resolve(requests[i]!.resource === "dates" ? dates([]) : people());
+    await flush();
+  }
+  expect(new Set(requests.map((r) => r.id))).toEqual(
+    new Set(["v500", "v501", "v502", "v503", "v504", "selected"]),
+  );
   release();
   facts.dispose();
 });
@@ -73,10 +80,12 @@ it("shares reads, retries only failed resources and ignores late responses", asy
   facts.observeRow("v")(element);
   observer.show(element);
   facts.retain("v");
-  facts.observeRow(undefined)(document.createElement("div"));
+  const noVersion = document.createElement("div");
+  facts.observeRow(undefined)(noVersion);
+  observer.show(noVersion);
   expect(requests).toHaveLength(2);
   requests[0]!.reject(new Error("offline"));
-  requests[1]!.resolve({ state: "published" });
+  requests[1]!.resolve(people());
   await flush();
   expect(facts.get("v").dates.status).toBe("error");
   expect(facts.get("v").people.status).toBe("ready");
@@ -101,46 +110,48 @@ it("stops all work on the first current 401", async () => {
   expect(requests).toHaveLength(2);
 });
 
-it("rereads pending facts only after the last interest leaves, preserving published facts", async () => {
-  const facts = new DocumentFacts("session", vi.fn());
-  const first = facts.retain("v");
-  const second = facts.retain("v");
-  requests[0]!.resolve({ state: "pending" });
-  requests[1]!.resolve({ state: "published" });
-  await flush();
-  first();
-  expect(facts.get("v").dates.status).toBe("ready");
-  second();
-  expect(facts.get("v").dates.status).toBe("idle");
-  const release = facts.retain("v");
-  expect(requests.map((r) => r.resource)).toEqual(["dates", "people", "dates"]);
-  release();
-  facts.dispose();
-});
-
-it("ignores a canceled read that resolves after renewed interest", async () => {
-  const facts = new DocumentFacts("session", vi.fn());
-  const release = facts.retain("v");
-  release();
-  facts.retain("v");
-  requests[0]!.resolve({ state: "published", old: true });
-  await flush();
-  expect(facts.get("v").dates.status).toBe("loading");
-  requests[2]!.resolve({ state: "published", old: false });
-  await flush();
-  expect(facts.get("v").dates.value).toEqual({ state: "published", old: false });
-  facts.dispose();
-});
-
-it("keeps a published result released before its request finishes cleanup", async () => {
-  const facts = new DocumentFacts("session", vi.fn());
-  const release = facts.retain("v");
-  requests[0]!.resolve({ state: "published" });
-  await Promise.resolve();
-  release();
-  await flush();
-  facts.retain("v");
-  expect(facts.get("v").dates.value).toEqual({ state: "published" });
-  expect(requests.filter((r) => r.resource === "dates")).toHaveLength(1);
-  facts.dispose();
+it("keeps facts correct as the last interest leaves and returns", async () => {
+  {
+    const facts = new DocumentFacts("session", vi.fn());
+    const first = facts.retain("v");
+    const second = facts.retain("v");
+    requests[0]!.resolve(dates([], "pending"));
+    requests[1]!.resolve(people());
+    await flush();
+    first();
+    expect(facts.get("v").dates.status).toBe("ready");
+    second();
+    expect(facts.get("v").dates.status).toBe("idle");
+    const release = facts.retain("v");
+    expect(requests.map((r) => r.resource)).toEqual(["dates", "people", "dates"]);
+    release();
+    facts.dispose();
+  }
+  requests.length = 0;
+  {
+    const facts = new DocumentFacts("session", vi.fn());
+    const release = facts.retain("v");
+    release();
+    facts.retain("v");
+    requests[0]!.resolve({ ...dates([]), content_version_id: "old" });
+    await flush();
+    expect(facts.get("v").dates.status).toBe("loading");
+    requests[2]!.resolve({ ...dates([]), content_version_id: "v" });
+    await flush();
+    expect(facts.get("v").dates.value?.content_version_id).toBe("v");
+    facts.dispose();
+  }
+  requests.length = 0;
+  {
+    const facts = new DocumentFacts("session", vi.fn());
+    const release = facts.retain("v");
+    requests[0]!.resolve(dates([]));
+    await Promise.resolve();
+    release();
+    await flush();
+    facts.retain("v");
+    expect(facts.get("v").dates.value).toEqual(dates([]));
+    expect(requests.filter((r) => r.resource === "dates")).toHaveLength(1);
+    facts.dispose();
+  }
 });

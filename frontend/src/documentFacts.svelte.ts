@@ -57,15 +57,11 @@ export class DocumentFacts {
       this.interest(versionID, "retained", 1);
       this.pump();
     });
-    let released = false;
     return () => {
-      if (!released) {
-        released = true;
-        untrack(() => {
-          this.interest(versionID, "retained", -1);
-          this.pump();
-        });
-      }
+      untrack(() => {
+        this.interest(versionID, "retained", -1);
+        this.pump();
+      });
     };
   }
 
