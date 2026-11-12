@@ -136,6 +136,9 @@ func (s *Store) LinkTaxDocument(ctx context.Context, id string, revision int64, 
 			return err
 		}
 		if err = taxInsert(ctx, tx, "tax_record_documents", taxDocumentColumns, []any{linkID, id, v.EventID, n.ID, v.ContentVersionID, v.ContentSHA256, v.Role, v.FormCode, v.Note, r.UpdatedAt, nil}); err != nil {
+			if s.isUniqueViolation(err) {
+				return ErrExists
+			}
 			return err
 		}
 		if err = updateTaxEventParent(ctx, tx, r, revision); err != nil {

@@ -141,6 +141,12 @@ func TestTaxDocumentLinkRevisionAndRelations(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return", ContentVersionID: &other.CurrentVersionID})
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	foreign, err := s.CreateTaxRecord(ctx, TaxRecordInput{FilerPartyID: &r.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "filing", Title: "Foreign"})
+	require.NoError(t, err)
+	event, err := s.AddTaxEvent(ctx, foreign.RecordID, foreign.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"})
+	require.NoError(t, err)
+	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return", EventID: &event.Event.EventID})
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
 	bad := "11111111-1111-4111-8111-111111111111"
 	_, err = s.LinkTaxDocument(ctx, r.RecordID, r.Revision, TaxDocumentInput{NodeID: n.ID, Role: "return", EventID: &bad})
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
