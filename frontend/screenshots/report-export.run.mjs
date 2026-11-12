@@ -20,7 +20,7 @@ const browserGlobalTimeout = browserWatchdog - 30_000;
 // { spec, env }: the branch run sets env=branch, and the base capture runs the
 // same spec, fixtures included, against main's binary with env=base. Each spec
 // holds exactly one test, so the stats check counts specs.
-const proofs = [];
+const proofs = [{ spec: "document-facts.screenshot.ts", env: "DOCBANK_DOCUMENT_FACTS_PROOF" }];
 // Where the base capture comes from: a pull request's base branch, or, for a
 // manual workflow_dispatch run (a fork branch before its upstream PR), the
 // current upstream main fetched by explicit URL.

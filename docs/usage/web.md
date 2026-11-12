@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-11
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
@@ -84,6 +84,22 @@ UUID, and SHA-256 content identity. The copy buttons copy the complete UUID or
 digest even when the card wraps it across lines. Every selected node also shows its assigned tag names.
 Hovering a tag shows its UUID and vault-wide assignment count. The tag stack
 expands in place when a node carries more than six tags.
+
+### Document dates and people
+
+A selected file's card lists **Dates** and **People** for the exact version
+shown; a frozen result keeps the version it saved. **Dates** lists every date
+claim with its source, precision, and whether the file asserted it or Docbank
+observed it. The primary date comes first and is starred. Exact times show in
+the configured `[web] timeline_timezone` (`UTC` by default), never the
+browser's zone. Times written without a zone show as written with "(no zone)",
+and date-only values show no time. If the browser cannot use the configured
+zone, exact times say "Timeline zone unavailable". **People** groups people by
+role; select a person to search for their documents. Names found only in
+metadata appear under **In metadata** as "needs review". Blind-copy recipients
+never appear. When the results area is at least 900 px wide, tables also show
+**Document date** and **People** (up to three avatars and an "N to review"
+count). Docbank reads them only for rows on screen.
 
 ![The slide-out navigation menu on a narrow screen](https://docbank.ai/assets/generated/web-navigation-mobile.png)
 
