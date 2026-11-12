@@ -56,8 +56,6 @@ func timelineError(err error) error {
 	switch {
 	case errors.Is(err, store.ErrTimelineDateNotInZone):
 		return NewError(http.StatusBadRequest, "date_not_in_zone", err.Error())
-	case errors.Is(err, store.ErrTimelineScopeUnsupported):
-		return NewError(http.StatusUnprocessableEntity, "timeline_scope_unsupported", err.Error())
 	case errors.Is(err, store.ErrTimelineCursorMismatch):
 		return NewError(http.StatusBadRequest, "cursor_mismatch", err.Error())
 	default:
