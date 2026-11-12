@@ -1,0 +1,100 @@
+name: Note D generated API artifact
+
+on:
+  push:
+    branches: [build/note-d-generation-r2]
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '26.13.0'
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - run: make generate-api
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: note-d-generated-api-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts
+
+  focused-sqlite:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: API note routes
+        run: go test -tags fts5 -v ./internal/api/ -run '^TestNote'
+      - name: Original loader and text selection
+        run: go test -tags fts5 -v ./internal/processing/ -run '^(TestNoteOriginalBoundaries|TestNoteBackfillDrainsBadNotes|TestNoteRebuildPropagatesCancellation|TestSelectNoteText.*)$'
+      - name: Native note store readers
+        run: go test -tags fts5 -v ./internal/store/ -run '^TestBackendContractsSQLite$/^notes$/^(NoteList|NoteListPaging|NoteVersion|NoteLinks)$'
+
+  focused-postgres:
+    if: github.repository == 'salmonumbrella/docbank'
+    name: PostgreSQL ${{ matrix.version }} note readers
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [16, 18]
+    services:
+      postgres:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Native note store readers
+        env:
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+        run: go test -tags fts5 -v ./internal/store/ -run '^TestBackendContractsPostgres$/^notes$/^(NoteList|NoteListPaging|NoteVersion|NoteLinks)$'
