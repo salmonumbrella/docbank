@@ -394,11 +394,22 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 	})
 }
 
+func recordLogPath(path string) (string, bool) {
+	if path == "/api/v1/records" || strings.HasPrefix(path, "/api/v1/records/") {
+		return "/api/v1/records", true
+	}
+	if path == "/api/v1/record-types" || strings.HasPrefix(path, "/api/v1/record-types/") {
+		return "/api/v1/record-types", true
+	}
+	return path, false
+}
+
 func logMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Info("request", "method", r.Method, "path", r.URL.Path,
+		path, _ := recordLogPath(r.URL.Path)
+		logger.Info("request", "method", r.Method, "path", path,
 			"remote", r.RemoteAddr, "duration", time.Since(start))
 	})
 }
@@ -410,7 +421,12 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(v)
 				}
-				logger.Error("panic in handler", "path", r.URL.Path, "panic", v)
+				path, private := recordLogPath(r.URL.Path)
+				if private {
+					logger.Error("panic in handler", "path", path)
+				} else {
+					logger.Error("panic in handler", "path", path, "panic", v)
+				}
 				writeError(w, NewError(http.StatusInternalServerError, "internal", "internal server error"))
 			}
 		}()

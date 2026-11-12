@@ -267,6 +267,7 @@ func NewServer(d Deps) *Server {
 	registerPhotoQueryRoutes(humaAPI, d, cursorService, g, snapshots)
 	registerPhotoTimelineRoute(humaAPI, s.snapshots)
 	registerPeopleRoutes(humaAPI, d, g)
+	registerRecordRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)
 	registerPhotoCheckoutRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)
@@ -412,6 +413,10 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/albums/{set_id}/members/remove", http.MethodPost},
 		{"/api/v1/photos/settings", http.MethodPut},
 		{"/api/v1/backup/schedule", http.MethodPut},
+		{"/api/v1/record-types/{type}/activate", http.MethodPost},
+		{"/api/v1/record-types/{type}/deactivate", http.MethodPost},
+		{"/api/v1/records/{id}", http.MethodPatch},
+		{"/api/v1/records/{id}/retire", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}", http.MethodPatch},
 		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/merge", http.MethodPost},
