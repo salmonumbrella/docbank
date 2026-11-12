@@ -24,9 +24,12 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"period_note", "b"}, {"due_note", "b"}, {"lead_days", "b"}, {"currency", "b"},
 	{"effective_start", "b"}, {"effective_end", "b"}, {"note", "b"}, {"filer", "q"},
 	{"taxkind", "q"}, {"include_retired", "q"}, {packageLimitParameter, "q"}, {"offset", "q"},
-	{"reveal", "q"}, {"account_id", "p"}, {"If-Match", "h"},
+	{"reveal", "q"}, {"account_id", "bp"}, {"If-Match", "h"},
+	{"title", "b"}, {"kind", "bq"}, {"form_code", "b"}, {"tax_year", "b"},
+	{"period_start", "b"}, {"period_end", "b"}, {"due_date", "b"},
+	{"direction", "b"}, {"amount", "b"}, {"state", "q"}, {"year", "q"}, {"record_id", "p"},
 }
-var taxDiagnosticReasons = []string{"invalid value", "invalid length or text", "control character", "invalid country", "invalid subdivision", "invalid currency", "invalid date", "precedes effective_start", "not canonical", "required", "unknown cadence", "out of range", "party not found", "party is retired", "party is not own", "party is not an organization"}
+var taxDiagnosticReasons = []string{"invalid value", "invalid length or text", "control character", "invalid country", "invalid subdivision", "invalid currency", "invalid date", "precedes effective_start", "not canonical", "required", "unknown cadence", "out of range", "party not found", "party is retired", "party is not own", "party is not an organization", "unknown kind", "unknown state", "unknown direction", "amount required when currency changes", "amount required", "zero required", "unknown amount must be null", "invalid length", "invalid precision", "invalid decimal or overflow", "overflow", "precedes period_start"}
 
 func taxSafeFieldReason(field, reason string) bool {
 	if !slices.Contains(taxDiagnosticReasons, reason) {
