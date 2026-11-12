@@ -635,6 +635,8 @@ export interface Error {
   readonly $schema?: string;
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
+  /** @maxItems 5 */
+  candidates?: string[];
   code?: string;
   cursor?: string;
   detail?: string;
@@ -3394,6 +3396,11 @@ export interface Filters {
   unevaluated?: boolean;
 }
 
+export interface Folder {
+  notes: number;
+  path: string;
+}
+
 export interface ForgetBackupSnapshotsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4442,6 +4449,94 @@ export interface NoteByPath {
   source_state: NoteByPathSourceState;
   tags: string[];
   title: string;
+}
+
+export interface NoteLinkResponse {
+  candidates?: string[];
+  form: string;
+  fragment: string;
+  label: string;
+  line: number;
+  raw: string;
+  source_path: string;
+  state: string;
+  /** @nullable */
+  target_path: string | null;
+}
+
+export interface NoteOutlineHeading {
+  end: number;
+  level: number;
+  line_end: number;
+  line_start: number;
+  ordinal: number;
+  path: string;
+  start: number;
+  text: string;
+}
+
+export interface NoteReadHeading {
+  level: number;
+  path: string;
+  text: string;
+}
+
+export interface NoteReadRange {
+  end: number;
+  line_end: number;
+  line_start: number;
+  start: number;
+}
+
+export interface NoteReadSource {
+  in_sync: boolean;
+  state: string;
+  watch?: string;
+}
+
+export type NoteSummarySourceState = typeof NoteSummarySourceState[keyof typeof NoteSummarySourceState];
+
+
+export const NoteSummarySourceState = {
+  present: 'present',
+  gone: 'gone',
+  not_watched: 'not_watched',
+} as const;
+
+export interface NoteSummary {
+  content_version_id: string;
+  modified_at: string;
+  node_id: number;
+  path: string;
+  sha256: string;
+  size: number;
+  source_state: NoteSummarySourceState;
+  tags: string[];
+  title: string;
+}
+
+/**
+ * @nullable
+ */
+export type NoteTextResponseFrontmatter = {[key: string]: unknown} | null;
+
+export interface NoteTextResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_version_id: string;
+  /** @nullable */
+  frontmatter: NoteTextResponseFrontmatter;
+  heading?: NoteReadHeading;
+  next_offset?: number;
+  node_id: number;
+  path: string;
+  range: NoteReadRange;
+  sha256: string;
+  size: number;
+  source: NoteReadSource;
+  text: string;
+  title: string;
+  truncated: boolean;
 }
 
 export interface NoteWatchStatus {
@@ -8103,6 +8198,36 @@ export interface ResolvedTextCitation {
   text_sha256: string;
 }
 
+export interface ResponseBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_version_id: string;
+  headings: NoteOutlineHeading[];
+  next_cursor?: string;
+  node_id: number;
+  path: string;
+  sha256: string;
+}
+
+export interface ResponseBody1 {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  folders?: Folder[];
+  items: NoteSummary[];
+  next_cursor?: string;
+}
+
+export interface ResponseBody2 {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_version_id: string;
+  direction: string;
+  links: NoteLinkResponse[];
+  next_cursor?: string;
+  node_id: number;
+  path: string;
+}
+
 export interface RevertNodeContentRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -9641,6 +9766,8 @@ export type GetExportJobEvents200 = {
 export type GetExportJobEventsDefault = {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
+  /** @maxItems 5 */
+  candidates?: string[];
   code?: string;
   cursor?: string;
   detail?: string;
@@ -9875,8 +10002,94 @@ export type PruneNodeContentVersionsHeaders = {
 'If-Match': string;
 };
 
+export type ListNotesParams = {
+under_path?: string;
+recursive?: boolean;
+/**
+ * @maxItems 8
+ */
+field?: string[];
+source_present?: boolean;
+modified_since?: string;
+modified_before?: string;
+sort?: ListNotesSort;
+direction?: ListNotesDirection;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+page_size?: number;
+cursor?: string;
+};
+
+export type ListNotesSort = typeof ListNotesSort[keyof typeof ListNotesSort];
+
+
+export const ListNotesSort = {
+  path: 'path',
+  modified_at: 'modified_at',
+  title: 'title',
+} as const;
+
+export type ListNotesDirection = typeof ListNotesDirection[keyof typeof ListNotesDirection];
+
+
+export const ListNotesDirection = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
 export type GetNoteByPathParams = {
 path: string;
+};
+
+export type GetNoteLinksParams = {
+direction?: GetNoteLinksDirection;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+cursor?: string;
+};
+
+export type GetNoteLinksDirection = typeof GetNoteLinksDirection[keyof typeof GetNoteLinksDirection];
+
+
+export const GetNoteLinksDirection = {
+  outgoing: 'outgoing',
+  incoming: 'incoming',
+  unresolved: 'unresolved',
+} as const;
+
+export type GetNoteOutlineParams = {
+version_id?: string;
+cursor?: string;
+};
+
+export type GetNoteTextParams = {
+version_id?: string;
+/**
+ * @maxLength 512
+ */
+heading?: string;
+/**
+ * @minimum 1
+ */
+line_start?: number;
+/**
+ * @minimum 1
+ */
+line_end?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+/**
+ * @minimum 1
+ * @maximum 524288
+ */
+max_bytes?: number;
 };
 
 export type ListPackagesParams = {
@@ -15534,6 +15747,45 @@ return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
 
 
 
+export const getListNotesUrl = (params?: ListNotesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = ["field"];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? 'null' : String(v));
+      });
+      return;
+    }
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/notes?${stringifiedParams}` : `/api/v1/notes`
+}
+
+/**
+ * @summary List current Markdown notes
+ */
+export const listNotes = async (params?: ListNotesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ResponseBody1> => {
+
+  return sessionJSON<ResponseBody1>(getListNotesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getGetNoteByPathUrl = (params: GetNoteByPathParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -15579,6 +15831,105 @@ export const getGetNotesStatusUrl = () => {
 export const getNotesStatus = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<NotesStatus> => {
 
   return sessionJSON<NotesStatus>(getGetNotesStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetNoteLinksUrl = (nodeId: number,
+    params?: GetNoteLinksParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/notes/${encodeURIComponent(String(nodeId))}/links?${stringifiedParams}` : `/api/v1/notes/${encodeURIComponent(String(nodeId))}/links`
+}
+
+/**
+ * @summary Resolve current note links
+ */
+export const getNoteLinks = async (nodeId: number,
+    params?: GetNoteLinksParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ResponseBody2> => {
+
+  return sessionJSON<ResponseBody2>(getGetNoteLinksUrl(nodeId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetNoteOutlineUrl = (nodeId: number,
+    params?: GetNoteOutlineParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/notes/${encodeURIComponent(String(nodeId))}/outline?${stringifiedParams}` : `/api/v1/notes/${encodeURIComponent(String(nodeId))}/outline`
+}
+
+/**
+ * @summary Read an original Markdown note outline
+ */
+export const getNoteOutline = async (nodeId: number,
+    params?: GetNoteOutlineParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ResponseBody> => {
+
+  return sessionJSON<ResponseBody>(getGetNoteOutlineUrl(nodeId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetNoteTextUrl = (nodeId: number,
+    params?: GetNoteTextParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/notes/${encodeURIComponent(String(nodeId))}/text?${stringifiedParams}` : `/api/v1/notes/${encodeURIComponent(String(nodeId))}/text`
+}
+
+/**
+ * @summary Read original Markdown note bytes
+ */
+export const getNoteText = async (nodeId: number,
+    params?: GetNoteTextParams, options?: Parameters<typeof sessionJSON>[1]): Promise<NoteTextResponse> => {
+
+  return sessionJSON<NoteTextResponse>(getGetNoteTextUrl(nodeId,params),
   {
     ...options,
     method: 'GET'

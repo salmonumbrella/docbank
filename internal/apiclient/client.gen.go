@@ -7020,6 +7020,65 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 	return responseParser(ctx, resp)
 }
 
+// ListNotes List current Markdown notes
+func (c *Client) ListNotes(ctx context.Context, options *ListNotesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListNotesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor":          {Style: "form", Explode: &[]bool{false}[0]},
+		"direction":       {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"page_size":       {Style: "form", Explode: &[]bool{false}[0]},
+		"recursive":       {Style: "form", Explode: &[]bool{false}[0]},
+		"sort":            {Style: "form", Explode: &[]bool{false}[0]},
+		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
+		"under_path":      {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/notes",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListNotesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListNotesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListNotesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListNotesErrorResponse](resp, "ListNotesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetNoteByPath Read a current Markdown note summary and frontmatter
 func (c *Client) GetNoteByPath(ctx context.Context, options *GetNoteByPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNoteByPathResponse, error) {
 	var err error
@@ -7107,6 +7166,167 @@ func (c *Client) GetNotesStatus(ctx context.Context, reqEditors ...runtime.Reque
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetNoteLinks Resolve current note links
+func (c *Client) GetNoteLinks(ctx context.Context, options *GetNoteLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNoteLinksResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor":    {Style: "form", Explode: &[]bool{false}[0]},
+		"direction": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":     {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/notes/{node_id}/links",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNoteLinksResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNoteLinksResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNoteLinksResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNoteLinksErrorResponse](resp, "GetNoteLinksErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/{node_id}/links")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetNoteOutline Read an original Markdown note outline
+func (c *Client) GetNoteOutline(ctx context.Context, options *GetNoteOutlineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNoteOutlineResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor":     {Style: "form", Explode: &[]bool{false}[0]},
+		"version_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/notes/{node_id}/outline",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNoteOutlineResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNoteOutlineResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNoteOutlineResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNoteOutlineErrorResponse](resp, "GetNoteOutlineErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/{node_id}/outline")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetNoteText Read original Markdown note bytes
+func (c *Client) GetNoteText(ctx context.Context, options *GetNoteTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNoteTextResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"heading":    {Style: "form", Explode: &[]bool{false}[0]},
+		"line_end":   {Style: "form", Explode: &[]bool{false}[0]},
+		"line_start": {Style: "form", Explode: &[]bool{false}[0]},
+		"max_bytes":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":     {Style: "form", Explode: &[]bool{false}[0]},
+		"version_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/notes/{node_id}/text",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNoteTextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNoteTextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNoteTextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNoteTextErrorResponse](resp, "GetNoteTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/{node_id}/text")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -21065,6 +21285,37 @@ func (o *PruneNodeContentVersionsRequestOptions) GetHeader() (map[string]string,
 	return headers, err
 }
 
+// ListNotesRequestOptions is the options needed to make a request to ListNotes.
+type ListNotesRequestOptions struct {
+	Query *ListNotesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListNotesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListNotesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListNotesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListNotesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetNoteByPathRequestOptions is the options needed to make a request to GetNoteByPath.
 type GetNoteByPathRequestOptions struct {
 	Query *GetNoteByPathQuery
@@ -21093,6 +21344,120 @@ func (o *GetNoteByPathRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetNoteByPathRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetNoteLinksRequestOptions is the options needed to make a request to GetNoteLinks.
+type GetNoteLinksRequestOptions struct {
+	PathParams *GetNoteLinksPath
+	Query      *GetNoteLinksQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNoteLinksRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNoteLinksRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNoteLinksRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNoteLinksRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetNoteOutlineRequestOptions is the options needed to make a request to GetNoteOutline.
+type GetNoteOutlineRequestOptions struct {
+	PathParams *GetNoteOutlinePath
+	Query      *GetNoteOutlineQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNoteOutlineRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNoteOutlineRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNoteOutlineRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNoteOutlineRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetNoteTextRequestOptions is the options needed to make a request to GetNoteText.
+type GetNoteTextRequestOptions struct {
+	PathParams *GetNoteTextPath
+	Query      *GetNoteTextQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNoteTextRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNoteTextRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNoteTextRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNoteTextRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -27289,6 +27654,29 @@ const (
 	ListDocumentsQueryDirectionDesc ListDocumentsQueryDirection = "desc"
 )
 
+type ListNotesQuerySort string
+
+const (
+	ListNotesQuerySortModifiedAt ListNotesQuerySort = "modified_at"
+	ListNotesQuerySortPath       ListNotesQuerySort = "path"
+	Title                        ListNotesQuerySort = "title"
+)
+
+type ListNotesQueryDirection string
+
+const (
+	ListNotesQueryDirectionAsc  ListNotesQueryDirection = "asc"
+	ListNotesQueryDirectionDesc ListNotesQueryDirection = "desc"
+)
+
+type GetNoteLinksQueryDirection string
+
+const (
+	Incoming   GetNoteLinksQueryDirection = "incoming"
+	Outgoing   GetNoteLinksQueryDirection = "outgoing"
+	Unresolved GetNoteLinksQueryDirection = "unresolved"
+)
+
 type ListPackagesQueryDirection string
 
 const (
@@ -27793,6 +28181,18 @@ type ListContentVersionsPath struct {
 
 type PruneNodeContentVersionsPath struct {
 	ID int64 `json:"id"`
+}
+
+type GetNoteLinksPath struct {
+	NodeID int64 `json:"node_id"`
+}
+
+type GetNoteOutlinePath struct {
+	NodeID int64 `json:"node_id"`
+}
+
+type GetNoteTextPath struct {
+	NodeID int64 `json:"node_id"`
 }
 
 type GetPackagePath struct {
@@ -28750,8 +29150,41 @@ type ListContentVersionsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListNotesQuery struct {
+	UnderPath      *string                  `json:"under_path,omitempty"`
+	Recursive      *bool                    `json:"recursive,omitempty"`
+	Field          []string                 `json:"field,omitempty"`
+	SourcePresent  *bool                    `json:"source_present,omitempty"`
+	ModifiedSince  *string                  `json:"modified_since,omitempty"`
+	ModifiedBefore *string                  `json:"modified_before,omitempty"`
+	Sort           *ListNotesQuerySort      `json:"sort,omitempty"`
+	Direction      *ListNotesQueryDirection `json:"direction,omitempty"`
+	PageSize       *int64                   `json:"page_size,omitempty"`
+	Cursor         *string                  `json:"cursor,omitempty"`
+}
+
 type GetNoteByPathQuery struct {
 	Path string `json:"path"`
+}
+
+type GetNoteLinksQuery struct {
+	Direction *GetNoteLinksQueryDirection `json:"direction,omitempty"`
+	Limit     *int64                      `json:"limit,omitempty"`
+	Cursor    *string                     `json:"cursor,omitempty"`
+}
+
+type GetNoteOutlineQuery struct {
+	VersionID *string `json:"version_id,omitempty"`
+	Cursor    *string `json:"cursor,omitempty"`
+}
+
+type GetNoteTextQuery struct {
+	VersionID *string `json:"version_id,omitempty"`
+	Heading   *string `json:"heading,omitempty"`
+	LineStart *int64  `json:"line_start,omitempty"`
+	LineEnd   *int64  `json:"line_end,omitempty"`
+	Offset    *int64  `json:"offset,omitempty"`
+	MaxBytes  *int64  `json:"max_bytes,omitempty"`
 }
 
 type ListPackagesQuery struct {
@@ -29276,6 +29709,7 @@ type GetExportJobEventsResponse = []byte
 type GetExportJobEventsErrorResponse struct {
 	BackupForget *BackupForgetReport `json:"backup_forget,omitempty"`
 	BackupPrune  *BackupPruneReport  `json:"backup_prune,omitempty"`
+	Candidates   []string            `json:"candidates,omitempty"`
 	Code         *string             `json:"code,omitempty"`
 	Cursor       *string             `json:"cursor,omitempty"`
 	Detail       *string             `json:"detail,omitempty"`
@@ -29596,6 +30030,10 @@ type PruneNodeContentVersionsResponse = api.VersionPruneReport
 
 type PruneNodeContentVersionsErrorResponse = Error
 
+type ListNotesResponse = ResponseBody1
+
+type ListNotesErrorResponse = Error
+
 type GetNoteByPathResponse = api.NoteByPath
 
 type GetNoteByPathErrorResponse = Error
@@ -29603,6 +30041,18 @@ type GetNoteByPathErrorResponse = Error
 type GetNotesStatusResponse = api.NotesStatus
 
 type GetNotesStatusErrorResponse = Error
+
+type GetNoteLinksResponse = ResponseBody2
+
+type GetNoteLinksErrorResponse = Error
+
+type GetNoteOutlineResponse = ResponseBody
+
+type GetNoteOutlineErrorResponse = Error
+
+type GetNoteTextResponse = NoteTextResponse
+
+type GetNoteTextErrorResponse = Error
 
 type ListPackagesResponse = api.PackagePage
 
@@ -31121,6 +31571,11 @@ type FaceBox = document.FaceBox
 
 type Filters = query.Filters
 
+type Folder struct {
+	Notes int64  `json:"notes"`
+	Path  string `json:"path"`
+}
+
 type ForgetBackupSnapshotsRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema      *string  `json:"$schema,omitempty"`
@@ -31351,6 +31806,68 @@ type Node = api.Node
 type NodePage = api.NodePage
 
 type NoteByPath = api.NoteByPath
+
+type NoteLinkResponse struct {
+	Candidates []string `json:"candidates,omitempty"`
+	Form       string   `json:"form"`
+	Fragment   string   `json:"fragment"`
+	Label      string   `json:"label"`
+	Line       int64    `json:"line"`
+	Raw        string   `json:"raw"`
+	SourcePath string   `json:"source_path"`
+	State      string   `json:"state"`
+	TargetPath *string  `json:"target_path"`
+}
+
+type NoteOutlineHeading struct {
+	End       int64  `json:"end"`
+	Level     int64  `json:"level"`
+	LineEnd   int64  `json:"line_end"`
+	LineStart int64  `json:"line_start"`
+	Ordinal   int64  `json:"ordinal"`
+	Path      string `json:"path"`
+	Start     int64  `json:"start"`
+	Text      string `json:"text"`
+}
+
+type NoteReadHeading struct {
+	Level int64  `json:"level"`
+	Path  string `json:"path"`
+	Text  string `json:"text"`
+}
+
+type NoteReadRange struct {
+	End       int64 `json:"end"`
+	LineEnd   int64 `json:"line_end"`
+	LineStart int64 `json:"line_start"`
+	Start     int64 `json:"start"`
+}
+
+type NoteReadSource struct {
+	InSync bool    `json:"in_sync"`
+	State  string  `json:"state"`
+	Watch  *string `json:"watch,omitempty"`
+}
+
+type NoteSummary = api.NoteSummary
+
+type NoteTextResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema           *string             `json:"$schema,omitempty"`
+	ContentVersionID string              `json:"content_version_id"`
+	Frontmatter      map[string]struct{} `json:"frontmatter"`
+	Heading          *NoteReadHeading    `json:"heading,omitempty"`
+	NextOffset       *int64              `json:"next_offset,omitempty"`
+	NodeID           int64               `json:"node_id"`
+	Path             string              `json:"path"`
+	Range            NoteReadRange       `json:"range"`
+	Sha256           string              `json:"sha256"`
+	Size             int64               `json:"size"`
+	Source           NoteReadSource      `json:"source"`
+	Text             string              `json:"text"`
+	Title            string              `json:"title"`
+	Truncated        bool                `json:"truncated"`
+}
 
 type NoteWatchStatus = api.NoteWatchStatus
 
@@ -32007,6 +32524,36 @@ type Resolution = kataevidence.Resolution
 type ResolvedDocumentSourceFence = api.ResolvedDocumentSourceFence
 
 type ResolvedTextCitation = document.ResolvedTextCitation
+
+type ResponseBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema           *string              `json:"$schema,omitempty"`
+	ContentVersionID string               `json:"content_version_id"`
+	Headings         []NoteOutlineHeading `json:"headings"`
+	NextCursor       *string              `json:"next_cursor,omitempty"`
+	NodeID           int64                `json:"node_id"`
+	Path             string               `json:"path"`
+	Sha256           string               `json:"sha256"`
+}
+
+type ResponseBody1 struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string       `json:"$schema,omitempty"`
+	Folders    []Folder      `json:"folders,omitempty"`
+	Items      []NoteSummary `json:"items"`
+	NextCursor *string       `json:"next_cursor,omitempty"`
+}
+
+type ResponseBody2 struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema           *string            `json:"$schema,omitempty"`
+	ContentVersionID string             `json:"content_version_id"`
+	Direction        string             `json:"direction"`
+	Links            []NoteLinkResponse `json:"links"`
+	NextCursor       *string            `json:"next_cursor,omitempty"`
+	NodeID           int64              `json:"node_id"`
+	Path             string             `json:"path"`
+}
 
 type RetentionDisclosurePolicyV1 = document.RetentionDisclosurePolicyV1
 
