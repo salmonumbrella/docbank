@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
-	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -36,13 +35,11 @@ type TimelineItem struct {
 }
 
 func timelineBindList(placements []TimelinePlacement) (string, []any) {
-	marks := make([]string, len(placements))
 	args := make([]any, len(placements))
 	for i, p := range placements {
-		marks[i] = "?"
 		args[i] = p.VersionID
 	}
-	return strings.Join(marks, ","), args
+	return numberedPlaceholders(len(placements), 0), args
 }
 
 // hydrateTimelineItems reads each group of versions in bounded statements;
@@ -59,13 +56,19 @@ func hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []Timeline
 	for start := 0; start < len(placements); start += 249 {
 		chunk := placements[start:min(start+249, len(placements))]
 		marks, args := timelineBindList(chunk)
+		fingerprint := fmt.Sprintf("$%d", len(args)+1)
+		args = append(args, document.PersonResolverFingerprint())
+		hide := "0"
+		if hideLocked {
+			hide = "1"
+		}
 		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE dirs(dir_id,id,parent_id,path) AS (
    SELECT n.id,n.id,n.parent_id,n.name FROM nodes n WHERE n.id IN (SELECT parent_id FROM nodes WHERE current_version_id IN (`+marks+`))
    UNION ALL SELECT d.dir_id,n.id,n.parent_id,CASE WHEN n.name='' THEN '/'||d.path ELSE n.name||'/'||d.path END FROM nodes n JOIN dirs d ON n.id=d.parent_id
   ) SELECT cv.version_id,n.name,CASE WHEN dirs.path='/' THEN '/'||n.name ELSE dirs.path||'/'||n.name END,COALESCE(cv.mime_type,''),cv.blob_hash,cv.size,g.canonical_json,
-  CASE WHEN ph.content_version_id IS NULL THEN 1 WHEN ph.state='published' AND ph.event_generation_id=h.generation_id AND ph.binding_epoch=ps.binding_epoch AND ph.node_revision=n.revision AND ph.resolver_fingerprint=? THEN 1 ELSE 0 END
+  CASE WHEN h.content_version_id IS NULL THEN 1 WHEN `+currentPersonPublishedFence(false, hide, fingerprint)+` THEN 1 ELSE 0 END
   FROM content_versions cv JOIN nodes n ON n.id=cv.node_id JOIN dirs ON dirs.dir_id=n.parent_id AND dirs.parent_id IS NULL
-  JOIN document_event_heads h ON h.content_version_id=cv.version_id JOIN document_event_generations g ON g.generation_id=h.generation_id LEFT JOIN document_people_heads ph ON ph.content_version_id=cv.version_id CROSS JOIN document_people_state ps WHERE cv.version_id IN (`+marks+`)`, append(append(append([]any(nil), args...), document.PersonResolverFingerprint()), args...)...)
+  JOIN document_event_heads eh ON eh.content_version_id=cv.version_id JOIN document_event_generations g ON g.generation_id=eh.generation_id LEFT JOIN document_people_heads h ON h.content_version_id=cv.version_id CROSS JOIN document_people_state ps WHERE cv.version_id IN (`+marks+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -108,19 +111,13 @@ func hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []Timeline
 		if err := rows.Close(); err != nil {
 			return nil, err
 		}
-		hide := "0"
-		if hideLocked {
-			hide = "1"
-		}
 		// Shared fences keep assertions and derived edges in the same safe scope as queries.
 		sqlText := `SELECT e.version_id,e.person_id,CASE WHEN e.derived=1 AND person.state='provisional' AND person.origin='derived' THEN e.raw_label ELSE person.display_name END,e.role,COALESCE(ext.archive_id,''),COALESCE(ext.uid,'') FROM (
    SELECT a.content_version_id AS version_id,COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id) AS person_id,a.role,'' AS raw_label,0 AS derived FROM person_document_assertions a WHERE a.content_version_id IN (` + marks + `) AND ` + currentPersonAssertionFence(true, hide) + `
-   UNION SELECT p.content_version_id,COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role,p.raw_label,1 FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN content_versions cv ON cv.version_id=p.content_version_id JOIN nodes n ON n.id=cv.node_id CROSS JOIN document_people_state ps WHERE p.content_version_id IN (` + marks + `) AND ` + currentPersonPublishedFence(true, hide) + `
+   UNION SELECT p.content_version_id,COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role,p.raw_label,1 FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN content_versions cv ON cv.version_id=p.content_version_id JOIN nodes n ON n.id=cv.node_id CROSS JOIN document_people_state ps WHERE p.content_version_id IN (` + marks + `) AND ` + currentPersonPublishedFence(true, hide, fingerprint) + `
   ) e JOIN persons person ON person.person_id=e.person_id LEFT JOIN person_external_identities ext ON ext.person_id=e.person_id AND ext.system='msgvault' AND ext.uid_state='current'
   ORDER BY e.version_id,e.person_id,e.derived,e.role,e.raw_label,ext.archive_id,ext.uid`
-		peopleArgs := append(append([]any(nil), args...), args...)
-		peopleArgs = append(peopleArgs, document.PersonResolverFingerprint())
-		rows, err = tx.QueryContext(ctx, sqlText, peopleArgs...)
+		rows, err = tx.QueryContext(ctx, sqlText, args...)
 		if err != nil {
 			return nil, err
 		}

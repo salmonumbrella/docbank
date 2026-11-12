@@ -110,6 +110,11 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 	if owner == "" || s.store == nil {
 		return TimelineDayPage{}, ErrInvalidSnapshotRequest
 	}
+	if s.store.postgresSchema != "" {
+		if err := validatePostgresTimelineScope(req.Scope.Query); err != nil {
+			return TimelineDayPage{}, err
+		}
+	}
 	if req.Limit == 0 {
 		req.Limit = 200
 	}
@@ -192,16 +197,21 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 		if err := requireDocumentDateIndex(scoped, tx); err != nil {
 			return err
 		}
-		generation, err := collectionGenerationTx(scoped, tx)
-		if err != nil {
-			return err
-		}
-		compiled, err := (queryCompiler{}).compile(scoped, req.Scope.Query, queryResolver{q: tx})
-		if err != nil {
-			return err
+		postgres := s.store.postgresSchema != ""
+		generation := ""
+		compiled := CompiledQuery{Query: req.Scope.Query}
+		if !postgres {
+			generation, err = collectionGenerationTx(scoped, tx)
+			if err != nil {
+				return err
+			}
+			compiled, err = (queryCompiler{}).compile(scoped, req.Scope.Query, queryResolver{q: tx})
+			if err != nil {
+				return err
+			}
 		}
 		tail := `SELECT node_id,version_id,generation_id,event_id,tier,axis_key,COALESCE(utc_key,''),civil_end_date FROM (SELECT dedup.*,ROW_NUMBER() OVER (PARTITION BY tier ORDER BY civil_date,node_id) strip_rank FROM dedup WHERE duplicate_rank=1) ranked WHERE tier<2 OR strip_rank<=201 ORDER BY tier,axis_key,node_id`
-		statement, args, err := timelinePlacedSQL(compiled, generation, req.Scope, req.Date, req.Date, loc, req.HiddenLocked, tail)
+		statement, args, err := timelinePlacedSQL(compiled, generation, req.Scope, req.Date, req.Date, loc, req.HiddenLocked, postgres, func(*timelineBinds) string { return tail })
 		if err != nil {
 			return err
 		}

@@ -22,8 +22,10 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
-	{name: "timeline-day-query", postgres: "native operations", scope: "Safe current document placements and day counts.", scenarios: []backendScenario{
+	{name: "timeline-day-query", postgres: "native operations", scope: "Unscoped safe current document placements and day counts; shared Query/search remains unqualified (docbank#p4dq).", scenarios: []backendScenario{
 		{"TimelineDaysUndatedAndPending", func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newTestStore) }, func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore) }},
+		{"TimelineScopeRejected", nil, func(t *testing.T) { checkTimelineScopeRejected(t, newPostgresQueryStore) }},
+		{"TimelineDayFrozenAfterTrash", func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newTestStore) }, func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newPostgresQueryStore) }},
 	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{
 		{"StorageRepairRollback", nil, checkStorageRepairRollbackPostgres},

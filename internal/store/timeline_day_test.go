@@ -45,7 +45,12 @@ func TestTimelineDayBoundsVectors(t *testing.T) {
 }
 
 func TestTimelineDayFrozenAfterTrash(t *testing.T) {
-	s := newTestStore(t)
+	checkTimelineDayFrozenAfterTrash(t, newTestStore)
+}
+
+func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	for _, seed := range []string{"a1", "a2"} {
 		node, err := s.CreateFile(ctx, s.RootID(), seed+".txt", fakeHash(seed), 10, "text/plain")

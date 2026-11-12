@@ -12,9 +12,6 @@ import (
 func TestTimelineDaysUndatedAndPending(t *testing.T) {
 	checkTimelineDaysUndatedAndPending(t, newTestStore)
 }
-func TestTimelineDaysPostgres(t *testing.T) {
-	checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore)
-}
 func checkTimelineDaysUndatedAndPending(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -56,4 +53,48 @@ func checkTimelineDaysUndatedAndPending(t *testing.T, open func(*testing.T) *Sto
 	page, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
 	require.NoError(t, err)
 	require.Empty(t, page.DateOnly)
+}
+
+func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
+	base := snapshotTestQuery(t, `{}`)
+	store := &Store{postgresSchema: "synthetic"}
+	svc := NewQuerySnapshotService(store)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civiltime.ParseDate("2026-03-10")
+	require.NoError(t, err)
+	for _, text := range []string{"hello", "person:synthetic", "tag:synthetic", "date:2026-03-10", "saved:synthetic"} {
+		t.Run(text, func(t *testing.T) {
+			q := base
+			q.Text = text
+			scope := TimelineScope{Query: q, Zone: "UTC"}
+			_, err := svc.TimelineDays(t.Context(), "owner", scope, date, date)
+			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+			_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Cursor: "invalid", Limit: 1})
+			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+		})
+	}
+	q := base
+	q.Filters.Paths = []string{"/synthetic"}
+	require.ErrorIs(t, validatePostgresTimelineScope(q), ErrTimelineScopeUnsupported)
+	q = base
+	q.Filters.CollapseDuplicates = true
+	require.NoError(t, validatePostgresTimelineScope(q))
+	q.Sort.Field = "relevance"
+	require.Error(t, validatePostgresTimelineScope(q))
+}
+
+func checkTimelineScopeRejected(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civiltime.ParseDate("2026-03-10")
+	require.NoError(t, err)
+	q := snapshotTestQuery(t, `{}`)
+	q.Filters.Paths = []string{"/synthetic"}
+	scope := TimelineScope{Query: q, Zone: "UTC"}
+	_, err = svc.TimelineDays(t.Context(), "owner", scope, date, date)
+	require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+	_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Cursor: "invalid", Limit: 1})
+	require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
 }

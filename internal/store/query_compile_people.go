@@ -20,8 +20,8 @@ func currentPersonAssertionFence(safe bool, hideLocked string) string {
 	return fence
 }
 
-func currentPersonPublishedFence(safe bool, hideLocked string) string {
-	fence := `h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=?`
+func currentPersonPublishedFence(safe bool, hideLocked, fingerprintBind string) string {
+	fence := `h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=` + fingerprintBind
 	if safe {
 		fence += ` AND ` + personVisibleActorSQL("p", hideLocked)
 	}
@@ -32,7 +32,7 @@ func currentPersonPublishedFence(safe bool, hideLocked string) string {
 // Its sole parameter is the current resolver fingerprint.
 func currentDocumentPersonEdgesSQL(version string, safe bool, hideLocked string) string {
 	return `(SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id) AS person_id,a.role FROM person_document_assertions a WHERE a.content_version_id=` + version + ` AND ` + currentPersonAssertionFence(safe, hideLocked) + `
- UNION SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(safe, hideLocked) + `)`
+ UNION SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(safe, hideLocked, "?") + `)`
 }
 
 func (c queryCompiler) compilePersonPredicate(id string, roles []string) compiledQueryFragment {
