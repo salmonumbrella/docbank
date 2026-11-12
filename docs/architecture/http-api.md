@@ -84,6 +84,8 @@ Ambiguous headings return `heading_ambiguous` with up to five candidate paths.
 links within the nearest watch collection, or `/` outside watched collections.
 It uses current paths and only present, non-excluded notes. Exact paths precede
 wikilink stem and alias matches; ambiguity is reported with up to five paths.
+Incoming links use the current source projections: a newly imported or
+different-recipe source contributes after its projection has been rebuilt.
 Pages contain at most 100 results and may be empty while a continuation remains.
 Signed cursors expire after 15 minutes and are bound to their query or version.
 

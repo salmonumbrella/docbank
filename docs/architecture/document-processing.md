@@ -148,7 +148,9 @@ the target vault. A bad note's terminal classification does not fail restore.
 Text and outline reads parse an uncached current original on demand. Historical
 reads always parse the selected original without publishing cache rows. Link
 resolution uses current placement rather than cached relative paths, so moves
-do not require a worker pass before path-like links can resolve. The read routes
+do not require a worker pass before indexed path-like links can resolve.
+Incoming links discover current source versions through their projections; a
+new or different-recipe source contributes after the worker rebuilds it. The read routes
 are described in the [HTTP note contract](http-api.md#authored-markdown-notes).
 
 ## Keep policy and result identities separate

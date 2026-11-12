@@ -141,3 +141,53 @@ func TestNoteLinksResolveCurrentOriginal(t *testing.T) {
 		}
 	}
 }
+
+func TestNoteOutlineCursorPinsVersion(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	var original strings.Builder
+	for i := range 201 {
+		original.WriteString("# Heading ")
+		original.WriteString(strconv.Itoa(i))
+		original.WriteByte('\n')
+	}
+	hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader(original.String()))
+	require.NoError(t, err)
+	n, err := s.CreateFile(ctx, s.RootID(), "many.md", hash, size, "text/markdown")
+	require.NoError(t, err)
+	base := "/api/v1/notes/" + strconv.FormatInt(n.ID, 10) + "/outline"
+	resp, body := get(t, ts, base, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var first struct {
+		Version  string `json:"content_version_id"`
+		Headings []struct {
+			Text string `json:"text"`
+		} `json:"headings"`
+		Next string `json:"next_cursor"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.Equal(t, n.CurrentVersionID, first.Version)
+	require.Len(t, first.Headings, 200)
+	require.NotEmpty(t, first.Next)
+	newHash, newSize, err := s.Blobs.WriteContext(ctx, strings.NewReader("# New\n"))
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, n.ID, n.Revision, newHash, newSize, "text/markdown")
+	require.NoError(t, err)
+	resp, body = get(t, ts, base+"?cursor="+url.QueryEscape(first.Next), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var last struct {
+		Version  string `json:"content_version_id"`
+		Headings []struct {
+			Text string `json:"text"`
+		} `json:"headings"`
+		Next string `json:"next_cursor"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &last))
+	require.Equal(t, first.Version, last.Version)
+	require.Len(t, last.Headings, 1)
+	require.Equal(t, "Heading 200", last.Headings[0].Text)
+	require.Empty(t, last.Next)
+	resp, body = get(t, ts, base+"?cursor="+url.QueryEscape(first.Next+"x"), nil)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
