@@ -198,9 +198,7 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 			if err != nil {
 				return err
 			}
-			if queryPeopleHideLocked(scoped) != req.HiddenLocked {
-				return ErrTimelineCursorMismatch
-			}
+			req.HiddenLocked = queryPeopleHideLocked(scoped)
 		}
 		scoped = WithVisiblePeopleOnly(WithQueryDefaultTimezone(scoped, req.Scope.Zone))
 		scoped = context.WithValue(scoped, queryPeopleHiddenKey{}, req.HiddenLocked)
@@ -220,11 +218,11 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 				return err
 			}
 		}
-		population, err := s.store.timelinePopulation(scoped, q, compiled, generation, req.Scope.Coverage)
+		population, err := s.store.timelinePopulation(scoped, q, compiled, generation, req.Scope.Coverage, req.HiddenLocked)
 		if err != nil {
 			return err
 		}
-		tail := `SELECT node_id,version_id,generation_id,event_id,tier,axis_key,COALESCE(utc_key,''),civil_end_date FROM (SELECT dedup.*,ROW_NUMBER() OVER (PARTITION BY tier ORDER BY civil_date,node_id) strip_rank FROM dedup WHERE duplicate_rank=1) ranked WHERE tier<2 OR strip_rank<=201 ORDER BY tier,axis_key,node_id`
+		tail := `SELECT node_id,version_id,generation_id,event_id,tier,axis_key,COALESCE(utc_key,''),civil_end_date FROM (SELECT placed.*,ROW_NUMBER() OVER (PARTITION BY tier ORDER BY civil_date,node_id) strip_rank FROM placed WHERE placement_rank=1) ranked WHERE tier<2 OR strip_rank<=201 ORDER BY tier,axis_key,node_id`
 		statement, args, err := timelinePlacedSQL(population, generation, req.Scope, req.Date, req.Date, loc, req.HiddenLocked, postgres, func(*timelineBinds) string { return tail })
 		if err != nil {
 			return err
@@ -346,6 +344,9 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 	}
 	now := s.now().UTC()
 	cached := &cachedQuerySnapshot{kind: "timeline_day", id: build.snapshotID, owner: owner, metadata: metadata, rows: rows, extraRows: int64(len(page.DateOnly) + len(page.MonthOnly)), created: now, lastUsed: now, bytes: bytes}
+	if len(timed) <= req.Limit {
+		return s.renderTimelinePage(cached, timelineCachedMetadata{Page: page, Scope: scope, Limit: req.Limit}, 0)
+	}
 	if err := s.publishBuild(build, cached); err != nil {
 		return TimelineDayPage{}, err
 	}

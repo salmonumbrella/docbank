@@ -76,6 +76,9 @@ func newTimelineCommand() *cobra.Command {
 	var dayKinds []string
 	var limit int
 	day := &cobra.Command{Use: "day <date> [query]", Short: "List documents on a day", Args: cobra.RangeArgs(1, 2), RunE: func(cmd *cobra.Command, args []string) error {
+		if limit < 1 || limit > 500 {
+			return usageError(fmt.Errorf("limit must be between 1 and 500"))
+		}
 		q, err := timelineQuery(args[1:])
 		if err != nil {
 			return err

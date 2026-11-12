@@ -111,6 +111,19 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 		}
 	}
 
+	person, _, err = s.PersonByID(ctx, personID)
+	require.NoError(t, err)
+	_, err = s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: personID, System: "msgvault", ArchiveID: "second", UID: "person-b", UIDKind: "vcard_uid", UIDState: "current"}, person.Revision)
+	require.NoError(t, err)
+	page, err = svc.TimelineDay(ctx, "owner", req)
+	require.NoError(t, err)
+	require.Len(t, page.DateOnly[0].People, 2)
+	require.ElementsMatch(t, []string{"synthetic", "second"}, []string{page.DateOnly[0].People[0].ArchiveID, page.DateOnly[0].People[1].ArchiveID})
+	person, _, err = s.PersonByID(ctx, personID)
+	require.NoError(t, err)
+	_, err = s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: personID, System: "msgvault", ArchiveID: "second", UID: "person-b", UIDKind: "vcard_uid", UIDState: "retired"}, person.Revision)
+	require.NoError(t, err)
+
 	for _, state := range []string{"retired", "unlinked"} {
 		person, _, err = s.PersonByID(ctx, personID)
 		require.NoError(t, err)
@@ -174,9 +187,18 @@ func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T)
 			event.Actors[0].DisplayName = privacy
 			event.Actors[0].Sensitive = privacy == "actor"
 			event.Sensitive = privacy == "event"
-			event.SourceKey = fmt.Sprintf("metadata/dc2/private-%d", j)
+			other := event
+			other.Actors = append([]document.DocumentEventActorV1(nil), event.Actors...)
+			other.Sensitive, other.Actors[0].Sensitive = false, false
+			privateOrder, safeOrder := 0, 1
+			if i == 1 {
+				privateOrder, safeOrder = 1, 0
+			}
+			event.SourceKey = fmt.Sprintf("metadata/dc2/mixed-%d-%d", j, privateOrder)
+			other.SourceKey = fmt.Sprintf("metadata/dc2/mixed-%d-%d", j, safeOrder)
 			event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
-			record.Events = append(record.Events, event)
+			other.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, other.SourceKey, other.DateKind, other.DateValue, other.Precision, other.TimezoneKind, other.EvidenceSHA256)
+			record.Events = append(record.Events, event, other)
 		}
 		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
 		require.True(t, ok)
@@ -243,7 +265,7 @@ func checkTimelineHydrationChunking(t *testing.T, open func(*testing.T) *Store) 
 		require.NoError(t, err)
 		placements = append(placements, TimelinePlacement{NodeID: node.ID, VersionID: node.CurrentVersionID, EventID: record.Events[0].EventID})
 	}
-	for _, tc := range []struct{ count, statements int }{{1, 4}, {401, 8}} {
+	for _, tc := range []struct{ count, statements int }{{1, 5}, {401, 10}} {
 		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			q := &timelineCountingQuerier{metadataQuerier: tx}
 			items, err := s.hydrateTimelineItems(ctx, q, placements[:tc.count], false)
@@ -399,4 +421,18 @@ func checkTimelineHydrationStalePeopleHeads(t *testing.T, open func(*testing.T) 
 	check(0) // Resolver rebuild advances the production binding fence.
 	publishPeople()
 	check(1)
+}
+
+func TestTimelineSafeCandidateMixedSensitivity(t *testing.T) {
+	actor := document.DocumentEventActorV1{ActorKey: "email:a@example.test", Role: "author"}
+	safe := document.DocumentEventV1{EvidenceKind: "source_metadata", EvidenceID: "synthetic", Actors: []document.DocumentEventActorV1{actor}}
+	private := safe
+	private.Sensitive = true
+	o := PersonCandidateOccurrence{Role: "author", EvidenceKind: "source_metadata", EvidenceID: "synthetic"}
+	for _, events := range [][]document.DocumentEventV1{{safe, private}, {private, safe}} {
+		_, matched, _ := matchCandidateOccurrence(events, actor.ActorKey, o, true)
+		require.False(t, matched)
+		_, matched, _ = matchCandidateOccurrence(events, actor.ActorKey, o, false)
+		require.True(t, matched)
+	}
 }

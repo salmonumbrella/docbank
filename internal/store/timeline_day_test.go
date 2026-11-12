@@ -81,6 +81,27 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
+	onePage := req
+	onePage.Limit = 10
+	for i := range 9 {
+		onePage.Date = date.AddDays(i)
+		page, err := svc.TimelineDay(ctx, "owner", onePage)
+		require.NoError(t, err)
+		require.Empty(t, page.NextCursor)
+		require.Equal(t, snapshotCacheStats{}, svc.stats())
+	}
+	if s.postgresSchema == "" {
+		search, err := svc.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 1})
+		require.NoError(t, err)
+		require.NotEmpty(t, search.NextCursor)
+		for i := range 9 {
+			onePage.Date = date.AddDays(i)
+			_, err := svc.TimelineDay(ctx, "owner", onePage)
+			require.NoError(t, err)
+		}
+		_, err = svc.Page(ctx, "owner", search.SnapshotID, search.NextCursor)
+		require.NoError(t, err)
+	}
 	var saved SavedQuery
 	if s.postgresSchema == "" {
 		saved, err = s.CreateSavedQuery(ctx, "Frozen scope", "", SavedQueryKindQuery, []byte(`{}`))

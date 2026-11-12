@@ -159,24 +159,9 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		c := &facts.Candidates[i]
 		c.OccurrenceLabels = make(map[PersonCandidateOccurrence]string)
 		c.Occurrences = slices.DeleteFunc(c.Occurrences, func(o PersonCandidateOccurrence) bool {
-			if safe && o.Role == "blind_copy" {
-				return true
-			}
-			found := false
-			for _, event := range events {
-				for _, actor := range event.Actors {
-					kind, id := actor.EvidenceKind, actor.EvidenceID
-					if kind == "" {
-						kind, id = event.EvidenceKind, event.EvidenceID
-					}
-					if actor.ActorKey == c.ActorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
-						if safe && (event.Sensitive || actor.Sensitive) {
-							return true
-						}
-						found = true
-						c.OccurrenceLabels[o] = (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel()
-					}
-				}
+			label, found, seen := matchCandidateOccurrence(events, c.ActorKey, o, safe)
+			if seen {
+				c.OccurrenceLabels[o] = label
 			}
 			return !found
 		})
@@ -248,4 +233,29 @@ func (s *Store) factsVersionTx(ctx context.Context, tx *sql.Tx, versionID string
 		return ContentVersion{}, false, ErrNotFound
 	}
 	return version, true, nil
+}
+
+// matchCandidateOccurrence uses the current event evidence; any sensitive match
+// excludes the occurrence from safe views, regardless of event order.
+func matchCandidateOccurrence(events []document.DocumentEventV1, actorKey string, o PersonCandidateOccurrence, safe bool) (string, bool, bool) {
+	if safe && o.Role == "blind_copy" {
+		return "", false, false
+	}
+	found, label := false, ""
+	for _, event := range events {
+		for _, actor := range event.Actors {
+			kind, id := actor.EvidenceKind, actor.EvidenceID
+			if kind == "" {
+				kind, id = event.EvidenceKind, event.EvidenceID
+			}
+			if actor.ActorKey == actorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
+				if safe && (event.Sensitive || actor.Sensitive) {
+					return label, false, found
+				}
+				found = true
+				label = (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel()
+			}
+		}
+	}
+	return label, found, found
 }

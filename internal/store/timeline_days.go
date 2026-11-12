@@ -129,7 +129,7 @@ func timelinePlacedSQL(population compiledQueryFragment, generation string, scop
 	if hidden {
 		hiddenPredicate = " AND " + personVersionVisibleSQL("cv.version_id")
 	}
-	duplicate := `, dedup AS (SELECT placed.*,1 AS duplicate_rank FROM placed WHERE placement_rank=1)`
+
 	sqlText := `WITH days(day,start_key,end_key) AS (VALUES ` + strings.Join(values, ",") + `),
  keys AS (
  SELECT k.*,0 AS tier FROM document_date_keys k WHERE k.utc_key>=` + keyMarks[0] + ` AND k.utc_key<` + keyMarks[1] + `
@@ -141,8 +141,9 @@ func timelinePlacedSQL(population compiledQueryFragment, generation string, scop
  JOIN content_versions cv ON cv.version_id=h.content_version_id JOIN nodes n ON n.id=cv.node_id JOIN population m ON m.content_version_id=cv.version_id
  JOIN days d ON ((k.tier=0 AND k.utc_key>=d.start_key AND k.utc_key<d.end_key) OR (k.tier IN (1,2) AND k.civil_date<=d.day AND k.civil_end_date>=d.day) OR (k.tier=3 AND ((k.precision='month' AND k.civil_month=substr(d.day,1,7)) OR (k.precision='year' AND k.civil_year=substr(d.day,1,4)))))
  WHERE ` + currentDocumentDateHead + ` AND ` + eligible + hiddenPredicate + `
- ), placed AS (SELECT eligible.*,ROW_NUMBER() OVER (PARTITION BY day,version_id ORDER BY tier,COALESCE(utc_key,axis_key),event_id) placement_rank FROM eligible)` + duplicate
-	fragment := compiledQueryFragment{sql: `SELECT * FROM (` + sqlText + ` ` + tail(binds) + `) timeline_result`, args: binds.args, relations: population.relations}
+ ), placed AS (SELECT eligible.*,ROW_NUMBER() OVER (PARTITION BY day,version_id ORDER BY tier,COALESCE(utc_key,axis_key),event_id) placement_rank FROM eligible)`
+	tailSQL := tail(binds)
+	fragment := compiledQueryFragment{sql: `SELECT * FROM (` + sqlText + ` ` + tailSQL + `) timeline_result`, args: binds.args, relations: population.relations}
 	// bindQueryPopulation adds required shared query relations before this nested WITH.
 	return bindQueryPopulation(fragment, scope.Coverage, generation)
 }
@@ -158,13 +159,31 @@ func (s *Store) withTimelineRead(ctx context.Context, fn func(metadataQuerier, s
 	})
 }
 
-func (s *Store) timelinePopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection) (compiledQueryFragment, error) {
-	if s.postgresSchema == "" {
-		return documentSnapshotPopulation(ctx, q, compiled, generation, coverage)
+func (s *Store) timelinePopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, hidden bool) (compiledQueryFragment, error) {
+	collapse := compiled.Query.Filters.CollapseDuplicates
+	if hidden {
+		compiled.Query.Filters.CollapseDuplicates = false
 	}
-	population := selectCompiledPopulation(compiledQueryFragment{}, compiled.Query.Filters.CollapseDuplicates)
-	if len(population.args) != 0 || population.relations != 0 {
+	var population compiledQueryFragment
+	var err error
+	if s.postgresSchema == "" {
+		population, err = documentSnapshotPopulation(ctx, q, compiled, generation, coverage)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+	} else {
+		population = selectCompiledPopulation(compiledQueryFragment{}, compiled.Query.Filters.CollapseDuplicates)
+	}
+	if s.postgresSchema != "" && (len(population.args) != 0 || population.relations != 0) {
 		return compiledQueryFragment{}, errors.New("unscoped timeline population requires query dependencies")
+	}
+	if hidden {
+		members := `SELECT m.node_id,m.content_version_id,cv.blob_hash,n.modified_at FROM (` + population.sql + `) m JOIN content_versions cv ON cv.version_id=m.content_version_id JOIN nodes n ON n.id=m.node_id WHERE ` + personVersionVisibleSQL("m.content_version_id")
+		if collapse {
+			population.sql = `SELECT node_id,content_version_id FROM (SELECT visible.*,ROW_NUMBER() OVER (PARTITION BY blob_hash ORDER BY ` + DuplicateRepresentativeOrder + `) duplicate_rank FROM (` + members + `) visible) ranked WHERE duplicate_rank=1`
+		} else {
+			population.sql = `SELECT node_id,content_version_id FROM (` + members + `) visible`
+		}
 	}
 	return population, nil
 }
@@ -219,7 +238,7 @@ func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, s
 				return err
 			}
 		}
-		population, err := s.store.timelinePopulation(scoped, q, compiled, generation, scope.Coverage)
+		population, err := s.store.timelinePopulation(scoped, q, compiled, generation, scope.Coverage, hidden)
 		if err != nil {
 			return err
 		}
@@ -240,7 +259,7 @@ func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, s
 				}
 				condition = "k.sensitive=0 AND k.date_kind IN (" + strings.Join(marks, ",") + ")"
 			}
-			return `SELECT 'd',day,COUNT(*),CAST(SUM(CASE WHEN tier=1 THEN 1 ELSE 0 END) AS BIGINT),CAST(SUM(CASE WHEN tier=2 THEN 1 ELSE 0 END) AS BIGINT) FROM dedup WHERE duplicate_rank=1 AND tier<3 GROUP BY day
+			return `SELECT 'd',day,COUNT(*),CAST(SUM(CASE WHEN tier=1 THEN 1 ELSE 0 END) AS BIGINT),CAST(SUM(CASE WHEN tier=2 THEN 1 ELSE 0 END) AS BIGINT) FROM placed WHERE placement_rank=1 AND tier<3 GROUP BY day
  UNION ALL SELECT 'm',substr(day,1,7),COUNT(DISTINCT ` + coarseIdentity + `),0,0 FROM eligible WHERE tier=3 GROUP BY substr(day,1,7)
  UNION ALL SELECT 'u','',COUNT(*),0,0 FROM population m JOIN document_event_heads h ON h.content_version_id=m.content_version_id WHERE ` + currentDocumentDateHead + visible + ` AND NOT EXISTS (SELECT 1 FROM document_date_keys k WHERE k.generation_id=h.generation_id AND ` + condition + `) ORDER BY 1,2`
 		}

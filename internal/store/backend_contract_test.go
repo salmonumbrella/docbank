@@ -24,6 +24,7 @@ type backendSuite struct {
 var backendSuites = []backendSuite{
 	{name: "timeline-day-query", postgres: "native operations", scope: "Unscoped safe current document placements and day counts; shared Query/search remains unqualified (docbank#p4dq).", scenarios: []backendScenario{
 		{"TimelineDaysUndatedAndPending", func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newTestStore) }, func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore) }},
+		{"TimelinePeopleScopeRespectsHiddenLock", func(t *testing.T) { checkTimelinePeopleScopeRespectsHiddenLock(t, newTestStore) }, func(t *testing.T) { checkTimelinePeopleScopeRespectsHiddenLock(t, newPostgresQueryStore) }},
 		{"TimelineDuplicateCollapse", func(t *testing.T) { checkTimelineDuplicateCollapse(t, newTestStore) }, func(t *testing.T) { checkTimelineDuplicateCollapse(t, newPostgresQueryStore) }},
 		{"TimelineHydrationCandidateEvidence", func(t *testing.T) { checkTimelineHydrationCandidateEvidence(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationCandidateEvidence(t, newPostgresQueryStore) }},
 		{"TimelineHydrationChunking", func(t *testing.T) { checkTimelineHydrationChunking(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationChunking(t, newPostgresQueryStore) }},

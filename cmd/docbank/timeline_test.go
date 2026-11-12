@@ -56,3 +56,10 @@ func TestTimelineCLIJSONAndTimezone(t *testing.T) {
 		require.Equal(t, tc.line == "timezone: UTC (default)\n", value["timezone_defaulted"])
 	}
 }
+
+func TestTimelineDayRejectsZeroLimitBeforeDaemon(t *testing.T) {
+	cmd := newTimelineCommand()
+	cmd.SetArgs([]string{"day", "2026-03-10", "--limit", "0"})
+	err := cmd.Execute()
+	require.ErrorContains(t, err, "limit must be between 1 and 500")
+}

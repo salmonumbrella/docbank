@@ -76,11 +76,11 @@ func TestTimelineHTTPBoundariesAndEcho(t *testing.T) {
 		resp, _ = rawJSONRequest(t, ts.URL, http.MethodPost, path, headers, `{"padding":"`+strings.Repeat("x", 2<<20)+`"}`)
 		require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 	}
-	for _, limit := range []int{0, 1, 500} {
+	for _, limit := range []int{1, 500} {
 		resp, raw := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, fmt.Sprintf(`{"query":{},"date":"2026-03-10","limit":%d}`, limit))
 		require.Equal(t, http.StatusOK, resp.StatusCode, raw)
 	}
-	for _, limit := range []int{-1, 501} {
+	for _, limit := range []int{-1, 0, 501} {
 		resp, raw := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, fmt.Sprintf(`{"query":{},"date":"2026-03-10","limit":%d}`, limit))
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode, raw)
 	}
@@ -96,9 +96,8 @@ func TestTimelineHTTPBoundariesAndEcho(t *testing.T) {
 	for _, length := range []int{2048, 2049} {
 		resp, raw := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{},"date":"2026-03-10","cursor":"`+strings.Repeat("a", length)+`"}`)
 		require.GreaterOrEqual(t, resp.StatusCode, http.StatusBadRequest, raw)
-		if length == 2048 {
-			require.Equal(t, "cursor_mismatch", decodeProblem(t, raw).Code)
-		}
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, raw)
+		require.Equal(t, "cursor_mismatch", decodeProblem(t, raw).Code)
 	}
 	_, err := catalog.CreateFile(t.Context(), catalog.RootID(), "pending.txt", strings.Repeat("a", 64), 1, "text/plain")
 	require.NoError(t, err)

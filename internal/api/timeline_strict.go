@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
+	"unicode/utf8"
 )
 
 // timelineStrictParameters rejects extra parameters before Huma decodes the
@@ -43,6 +44,16 @@ func timelineStrictParameters(next http.Handler) http.Handler {
 			for field := range fields {
 				if !allowed[field] {
 					writeError(w, NewError(http.StatusBadRequest, "unknown_parameter", "unknown timeline request member"))
+					return
+				}
+			}
+			if r.URL.Path == "/api/v1/timeline/day" {
+				if limit, ok := fields["limit"].(float64); ok && limit == 0 {
+					writeError(w, NewError(http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 500"))
+					return
+				}
+				if cursor, ok := fields["cursor"].(string); ok && utf8.RuneCountInString(cursor) > 2048 {
+					writeError(w, NewError(http.StatusBadRequest, "cursor_mismatch", "cursor exceeds the maximum length"))
 					return
 				}
 			}

@@ -685,7 +685,7 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 		err := s.withTimelineRead(readCtx, func(q metadataQuerier, generation string) error {
 			require.NotEmpty(t, generation)
 			require.NotEmpty(t, s.LeasedLexicalGenerationRoots())
-			_, err := s.timelinePopulation(readCtx, q, compiled, generation, CoverageSelection{})
+			_, err := s.timelinePopulation(readCtx, q, compiled, generation, CoverageSelection{}, false)
 			require.NoError(t, err)
 			var scratch int
 			require.NoError(t, q.QueryRowContext(readCtx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
@@ -757,17 +757,22 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 }
 
 func TestTimelinePeopleScopeRespectsHiddenLock(t *testing.T) {
-	s := newTestStore(t)
+	checkTimelinePeopleScopeRespectsHiddenLock(t, newTestStore)
+}
+
+func checkTimelinePeopleScopeRespectsHiddenLock(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Scoped Reader", "operator")
 	require.NoError(t, err)
 	var nodes []Node
-	for i, name := range []string{"open.txt", "hidden.jpg"} {
+	for i, name := range []string{"hidden.jpg", "open.txt"} {
 		mime := "text/plain"
-		if i == 1 {
+		if i == 0 {
 			mime = "image/jpeg"
 		}
-		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash(fmt.Sprintf("%x", 0xd80+i)), 1, mime)
+		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("d80"), 1, mime)
 		require.NoError(t, err)
 		nodes = append(nodes, node)
 		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
@@ -780,18 +785,42 @@ func TestTimelinePeopleScopeRespectsHiddenLock(t *testing.T) {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "speaker", Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
-	asset, err := s.PhotoAssetForNode(ctx, nodes[1].ID)
+	asset, err := s.PhotoAssetForNode(ctx, nodes[0].ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
+	for i, name := range []string{"hidden-undated.jpg", "open-undated.txt"} {
+		mime := "text/plain"
+		if i == 0 {
+			mime = "image/jpeg"
+		}
+		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("d81"), 1, mime)
+		require.NoError(t, err)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "d82")
+		record.Events[0].Sensitive = true
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "speaker", Action: "assert", Revision: 1})
+		require.NoError(t, err)
+		if i == 0 {
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+		}
+	}
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	scope := TimelineScope{Query: snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"person_ids":[%q]}}`, person.PersonID)), Zone: "UTC"}
+	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
+	if s.postgresSchema == "" {
+		scope.Query = snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"person_ids":[%q]}}`, person.PersonID))
+	}
 	for _, tc := range []struct {
 		ctx    context.Context
 		hidden bool
@@ -803,9 +832,24 @@ func TestTimelinePeopleScopeRespectsHiddenLock(t *testing.T) {
 		days, err := svc.TimelineDays(tc.ctx, "owner", scope, date, date)
 		require.NoError(t, err)
 		require.EqualValues(t, tc.want, days.Days[0].Count)
-		page, err := svc.TimelineDay(tc.ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10, HiddenLocked: tc.hidden})
+		require.EqualValues(t, tc.want, days.Undated)
+		page, err := svc.TimelineDay(tc.ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10, HiddenLocked: !tc.hidden})
 		require.NoError(t, err)
 		require.Len(t, page.DateOnly, tc.want)
-		require.Equal(t, nodes[0].ID, page.DateOnly[0].NodeID)
+		if tc.hidden {
+			require.Equal(t, nodes[1].ID, page.DateOnly[0].NodeID)
+		}
+		collapsed := scope
+		collapsed.Query.Filters.CollapseDuplicates = true
+		days, err = svc.TimelineDays(tc.ctx, "owner", collapsed, date, date)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, days.Days[0].Count)
+		require.EqualValues(t, 1, days.Undated)
+		page, err = svc.TimelineDay(tc.ctx, "owner", TimelineDayRequest{Scope: collapsed, Date: date, Limit: 10, HiddenLocked: !tc.hidden})
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, 1)
+		if tc.hidden {
+			require.Equal(t, nodes[1].ID, page.DateOnly[0].NodeID)
+		}
 	}
 }

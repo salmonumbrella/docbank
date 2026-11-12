@@ -248,6 +248,9 @@ and hour ticks. Both return the selected time zone and whether the request
 used the configured default. Exact instants use the zone's civil-day bounds;
 floating and date-only claims retain their written civil dates. A document is
 placed once per day, preferring exact, floating, date-only, then coarse claims.
+People entries include every current msgvault archive and UID link. A person
+with multiple links appears once per link; consumers can group entries by
+person ID for display.
 
 Both routes use safe disclosure for date claims and person matching, including
 saved searches. SQLite supports the shared Query filters. PostgreSQL currently
@@ -262,7 +265,7 @@ or unavailable current attempt is neither placed nor counted as undated. On a
 successful response `pending_versions` is zero. Undated counts cover only
 successfully indexed current versions without a usable safe claim.
 
-The first day request freezes its result in the query snapshot cache. Its
-owner-bound cursor pages timed items; date-only and coarse strips are capped at
+A day request with more timed items than its limit freezes its result in the
+query snapshot cache. Its owner-bound cursor pages timed items; date-only and coarse strips are capped at
 200 and appear only on the first page. A changed scope or Hidden lock state
 invalidates the cursor. Expired or revoked snapshots return `snapshot_gone`.
