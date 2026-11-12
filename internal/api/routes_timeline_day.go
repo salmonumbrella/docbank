@@ -39,7 +39,11 @@ func timelineInput(d Deps, raw QueryPayload, zone *string, kinds []string) (stor
 			return store.TimelineScope{}, NewError(http.StatusBadRequest, "invalid_date_kind", "unknown date kind")
 		}
 	}
-	return store.TimelineScope{Query: value, Zone: name, Defaulted: zone == nil, DateKinds: kinds}, nil
+	coverage, err := workspaceQueryCoverage(d, false, "")
+	if err != nil {
+		return store.TimelineScope{}, err
+	}
+	return store.TimelineScope{Query: value, Zone: name, Defaulted: zone == nil, DateKinds: kinds, Coverage: coverage}, nil
 }
 func timelineDate(value string) (civil.Date, error) {
 	date, err := civil.ParseDate(value)

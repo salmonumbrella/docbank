@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 
@@ -44,7 +43,7 @@ func timelineBindList(placements []TimelinePlacement) (string, []any) {
 
 // hydrateTimelineItems reads each group of versions in bounded statements;
 // candidate evidence is fetched by bounded fresh-actor keys.
-func (s *Store) hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []TimelinePlacement, hideLocked bool) ([]TimelineItem, error) {
+func (s *Store) hydrateTimelineItems(ctx context.Context, q metadataQuerier, placements []TimelinePlacement, hideLocked bool) ([]TimelineItem, error) {
 	result := make([]TimelineItem, len(placements))
 	byVersion := make(map[string]int, len(placements))
 	events := make(map[string][]document.DocumentEventV1, len(placements))
@@ -62,7 +61,7 @@ func (s *Store) hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements
 		if hideLocked {
 			hide = "1"
 		}
-		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE dirs(dir_id,id,parent_id,path) AS (
+		rows, err := q.QueryContext(ctx, `WITH RECURSIVE dirs(dir_id,id,parent_id,path) AS (
    SELECT n.id,n.id,n.parent_id,n.name FROM nodes n WHERE n.id IN (SELECT parent_id FROM nodes WHERE current_version_id IN (`+marks+`))
    UNION ALL SELECT d.dir_id,n.id,n.parent_id,CASE WHEN n.name='' THEN '/'||d.path ELSE n.name||'/'||d.path END FROM nodes n JOIN dirs d ON n.id=d.parent_id
   ) SELECT cv.version_id,n.name,CASE WHEN dirs.path='/' THEN '/'||n.name ELSE dirs.path||'/'||n.name END,COALESCE(cv.mime_type,''),cv.blob_hash,cv.size,g.canonical_json,
@@ -117,7 +116,7 @@ func (s *Store) hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements
    UNION SELECT p.content_version_id,COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role,p.raw_label,1 FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id JOIN content_versions cv ON cv.version_id=p.content_version_id JOIN nodes n ON n.id=cv.node_id CROSS JOIN document_people_state ps WHERE p.content_version_id IN (` + marks + `) AND ` + currentPersonPublishedFence(true, hide, fingerprint) + `
   ) e JOIN persons person ON person.person_id=e.person_id LEFT JOIN person_external_identities ext ON ext.person_id=e.person_id AND ext.system='msgvault' AND ext.uid_state='current'
   ORDER BY e.version_id,e.person_id,e.derived,e.role,e.raw_label,ext.archive_id,ext.uid`
-		rows, err = tx.QueryContext(ctx, sqlText, args...)
+		rows, err = q.QueryContext(ctx, sqlText, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -165,7 +164,7 @@ func (s *Store) hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements
 			}
 		}
 	}
-	candidates, err := s.openCandidatesForVersions(ctx, tx, versions, actorKeys)
+	candidates, err := s.openCandidatesForVersions(ctx, q, versions, actorKeys)
 	if err != nil {
 		return nil, err
 	}

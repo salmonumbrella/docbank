@@ -1,8 +1,11 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	_ "time/tzdata"
 
@@ -524,4 +527,86 @@ func checkTimelineDuplicateCollapse(t *testing.T, open func(*testing.T) *Store) 
 		require.NoError(t, err)
 		require.Equal(t, []TimelineDayCount{{Date: date.String(), Count: 1, DateOnly: 1}}, days.Days)
 	}
+}
+
+// Exercise D's composition with the existing pinned population owner.
+func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
+	s := newTestStore(t)
+	s.db.SetMaxOpenConns(1)
+	ctx := t.Context()
+	var nodes []Node
+	for i := range 2 {
+		seed := fmt.Sprintf("%x", 0xe00+i)
+		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("population-%d.txt", i), fakeHash(seed), 1, "text/plain")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		e := &record.Events[0]
+		e.DateValue, e.RawValue, e.Precision, e.AxisKey = "2019-03-04T09:30:00", "2019-03-04T09:30:00", "second", "2019-03-04T09:30:00.000000000"
+		e.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, e.SourceKey, e.DateKind, e.DateValue, e.Precision, e.TimezoneKind, e.EvidenceSHA256)
+		record.Primaries[0].EventID = e.EventID
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+	}
+	roles := `["author","last_saved_by","custodian","sender","recipient","copied","organizer","attendee","participant","speaker","depicted"]`
+	entries := make([]string, 64)
+	for i := range entries {
+		person, err := s.CreatePerson(ctx, fmt.Sprintf("Budget Person %02d", i), "operator")
+		require.NoError(t, err)
+		for _, node := range nodes {
+			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "speaker", Action: "assert", Revision: 1})
+			require.NoError(t, err)
+		}
+		entries[i] = fmt.Sprintf(`{"person_id":%q,"roles":%s}`, person.PersonID, roles)
+	}
+	profile := catalogProcessingProfile(t, false)
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { return ensureProcessingProfileTx(ctx, tx, profile) }))
+	coverage := CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	for _, personScope := range []bool{false, true} {
+		filters := ""
+		if personScope {
+			filters = `,"filters":{"people":[` + strings.Join(entries, ",") + `]}`
+		}
+		value := snapshotTestQuery(t, `{"syntax":"advanced","text":"text_coverage:unprocessed"`+filters+`}`)
+		scope := TimelineScope{Query: value, Zone: "UTC", Coverage: coverage}
+		days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
+		require.NoError(t, err)
+		require.EqualValues(t, 2, days.Days[0].Count)
+		page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, page.Items, 1)
+		require.Equal(t, nodes[0].ID, page.Items[0].NodeID)
+		require.NotEmpty(t, page.NextCursor)
+		scope.Coverage = CoverageSelection{}
+		_, err = svc.TimelineDays(ctx, "owner", scope, date, date)
+		require.ErrorIs(t, err, ErrInvalidCoverageSelection)
+		_, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
+		require.ErrorIs(t, err, ErrInvalidCoverageSelection)
+		var scratch int
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
+		require.Zero(t, scratch)
+		if personScope {
+			_, _, err = s.Trash(ctx, nodes[1].ID, UnconditionalRev)
+			require.NoError(t, err)
+			continuation, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1, Cursor: page.NextCursor})
+			require.NoError(t, err)
+			require.Len(t, continuation.Items, 1)
+			require.Equal(t, nodes[1].ID, continuation.Items[0].NodeID)
+		}
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = svc.TimelineDays(cancelled, "owner", TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, date, date)
+	require.ErrorIs(t, err, context.Canceled)
+	var scratch int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
+	require.Zero(t, scratch)
 }

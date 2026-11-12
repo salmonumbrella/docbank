@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
@@ -182,12 +181,12 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 	}
 	page := TimelineDayPage{Bounds: bounds, Zone: req.Scope.Zone, Defaulted: req.Scope.Defaulted, Items: []TimelineItem{}, DateOnly: []TimelineItem{}, MonthOnly: []TimelineItem{}}
 	var timed []TimelineItem
-	err = s.store.withReadTx(buildCtx, func(tx *sql.Tx) error {
+	err = s.store.withTimelineRead(buildCtx, func(q metadataQuerier, generation string) error {
 		browser, _ := buildCtx.Value(visiblePersonContextKey{}).(bool)
 		scoped := buildCtx
 		if browser {
 			var err error
-			scoped, err = s.store.scopeQueryPeople(scoped, tx)
+			scoped, err = s.store.scopeQueryPeople(scoped, q)
 			if err != nil {
 				return err
 			}
@@ -197,28 +196,32 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 		}
 		scoped = WithVisiblePeopleOnly(WithQueryDefaultTimezone(scoped, req.Scope.Zone))
 		scoped = context.WithValue(scoped, queryPeopleHiddenKey{}, req.HiddenLocked)
-		if err := requireDocumentDateIndex(scoped, tx); err != nil {
+		if err := requireDocumentDateIndex(scoped, q); err != nil {
 			return err
 		}
 		postgres := s.store.postgresSchema != ""
-		generation := ""
 		compiled := CompiledQuery{Query: req.Scope.Query}
 		if !postgres {
-			generation, err = collectionGenerationTx(scoped, tx)
-			if err != nil {
-				return err
+			if req.Scope.Coverage.Configuration == "configured" {
+				if err := validateSnapshotCoverageProfile(scoped, q, req.Scope.Coverage); err != nil {
+					return err
+				}
 			}
-			compiled, err = (queryCompiler{}).compile(scoped, req.Scope.Query, queryResolver{q: tx})
+			compiled, err = (queryCompiler{}).compile(scoped, req.Scope.Query, queryResolver{q: q})
 			if err != nil {
 				return err
 			}
 		}
-		tail := `SELECT node_id,version_id,generation_id,event_id,tier,axis_key,COALESCE(utc_key,''),civil_end_date FROM (SELECT dedup.*,ROW_NUMBER() OVER (PARTITION BY tier ORDER BY civil_date,node_id) strip_rank FROM dedup WHERE duplicate_rank=1) ranked WHERE tier<2 OR strip_rank<=201 ORDER BY tier,axis_key,node_id`
-		statement, args, err := timelinePlacedSQL(compiled, generation, req.Scope, req.Date, req.Date, loc, req.HiddenLocked, postgres, func(*timelineBinds) string { return tail })
+		population, err := s.store.timelinePopulation(scoped, q, compiled, generation, req.Scope.Coverage)
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(scoped, statement, args...)
+		tail := `SELECT node_id,version_id,generation_id,event_id,tier,axis_key,COALESCE(utc_key,''),civil_end_date FROM (SELECT dedup.*,ROW_NUMBER() OVER (PARTITION BY tier ORDER BY civil_date,node_id) strip_rank FROM dedup WHERE duplicate_rank=1) ranked WHERE tier<2 OR strip_rank<=201 ORDER BY tier,axis_key,node_id`
+		statement, args, err := timelinePlacedSQL(population, generation, req.Scope, req.Date, req.Date, loc, req.HiddenLocked, postgres, func(*timelineBinds) string { return tail })
+		if err != nil {
+			return err
+		}
+		rows, err := q.QueryContext(scoped, statement, args...)
 		if err != nil {
 			return err
 		}
@@ -266,7 +269,7 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		items, err := s.store.hydrateTimelineItems(scoped, tx, placements, req.HiddenLocked)
+		items, err := s.store.hydrateTimelineItems(scoped, q, placements, req.HiddenLocked)
 		if err != nil {
 			return err
 		}
