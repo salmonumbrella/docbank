@@ -97,6 +97,10 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 		_, err = s.UpdateSavedQuery(ctx, saved.ID, saved.Revision, SavedQueryPatch{Payload: &payload})
 		require.NoError(t, err)
 	}
+	person, err := s.CreatePerson(ctx, "Newly assigned", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: nodes[1].CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, first.Items[0].NodeID, UnconditionalRev)
 	require.NoError(t, err)
 	_, _, err = s.Move(ctx, nodes[1].ID, s.RootID(), "renamed.txt", nodes[1].Revision)
@@ -118,6 +122,7 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	req.Cursor = first.NextCursor
 	for name, change := range map[string]func(*TimelineDayRequest){
 		"limit":    func(r *TimelineDayRequest) { r.Limit = 2 },
+		"query":    func(r *TimelineDayRequest) { r.Scope.Query.Mode = "semantic" },
 		"date":     func(r *TimelineDayRequest) { r.Date = r.Date.AddDays(1) },
 		"kinds":    func(r *TimelineDayRequest) { r.Scope.DateKinds = []string{"created"} },
 		"hidden":   func(r *TimelineDayRequest) { r.HiddenLocked = true },
@@ -146,6 +151,7 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	require.Equal(t, "a2.txt", second.Items[0].Name)
 	require.Equal(t, "/a2.txt", second.Items[0].Path)
 	require.Equal(t, "2019-03-04T09:30:00", second.Items[0].Event.DateValue)
+	require.Empty(t, second.Items[0].People)
 	require.Empty(t, second.NextCursor)
 	_, err = svc.TimelineDay(ctx, "other", req)
 	require.ErrorIs(t, err, ErrTimelineCursorMismatch)
