@@ -31367,6 +31367,8 @@ type PersonFacePreview = store.PersonFacePreview
 
 type PersonFacePreviewPage = store.PersonFacePreviewPage
 
+type PersonFilter = query.PersonFilter
+
 type PersonIdentity = api.PersonIdentity
 
 type PersonMergeMovedCounts = api.PersonMergeMovedCounts
@@ -31929,6 +31931,7 @@ type SavedQueryFiltersSchema struct {
 	ModifiedBefore       *time.Time                             `json:"modified_before,omitempty"`
 	NoTags               *bool                                  `json:"no_tags,omitempty"`
 	Paths                []string                               `json:"paths,omitempty"`
+	People               []SavedQueryPersonFilterSchema         `json:"people,omitempty"`
 	PersonIds            []uuid.UUID                            `json:"person_ids,omitempty"`
 	RatingMax            *int64                                 `json:"rating_max,omitempty"`
 	RatingMin            *int64                                 `json:"rating_min,omitempty"`
@@ -31948,6 +31951,11 @@ type SavedQueryFiltersSchema_GpsBounds struct {
 }
 
 type SavedQueryPage = api.SavedQueryPage
+
+type SavedQueryPersonFilterSchema struct {
+	PersonID uuid.UUID `json:"person_id"`
+	Roles    []string  `json:"roles"`
+}
 
 type SavedQueryRun = api.SavedQueryRun
 
