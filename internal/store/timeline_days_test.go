@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -667,4 +668,46 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, node.ID, page.DateOnly[0].NodeID)
 	require.Empty(t, s.LeasedLexicalGenerationRoots())
+
+	// Exercise D's pinned read and person-edge preparation while a published
+	// generation is leased. The cancellation happens after TEMP is populated.
+	_, err = s.CreatePerson(ctx, "Absent Reader", "operator")
+	require.NoError(t, err)
+	compiled := compileFixtureQuery(t, s, `NOT author:"Absent Reader"`, query.Filters{})
+	s.db.SetMaxOpenConns(1)
+	boom := errors.New("synthetic timeline read failure")
+	for _, outcome := range []string{"success", "error", "cancel"} {
+		readCtx, cancel := context.WithCancel(ctx)
+		err := s.withTimelineRead(readCtx, func(q metadataQuerier, generation string) error {
+			require.NotEmpty(t, generation)
+			require.NotEmpty(t, s.LeasedLexicalGenerationRoots())
+			_, err := s.timelinePopulation(readCtx, q, compiled, generation, CoverageSelection{})
+			require.NoError(t, err)
+			var scratch int
+			require.NoError(t, q.QueryRowContext(readCtx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
+			require.Equal(t, 1, scratch)
+			switch outcome {
+			case "error":
+				return boom
+			case "cancel":
+				cancel()
+				return readCtx.Err()
+			default:
+				return nil
+			}
+		})
+		cancel()
+		switch outcome {
+		case "success":
+			require.NoError(t, err)
+		case "error":
+			require.ErrorIs(t, err, boom)
+		case "cancel":
+			require.ErrorIs(t, err, context.Canceled)
+		}
+		require.Empty(t, s.LeasedLexicalGenerationRoots())
+		var scratch int
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
+		require.Zero(t, scratch)
+	}
 }
