@@ -1,6 +1,6 @@
 ---
 title: Contracts
-description: Register agreements, dates, terms, and reusable parties.
+description: Register agreements and parties, send DocuSeal templates, and inspect local signing history.
 ---
 
 # Contracts
