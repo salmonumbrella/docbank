@@ -500,3 +500,22 @@ func TestTermReportSelectedAdmission(t *testing.T) {
 	_, err = capture(request)
 	require.ErrorIs(t, err, ErrReportSelectionChanged)
 }
+
+func TestTermReportPreparedPopulationIntersectsCollectionScope(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	first := createCollectionRun(t, s, "alpha.txt", "prepared-report-alpha")
+	_ = createCollectionRun(t, s, "beta.txt", "prepared-report-beta")
+	request := termFrameRequest()
+	request.AllDocuments = false
+	request.CollectionIDs = []string{first.ID()}
+	request.Terms = request.Terms[:1]
+	request.Terms[0].Syntax = "advanced"
+	request.Terms[0].Expression = `name:alpha AND NOT path:/missing AND NOT has_duplicates:true`
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	frame, err := s.MaterializeTermReportFrame(t.Context(), request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.NoError(t, err)
+	require.Len(t, frame.Members, 1)
+	require.Equal(t, []bool{true}, frame.Members[0].RawMatches)
+}
