@@ -2646,6 +2646,7 @@
     return !!(
       naturalProfile &&
       searchSyntax === "simple" &&
+      query.sort.field !== "document_date" &&
       query.text.trim() &&
       (options?.page_size ?? 100) === 100 &&
       (!options?.profile || options.profile === naturalProfile.name) &&
