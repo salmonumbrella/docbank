@@ -51,7 +51,9 @@ func main() {
 		if len(os.Args) != 4 {
 			panic("usage: document-facts-fixture head <vault> <version>")
 		}
-		printHead(os.Args[2], os.Args[3])
+		// The fixture is a one-shot command with no caller context, so the
+		// root context starts here and is passed to every store read.
+		printHead(context.Background(), os.Args[2], os.Args[3])
 	default:
 		panic("unknown mode " + os.Args[1])
 	}
@@ -126,8 +128,7 @@ type headWitness struct {
 // printHead reads the selected canonical event generation for one exact
 // version. Safe marks the events the API's safe disclosure keeps, decided by
 // the same document.EventHasSensitiveEvidence predicate the route applies.
-func printHead(vault, version string) {
-	ctx := context.Background()
+func printHead(ctx context.Context, vault, version string) {
 	s, err := store.Open(ctx, home.Layout{Root: vault}.DBPath())
 	check(err)
 	defer func() { check(s.Close()) }()

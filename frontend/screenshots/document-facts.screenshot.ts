@@ -49,6 +49,10 @@ const reviewEmail = [
   "",
 ].join("\r\n");
 const SENT_AT = "2026-03-11T03:40:00Z";
+// The same instant as the retained event stores it: document.EventUTCKey
+// (document/events_keys.go) always writes nine fraction digits, while the API's
+// when.at is trimmed RFC 3339.
+const SENT_UTC_KEY = "2026-03-11T03:40:00.000000000Z";
 const calendar = (start: string, end: string) =>
   [
     "BEGIN:VCALENDAR",
@@ -484,7 +488,7 @@ test("shows document dates and people in the inspector and both tables", async (
       const fence = (head: Head) =>
         JSON.stringify(Object.entries(head).filter(([key]) => key !== "events"));
       const retainedSent = before.events.find(
-        (item) => item.date_kind === "sent" && item.utc_key === SENT_AT,
+        (item) => item.date_kind === "sent" && item.utc_key === SENT_UTC_KEY,
       );
       const closure = {
         exactVersion: [
