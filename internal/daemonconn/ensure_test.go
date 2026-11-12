@@ -234,6 +234,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without contract routes must be replaced")
 	rec.Metadata[metaProtocolVersion] = "129" // Before integrated signing routes.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without integrated signing routes must be replaced")
+	rec.Metadata[metaProtocolVersion] = "130" // Before signature request routes.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without signature request routes must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")

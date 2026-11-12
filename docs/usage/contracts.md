@@ -133,7 +133,8 @@ the integration is disabled. Backups include signer names and email addresses.
 Only one request may be open for a contract. A confirmed send moves a draft to
 `pending_signature`, preserving concurrent edits. Other contract statuses stay
 unchanged. If the provider outcome is unknown, the request stays `creating`;
-inspect its ID before retrying and do not send another invitation blindly.
+run `docbank contract sign status <contract-id>` before retrying and do not send
+another invitation blindly.
 Archive requests in DocuSeal manually. Deleting a contract is refused while a
 request is open; terminal request history is removed with the contract, while
 stored documents remain. Signature mutations are refused in audited vaults.

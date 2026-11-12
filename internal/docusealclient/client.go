@@ -332,7 +332,7 @@ func (c *Client) CreateSubmission(ctx context.Context, id int64, signers []Submi
 		return SubmissionReceipt{}, ErrCreationUnknown
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
 			return SubmissionReceipt{}, ErrCreationFailed
 		}

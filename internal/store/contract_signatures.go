@@ -67,7 +67,7 @@ func validSignatureText(s string, n int, empty bool) bool {
 	return len(s) <= n && (empty || s != "") && document.ValidPersonIdentityText(s)
 }
 func ValidSignatureSigner(s SignatureSignerInput) bool {
-	if !validSignatureText(s.Role, 4096, false) || !validSignatureText(s.Name, 512, true) || len(s.Email) > 1016 || utf8.RuneCountInString(s.Email) > 254 || !document.ValidPersonIdentityText(s.Email) || strings.TrimSpace(s.Email) != s.Email {
+	if !validSignatureText(s.Role, 4096, false) || !validSignatureText(s.Name, 512, true) || len(s.Email) > 1016 || utf8.RuneCountInString(s.Email) > 254 {
 		return false
 	}
 	return document.ValidBarePersonEmail(s.Email)

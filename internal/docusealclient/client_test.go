@@ -385,6 +385,7 @@ func TestSubmissionOutcomeClassification(t *testing.T) {
 		{"unprocessable", 422, "private diagnostic", ErrCreationFailed},
 		{"rate limited", 429, "private diagnostic", ErrCreationFailed},
 		{"wrong success", 201, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key"}]`, ErrCreationUnknown},
+		{"accepted without receipt confirmation", 202, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key"}]`, ErrCreationUnknown},
 		{"malformed receipt", 200, `{}`, ErrCreationUnknown},
 		{"wrong external id", 200, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"other"}]`, ErrCreationUnknown},
 		{"valid receipt", 200, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key","embed_src":"private-link"}]`, nil},

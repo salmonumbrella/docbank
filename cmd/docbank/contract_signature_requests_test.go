@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestSignatureSignerParsing(t *testing.T) {
@@ -22,4 +26,43 @@ func TestSignatureSignerParsing(t *testing.T) {
 		require.Error(t, err)
 		require.NotContains(t, err.Error(), "a@example.com")
 	}
+}
+
+func TestSignatureRequestLostReplyGuidesHistory(t *testing.T) {
+	const contractID = "11111111-1111-4111-8111-111111111111"
+	var posts atomic.Int32
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/contracts/"+contractID+"/signature-requests" {
+			http.NotFound(w, r)
+			return
+		}
+		posts.Add(1)
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("response cannot be disconnected")
+			return
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_ = conn.Close()
+	})
+	_, err := runCLI(t, "contract", "sign", "request", contractID, "--revision", "1", "--template", "7", "--signer", "Signer=signer@example.com:Example")
+	require.ErrorContains(t, err, "signature request outcome unknown")
+	require.ErrorContains(t, err, "docbank contract sign status "+contractID+" before retrying")
+	require.EqualValues(t, 1, posts.Load())
+}
+
+func TestSignatureRequestDisclosureAndOutput(t *testing.T) {
+	cmd := newSignatureRequestCommand()
+	require.Contains(t, cmd.Long, "roles, names, and email addresses")
+	require.Contains(t, cmd.Long, "no document bytes")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	request := store.SignatureRequest{SignatureRequestSummary: store.SignatureRequestSummary{RequestID: "request", State: "sent", Revision: 1, EndpointOrigin: "https://sign.example.test", TemplateName: "Example template"}}
+	require.NoError(t, printSignatureRequest(cmd, request, false))
+	require.Contains(t, out.String(), "https://sign.example.test")
+	require.Contains(t, out.String(), "Example template")
 }

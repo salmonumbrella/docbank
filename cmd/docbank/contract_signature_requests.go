@@ -46,7 +46,7 @@ func printSignatureRequest(cmd *cobra.Command, v store.SignatureRequest, asJSON 
 	if asJSON {
 		return writeCLIJSON(cmd.OutOrStdout(), v)
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\trevision %d\n", v.RequestID, v.State, v.Revision); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%q\t%q\trevision %d\n", v.RequestID, v.State, v.EndpointOrigin, v.TemplateName, v.Revision); err != nil {
 		return fmt.Errorf("write signature request: %w", err)
 	}
 	for _, s := range v.Signers {
@@ -60,7 +60,7 @@ func newSignatureRequestCommand() *cobra.Command {
 	var template, revision int64
 	var signers []string
 	var asJSON bool
-	cmd := &cobra.Command{Use: "request <contract-id>", Short: "Send a template for signature", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "request <contract-id>", Short: "Send a template for signature", Long: "Send signer roles, names, and email addresses to DocuSeal for invitations. DocuSeal emails the signers; no document bytes are sent.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if template <= 0 || cmd.Flags().Changed("revision") && revision <= 0 {
 			return errors.New("template and revision must be positive")
 		}
@@ -87,6 +87,9 @@ func newSignatureRequestCommand() *cobra.Command {
 		if err != nil {
 			if id := daemonconn.SignatureRequestErrorID(err); id != "" {
 				return fmt.Errorf("signature request %s: outcome uncertain or failed; inspect it before retrying", id)
+			}
+			if daemonconn.IsRetryableMutationError(err) {
+				return fmt.Errorf("signature request outcome unknown; run docbank contract sign status %s before retrying: %w", args[0], err)
 			}
 			return contractMutationError("signature request", err)
 		}
