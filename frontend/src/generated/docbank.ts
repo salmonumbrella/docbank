@@ -10761,6 +10761,10 @@ modified_since?: string;
 modified_before?: string;
 };
 
+export type CancelSignatureRequestHeaders = {
+'If-Match': string;
+};
+
 export type StorageStatusParams = {
 refresh?: boolean;
 };
@@ -21871,6 +21875,45 @@ export const getSignatureRequest = async (requestId: string, options?: Parameter
     ...options,
     method: 'GET'
 
+
+  }
+);}
+
+
+
+export const getCancelSignatureRequestUrl = (requestId: string,) => {
+
+
+
+
+  return `/api/v1/signature-requests/${encodeURIComponent(String(requestId))}/cancel`
+}
+
+/**
+ * @summary Cancel a signature request
+ */
+export const cancelSignatureRequest = async (requestId: string,
+    headers: CancelSignatureRequestHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<SignatureRequest> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<SignatureRequest>(getCancelSignatureRequestUrl(requestId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}

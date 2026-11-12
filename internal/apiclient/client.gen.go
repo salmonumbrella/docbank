@@ -15144,6 +15144,52 @@ func (c *Client) GetSignatureRequest(ctx context.Context, options *GetSignatureR
 	return responseParser(ctx, resp)
 }
 
+// CancelSignatureRequest Cancel a signature request
+func (c *Client) CancelSignatureRequest(ctx context.Context, options *CancelSignatureRequestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelSignatureRequestResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/signature-requests/{request_id}/cancel",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CancelSignatureRequestResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CancelSignatureRequestResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CancelSignatureRequestResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CancelSignatureRequestErrorResponse](resp, "CancelSignatureRequestErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/signature-requests/{request_id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // StorageStatus Report loose and packed physical storage usage
 func (c *Client) StorageStatus(ctx context.Context, options *StorageStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageStatusResponse, error) {
 	var err error
@@ -27125,6 +27171,44 @@ func (o *GetSignatureRequestRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// CancelSignatureRequestRequestOptions is the options needed to make a request to CancelSignatureRequest.
+type CancelSignatureRequestRequestOptions struct {
+	PathParams *CancelSignatureRequestPath
+	Header     *CancelSignatureRequestHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CancelSignatureRequestRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CancelSignatureRequestRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CancelSignatureRequestRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *CancelSignatureRequestRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // StorageStatusRequestOptions is the options needed to make a request to StorageStatus.
 type StorageStatusRequestOptions struct {
 	Query *StorageStatusQuery
@@ -28838,6 +28922,10 @@ type RunSavedQueryHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type CancelSignatureRequestHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type DeleteTagHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -29489,6 +29577,10 @@ type ReviseTermReportPath struct {
 }
 
 type GetSignatureRequestPath struct {
+	RequestID string `json:"request_id"`
+}
+
+type CancelSignatureRequestPath struct {
 	RequestID string `json:"request_id"`
 }
 
@@ -31885,6 +31977,10 @@ type ValidateDocumentSearchErrorResponse = Error
 type GetSignatureRequestResponse = store.SignatureRequest
 
 type GetSignatureRequestErrorResponse = Error
+
+type CancelSignatureRequestResponse = store.SignatureRequest
+
+type CancelSignatureRequestErrorResponse = Error
 
 type StorageStatusResponse = api.StorageStatus
 

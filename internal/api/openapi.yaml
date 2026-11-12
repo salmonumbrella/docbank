@@ -33670,6 +33670,41 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Inspect a local signature request
+  /api/v1/signature-requests/{request_id}/cancel:
+    post:
+      operationId: cancelSignatureRequest
+      parameters:
+        - in: path
+          name: request_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignatureRequest"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Cancel a signature request
   /api/v1/storage:
     get:
       operationId: storageStatus
