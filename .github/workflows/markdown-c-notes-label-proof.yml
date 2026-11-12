@@ -1,0 +1,139 @@
+name: Disposable C Notes label proof
+
+on:
+  push:
+    branches: [build/markdown-c-notes-label-proof]
+
+permissions:
+  contents: read
+
+jobs:
+  notes-label:
+    if: github.repository == 'salmonumbrella/docbank' && github.event_name == 'push' && github.ref == 'refs/heads/build/markdown-c-notes-label-proof'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BEFORE: b9524d562c6a8a0df363d991569408cca12c5126
+      AFTER: c6eeae67b5dd8266c963d909733bdf1e77c9b566
+      DOCBANK_SCREENSHOT_SCALE: "2"
+      DOCBANK_TELEMETRY_ENABLED: "0"
+      GOFLAGS: -trimpath
+      CGO_ENABLED: "1"
+    steps:
+      - name: Check out disposable harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: proof
+          persist-credentials: false
+      - name: Check out exact before product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: b9524d562c6a8a0df363d991569408cca12c5126
+          path: before
+          persist-credentials: false
+      - name: Check out exact after product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: c6eeae67b5dd8266c963d909733bdf1e77c9b566
+          path: after
+          persist-credentials: false
+      - name: Set up Go from product go.mod
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: after/go.mod
+          cache: false
+      - name: Set up Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.22.1
+      - name: Verify immutable inputs and install locked frontend dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C before rev-parse HEAD)" = "$BEFORE"
+          test "$(git -C after rev-parse HEAD)" = "$AFTER"
+          cmp before/frontend/package-lock.json after/frontend/package-lock.json
+          cmp proof/frontend/package-lock.json after/frontend/package-lock.json
+          mkdir -p proof/evidence
+          printf 'before=%s\nafter=%s\nproof=%s\nscale=2\n' "$BEFORE" "$AFTER" "$GITHUB_SHA" > proof/evidence/inputs.txt
+          npm --prefix before/frontend ci
+          npm --prefix after/frontend ci
+          ln -s "$GITHUB_WORKSPACE/after/frontend/node_modules" proof/frontend/node_modules
+          node after/frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Build exact product applications with embedded frontend and fts5
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in before after; do
+            npm --prefix "$source/frontend" run build
+            cp -R "$source/frontend/dist/." "$source/internal/web/dist/"
+            (cd "$source" && go build -tags fts5 -o bin/docbank ./cmd/docbank)
+            git -C "$source" diff --exit-code
+          done
+      - name: Capture real before and after worker in both themes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for side in before after; do
+            if [ "$side" = before ]; then pin="$BEFORE"; else pin="$AFTER"; fi
+            DOCBANK_PROOF_SIDE="$side" DOCBANK_PROOF_SOURCE="$pin" \
+            DOCBANK_PROOF_REPOSITORY="$GITHUB_WORKSPACE/$side" \
+            DOCBANK_SCREENSHOT_BINARY="$GITHUB_WORKSPACE/$side/bin/docbank" \
+            DOCBANK_SCREENSHOT_DIR="$GITHUB_WORKSPACE/proof/evidence" \
+            node after/frontend/node_modules/@playwright/test/cli.js test notes-label.screenshot.ts \
+              --config proof/frontend/screenshots/playwright.config.ts --project chromium --retries 0 --reporter line
+          done
+      - name: Require matching captures and verified synthetic cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path('proof/evidence')
+          before, after = [json.loads((root / f'{side}-receipt.json').read_text()) for side in ('before', 'after')]
+          assert before['title'] == 'derive notes' and after['title'] == 'Notes'
+          assert before['viewport'] == after['viewport'] == {'width': 1440, 'height': 960}
+          for receipt in (before, after):
+              assert receipt['scale'] == 2 and receipt['daemonStopped'] and receipt['workspaceRemoved']
+              assert receipt['worker']['name'] == receipt['worker']['lane'] == 'derive:notes'
+              assert not receipt['worker']['busy'] and not receipt['worker'].get('controllable', False)
+          assert [x['crop'] for x in before['captures']] == [x['crop'] for x in after['captures']]
+          images = sorted(root.glob('*.png'))
+          assert len(images) == 4
+          assert {p.name for p in images} == {f'notes-label-{s}-{t}.png' for s in ('before', 'after') for t in ('dark', 'light')}
+          (root / 'image-sha256.txt').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in images))
+          PY
+      - name: Install pinned hosted pre-push tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/notes-proof-tools"
+          cd "$RUNNER_TEMP/notes-proof-tools"
+          curl --fail --location --retry 3 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -o prek.tar.gz https://github.com/j178/prek/releases/download/v0.5.10/prek-x86_64-unknown-linux-gnu.tar.gz
+          printf '5c832a9ccd0855b7c054320d8921d90165a37459d3ac175923bdf121ff1aa9b1  prek.tar.gz\n' | sha256sum --check
+          tar -xzf prek.tar.gz
+          curl --fail --location --retry 3 -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -o lint.tar.gz https://github.com/golangci/golangci-lint/releases/download/v2.15.0/golangci-lint-2.15.0-linux-amd64.tar.gz
+          printf '9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea  lint.tar.gz\n' | sha256sum --check
+          tar -xzf lint.tar.gz
+          echo "$RUNNER_TEMP/notes-proof-tools/prek-x86_64-unknown-linux-gnu" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/notes-proof-tools/golangci-lint-2.15.0-linux-amd64" >> "$GITHUB_PATH"
+      - name: Qualify exact c6ee product with ordinary pre-push hook suite
+        working-directory: after
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AFTER"
+          git diff --exit-code
+          prek --version
+          golangci-lint version
+          prek run --stage pre-push --all-files 2>&1 | tee ../proof/evidence/pre-push.log
+          git diff --exit-code
+      - name: Upload actual media and qualification receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: c-notes-label-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: proof/evidence/
+          if-no-files-found: error
+          retention-days: 14
