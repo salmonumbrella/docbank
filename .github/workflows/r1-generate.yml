@@ -1,0 +1,60 @@
+name: R1 fork-only generation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  generate:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '26.13.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend tools
+        run: npm --prefix frontend ci
+      - name: Bootstrap OpenAPI without importing the old client
+        run: |
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+            "os"
+            "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+            data, err := api.OpenAPIYAML()
+            if err != nil { panic(err) }
+            if err := os.WriteFile("internal/api/openapi.yaml", data, 0644); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi
+          go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+          npm --prefix frontend run generate:api
+      - name: Generate exact API artifacts
+        run: make generate-api
+      - name: Generate schema contract from canonical catalog
+        run: go test -tags fts5 ./internal/store -run '^TestR1GenerateSchemaContract$' -count=1 -v
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: record-types-generated
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            internal/store/testdata/schema-contracts/*.schema
+          if-no-files-found: error
+      - name: Focused acceptance in both SQLite modes
+        run: |
+          go test -tags fts5 ./internal/recordtype ./internal/store ./internal/api -run 'TestContractValidation|TestEffectiveStatusExpiryBoundary|TestRecord|TestEveryReleasedSchemaFixtureUpgrades|TestStorageSchemaVersionContract' -count=1
+          CGO_ENABLED=0 go test -tags fts5 ./internal/recordtype ./internal/store ./internal/api -run 'TestContractValidation|TestEffectiveStatusExpiryBoundary|TestRecord|TestEveryReleasedSchemaFixtureUpgrades|TestStorageSchemaVersionContract' -count=1
