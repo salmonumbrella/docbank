@@ -101,3 +101,10 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {
 	checkRecordListFiltersEffectiveStatusBeforePaging(t, newTestStore)
 }
+
+func TestRecordFieldStorageUsesDefinitionTypes(t *testing.T) {
+	def := recordtype.Definition{Fields: []recordtype.Field{{ID: "any_date", Type: "date"}, {ID: "any_range", Type: "date_range"}, {ID: "any_label", Type: "label"}}}
+	require.Equal(t, "value_date", recordValueColumn(recordFieldType(def, "any_date")))
+	require.Equal(t, "date_range", recordFieldType(def, "any_range"))
+	require.Equal(t, "value_text", recordValueColumn(recordFieldType(def, "any_label")))
+}
