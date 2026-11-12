@@ -192,11 +192,12 @@ func checkSignatureRevisionExhaustion(t *testing.T, postgres bool) {
 				require.Empty(t, requests)
 			} else {
 				_, err = s.FinishSignatureCreation(ctx, req.RequestID, req.Revision, SignatureCreationResult{SubmissionID: "10", SubmitterIDs: []string{"11"}})
-				if action == "active" {
+				switch action {
+				case "active":
 					require.NoError(t, err)
-				} else if action == "concurrent-edit" {
+				case "concurrent-edit":
 					require.ErrorIs(t, err, ErrInvalidContract)
-				} else {
+				default:
 					require.Error(t, err)
 				}
 			}
