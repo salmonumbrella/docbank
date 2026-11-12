@@ -35,8 +35,8 @@ const (
 // the deliberately limited routes used by the built-in browser. Most are
 // reads; mutations cover verified upload, revision-bound trash, restore, and
 // tag assignment, tag and saved-definition management, processing execution,
-// and operator-scope processing consent. Contract register reads are allowed;
-// contract and party writes are not.
+// operator-scope processing consent, and contract and party management used by
+// the browser.
 type webSessionRegistry struct {
 	mu          sync.Mutex
 	tokens      map[[sha256.Size]byte]webSessionState
@@ -315,6 +315,54 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	method, path := r.Method, r.URL.Path
+	if path == "/api/v1/contracts" {
+		return method == http.MethodPost && r.URL.RawQuery == "" ||
+			method == http.MethodGet && singleValuedQuery(r.URL.RawQuery, "q", "status", "type", "expiring_before", "as_of", webLimitQuery, "offset")
+	}
+	if after, ok := strings.CutPrefix(path, "/api/v1/contracts/"); ok {
+		parts := strings.Split(after, "/")
+		id, err := uuid.Parse(parts[0])
+		if err != nil || id.String() != parts[0] {
+			return false
+		}
+		if len(parts) == 1 {
+			return method == http.MethodGet && singleValuedQuery(r.URL.RawQuery, "as_of") ||
+				method == http.MethodPatch && r.URL.RawQuery == ""
+		}
+		if len(parts) != 3 || (method != http.MethodPut && method != http.MethodDelete) {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(values["role"]) != 1 || values.Get("role") == "" {
+			return false
+		}
+		switch parts[1] {
+		case "parties":
+			partyID, err := uuid.Parse(parts[2])
+			return err == nil && partyID.String() == parts[2] && len(values) == 1
+		case "documents":
+			nodeID, err := strconv.ParseInt(parts[2], 10, 64)
+			if err != nil || nodeID <= 0 || len(values) != 2 || len(values["content_version_id"]) != 1 {
+				return false
+			}
+			version := values.Get("content_version_id")
+			versionID, err := uuid.Parse(version)
+			return err == nil && versionID.String() == version
+		}
+		return false
+	}
+	if path == "/api/v1/parties" {
+		return method == http.MethodPost && r.URL.RawQuery == "" ||
+			method == http.MethodGet && singleValuedQuery(r.URL.RawQuery, webLimitQuery, "offset")
+	}
+	if after, ok := strings.CutPrefix(path, "/api/v1/nodes/"); ok {
+		parts := strings.Split(after, "/")
+		if len(parts) == 2 && parts[1] == "contracts" {
+			nodeID, err := strconv.ParseInt(parts[0], 10, 64)
+			return method == http.MethodGet && err == nil && nodeID > 0 &&
+				singleValuedQuery(r.URL.RawQuery, "as_of", webLimitQuery, "offset")
+		}
+	}
 	if path == "/api/v1/search-exports" && method == http.MethodGet {
 		query := r.URL.Query()
 		if len(query) > 2 {
@@ -509,13 +557,6 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if after, ok := strings.CutPrefix(path, webMapTilePath+"/"); ok {
 		return r.URL.RawQuery == "" && len(strings.Split(after, "/")) == 3
-	}
-	if path == "/api/v1/contracts" {
-		return singleValuedQuery(r.URL.RawQuery, "status", "type", "expiring_before", "as_of", webLimitQuery, "offset")
-	}
-	if id, ok := strings.CutPrefix(path, "/api/v1/contracts/"); ok {
-		parsed, err := uuid.Parse(id)
-		return err == nil && parsed.String() == id && singleValuedQuery(r.URL.RawQuery, "as_of")
 	}
 	if path == "/api/v1/duplicates" {
 		values, err := url.ParseQuery(r.URL.RawQuery)
