@@ -26,6 +26,7 @@ import (
 	processing "go.kenn.io/docbank/internal/processing"
 	production "go.kenn.io/docbank/internal/production"
 	query "go.kenn.io/docbank/internal/query"
+	recordtype "go.kenn.io/docbank/internal/recordtype"
 	store "go.kenn.io/docbank/internal/store"
 	report "go.kenn.io/docbank/report"
 )
@@ -12557,6 +12558,445 @@ func (c *Client) ParseQuery(ctx context.Context, options *ParseQueryRequestOptio
 	return responseParser(ctx, resp)
 }
 
+// ListRecordTypes List record types
+func (c *Client) ListRecordTypes(ctx context.Context, options *ListRecordTypesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListRecordTypesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_inactive": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/record-types",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListRecordTypesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListRecordTypesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListRecordTypesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListRecordTypesErrorResponse](resp, "ListRecordTypesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/record-types")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetRecordType Inspect a record type
+func (c *Client) GetRecordType(ctx context.Context, options *GetRecordTypeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRecordTypeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/record-types/{type}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetRecordTypeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetRecordTypeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetRecordTypeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetRecordTypeErrorResponse](resp, "GetRecordTypeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/record-types/{type}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ActivateRecordType Change record type activation
+func (c *Client) ActivateRecordType(ctx context.Context, options *ActivateRecordTypeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ActivateRecordTypeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/record-types/{type}/activate",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ActivateRecordTypeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ActivateRecordTypeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ActivateRecordTypeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ActivateRecordTypeErrorResponse](resp, "ActivateRecordTypeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/record-types/{type}/activate")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DeactivateRecordType Change record type activation
+func (c *Client) DeactivateRecordType(ctx context.Context, options *DeactivateRecordTypeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeactivateRecordTypeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/record-types/{type}/deactivate",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DeactivateRecordTypeResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DeactivateRecordTypeResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DeactivateRecordTypeResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DeactivateRecordTypeErrorResponse](resp, "DeactivateRecordTypeErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/record-types/{type}/deactivate")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListRecords List records
+func (c *Client) ListRecords(ctx context.Context, options *ListRecordsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListRecordsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after":  {Style: "form", Explode: &[]bool{false}[0]},
+		"as_of":  {Style: "form", Explode: &[]bool{false}[0]},
+		"before": {Style: "form", Explode: &[]bool{false}[0]},
+		"field":  {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+		"q":      {Style: "form", Explode: &[]bool{false}[0]},
+		"status": {Style: "form", Explode: &[]bool{false}[0]},
+		"type":   {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/records",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListRecordsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListRecordsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListRecordsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListRecordsErrorResponse](resp, "ListRecordsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/records")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateRecord Create a record
+func (c *Client) CreateRecord(ctx context.Context, options *CreateRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/records",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateRecordErrorResponse](resp, "CreateRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/records")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetRecord Inspect a record
+func (c *Client) GetRecord(ctx context.Context, options *GetRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetRecordResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"as_of": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/records/{id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetRecordErrorResponse](resp, "GetRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/records/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateRecord Edit a record
+func (c *Client) UpdateRecord(ctx context.Context, options *UpdateRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/records/{id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdateRecordErrorResponse](resp, "UpdateRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/records/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireRecord Retire a record
+func (c *Client) RetireRecord(ctx context.Context, options *RetireRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetireRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/records/{id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetireRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetireRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetireRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetireRecordErrorResponse](resp, "RetireRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/records/{id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PrepareNativePDF Inspect an exact retained native PDF for redaction preparation
 func (c *Client) PrepareNativePDF(ctx context.Context, options *PrepareNativePDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareNativePDFResponse, error) {
 	var err error
@@ -24554,6 +24994,321 @@ func (o *ParseQueryRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ListRecordTypesRequestOptions is the options needed to make a request to ListRecordTypes.
+type ListRecordTypesRequestOptions struct {
+	Query *ListRecordTypesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListRecordTypesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListRecordTypesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListRecordTypesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListRecordTypesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetRecordTypeRequestOptions is the options needed to make a request to GetRecordType.
+type GetRecordTypeRequestOptions struct {
+	PathParams *GetRecordTypePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetRecordTypeRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetRecordTypeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetRecordTypeRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetRecordTypeRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ActivateRecordTypeRequestOptions is the options needed to make a request to ActivateRecordType.
+type ActivateRecordTypeRequestOptions struct {
+	PathParams *ActivateRecordTypePath
+	Header     *ActivateRecordTypeHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ActivateRecordTypeRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ActivateRecordTypeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ActivateRecordTypeRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ActivateRecordTypeRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// DeactivateRecordTypeRequestOptions is the options needed to make a request to DeactivateRecordType.
+type DeactivateRecordTypeRequestOptions struct {
+	PathParams *DeactivateRecordTypePath
+	Header     *DeactivateRecordTypeHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DeactivateRecordTypeRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DeactivateRecordTypeRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DeactivateRecordTypeRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DeactivateRecordTypeRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// ListRecordsRequestOptions is the options needed to make a request to ListRecords.
+type ListRecordsRequestOptions struct {
+	Query *ListRecordsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListRecordsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListRecordsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListRecordsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListRecordsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateRecordRequestOptions is the options needed to make a request to CreateRecord.
+type CreateRecordRequestOptions struct {
+	Body *CreateRecordBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateRecordRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateRecordRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetRecordRequestOptions is the options needed to make a request to GetRecord.
+type GetRecordRequestOptions struct {
+	PathParams *GetRecordPath
+	Query      *GetRecordQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetRecordRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetRecordRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetRecordRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdateRecordRequestOptions is the options needed to make a request to UpdateRecord.
+type UpdateRecordRequestOptions struct {
+	PathParams *UpdateRecordPath
+	Body       *UpdateRecordBody
+	Header     *UpdateRecordHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdateRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdateRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdateRecordRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdateRecordRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetireRecordRequestOptions is the options needed to make a request to RetireRecord.
+type RetireRecordRequestOptions struct {
+	PathParams *RetireRecordPath
+	Header     *RetireRecordHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetireRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetireRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetireRecordRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetireRecordRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // PrepareNativePDFRequestOptions is the options needed to make a request to PrepareNativePDF.
 type PrepareNativePDFRequestOptions struct {
 	Body *PrepareNativePDFBody
@@ -27357,6 +28112,22 @@ type UploadPushFileHeaders struct {
 	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
 }
 
+type ActivateRecordTypeHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type DeactivateRecordTypeHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type UpdateRecordHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RetireRecordHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type GetDocumentRenditionHeaders struct {
 	Range *string `json:"Range,omitempty"`
 }
@@ -27908,6 +28679,30 @@ type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
 
+type GetRecordTypePath struct {
+	Type string `json:"type"`
+}
+
+type ActivateRecordTypePath struct {
+	Type string `json:"type"`
+}
+
+type DeactivateRecordTypePath struct {
+	Type string `json:"type"`
+}
+
+type GetRecordPath struct {
+	ID string `json:"id"`
+}
+
+type UpdateRecordPath struct {
+	ID string `json:"id"`
+}
+
+type RetireRecordPath struct {
+	ID string `json:"id"`
+}
+
 type DiscardRedactionPreviewPath struct {
 	ID string `json:"id"`
 }
@@ -28346,6 +29141,10 @@ type PreviewQueryHighlightsBody = SavedQueryV1Schema
 
 type ParseQueryBody = SavedQueryV1Schema
 
+type CreateRecordBody map[string]struct{}
+
+type UpdateRecordBody map[string]struct{}
+
 type PrepareNativePDFBody = RedactionPreparationRequest
 
 type CreateRedactionPreviewBody = PreviewInput
@@ -28747,6 +29546,26 @@ type UploadPushFileQuery struct {
 
 	// RunID UUIDv4 naming the client's scan; every file one run accepts joins one ingest run
 	RunID uuid.UUID `json:"run_id"`
+}
+
+type ListRecordTypesQuery struct {
+	IncludeInactive *bool `json:"include_inactive,omitempty"`
+}
+
+type ListRecordsQuery struct {
+	Type   string   `json:"type"`
+	Status *string  `json:"status,omitempty"`
+	Q      *string  `json:"q,omitempty"`
+	AsOf   *string  `json:"as_of,omitempty"`
+	Field  []string `json:"field,omitempty"`
+	Before []string `json:"before,omitempty"`
+	After  []string `json:"after,omitempty"`
+	Limit  *int64   `json:"limit,omitempty"`
+	Offset *int64   `json:"offset,omitempty"`
+}
+
+type GetRecordQuery struct {
+	AsOf *string `json:"as_of,omitempty"`
 }
 
 type ReadRenditionTextQuery struct {
@@ -30015,6 +30834,42 @@ type ParseQueryResponse = api.QueryPreview
 
 type ParseQueryErrorResponse = Error
 
+type ListRecordTypesResponse []RecordType
+
+type ListRecordTypesErrorResponse = Error
+
+type GetRecordTypeResponse = api.RecordType
+
+type GetRecordTypeErrorResponse = Error
+
+type ActivateRecordTypeResponse = api.RecordType
+
+type ActivateRecordTypeErrorResponse = Error
+
+type DeactivateRecordTypeResponse = api.RecordType
+
+type DeactivateRecordTypeErrorResponse = Error
+
+type ListRecordsResponse = api.RecordPage
+
+type ListRecordsErrorResponse = Error
+
+type CreateRecordResponse = api.Record
+
+type CreateRecordErrorResponse = Error
+
+type GetRecordResponse = api.Record
+
+type GetRecordErrorResponse = Error
+
+type UpdateRecordResponse = api.Record
+
+type UpdateRecordErrorResponse = Error
+
+type RetireRecordResponse = api.Record
+
+type RetireRecordErrorResponse = Error
+
 type PrepareNativePDFResponse = processing.RedactionPreparation
 
 type PrepareNativePDFErrorResponse api.Error
@@ -30761,6 +31616,8 @@ type DateReviewMember = report.DateReviewMember
 
 type DateSelection = report.DateSelection
 
+type Definition = recordtype.Definition
+
 type DerivativePurgeEvent = api.DerivativePurgeEvent
 
 type DerivativePurgeJobRequest = api.DerivativePurgeJobRequest
@@ -30770,6 +31627,8 @@ type DerivativePurgePlan = api.DerivativePurgePlan
 type DerivativePurgePlanRequest = api.DerivativePurgePlanRequest
 
 type DerivativePurgeReceipt = api.DerivativePurgeReceipt
+
+type DerivedStatus = recordtype.DerivedStatus
 
 type DocumentEventCoverage = api.DocumentEventCoverage
 
@@ -30980,6 +31839,8 @@ type ExportJob = bundle.ExportJob
 
 type FaceBox = document.FaceBox
 
+type Field = recordtype.Field
+
 type Filters = query.Filters
 
 type ForgetBackupSnapshotsRequest struct {
@@ -31011,6 +31872,8 @@ type GcRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Run    bool    `json:"run"`
 }
+
+type Group = recordtype.Group
 
 type GroupPhotoStacksRequest = api.GroupPhotoStacksRequest
 
@@ -31721,6 +32584,12 @@ type Receipt = bundle.Receipt
 
 type Recipe = pdfstamp.Recipe
 
+type Record = api.Record
+
+type RecordPage = api.RecordPage
+
+type RecordType = api.RecordType
+
 type RedactionArchive = processing.RedactionArchive
 
 type RedactionFileDigest = processing.RedactionFileDigest
@@ -32049,6 +32918,10 @@ type StartStorageSalvageRequest struct {
 	Schema       *string `json:"$schema,omitempty"`
 	PreviewToken string  `json:"preview_token"`
 }
+
+type Status = recordtype.Status
+
+type StatusDefinition = recordtype.StatusDefinition
 
 type StorageOperation = api.StorageOperation
 

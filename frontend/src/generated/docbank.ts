@@ -1973,6 +1973,58 @@ export interface DateRange {
   start: string;
 }
 
+export interface Field {
+  end_label?: string;
+  group: string;
+  id: string;
+  label: string;
+  pattern?: string;
+  retired?: boolean;
+  start_label?: string;
+  suggestions?: string[];
+  type: string;
+}
+
+export interface Group {
+  empty_text?: string;
+  id: string;
+  label: string;
+  retired?: boolean;
+}
+
+export interface DerivedStatus {
+  id: string;
+  label: string;
+  only_from: string[];
+  retired?: boolean;
+  tone: string;
+  when_past: string;
+}
+
+export interface Status {
+  id: string;
+  initial?: boolean;
+  label: string;
+  retired?: boolean;
+  tone: string;
+}
+
+export interface StatusDefinition {
+  derived?: DerivedStatus[];
+  values: Status[];
+}
+
+export interface Definition {
+  fields: Field[];
+  groups: Group[];
+  icon: string;
+  id: string;
+  label: string;
+  label_plural: string;
+  status: StatusDefinition;
+  version: number;
+}
+
 export type DerivativePurgeEventType = typeof DerivativePurgeEventType[keyof typeof DerivativePurgeEventType];
 
 
@@ -7662,6 +7714,45 @@ export interface QueryPreview {
   query_fingerprint: string;
 }
 
+export type RecordFields = {[key: string]: unknown};
+
+export interface Record {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  effective_status: string;
+  fields: RecordFields;
+  note: string;
+  record_id: string;
+  /** @nullable */
+  retired_at: string | null;
+  revision: number;
+  status: string;
+  title: string;
+  type_id: string;
+  updated_at: string;
+}
+
+export interface RecordPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  as_of: string;
+  limit: number;
+  offset: number;
+  records: Record[];
+  total: number;
+}
+
+export interface RecordType {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  created_at: string;
+  definition: Definition;
+  revision: number;
+  updated_at: string;
+}
+
 export interface RedactionFileDigest {
   sha256: string;
   size: number;
@@ -10173,6 +10264,53 @@ export type UploadPushFileHeaders = {
 
 export type UploadPushFileBody = {
   file: Blob | File | string;
+};
+
+export type ListRecordTypesParams = {
+include_inactive?: boolean;
+};
+
+export type ActivateRecordTypeHeaders = {
+'If-Match': string;
+};
+
+export type DeactivateRecordTypeHeaders = {
+'If-Match': string;
+};
+
+export type ListRecordsParams = {
+type: string;
+status?: string;
+q?: string;
+as_of?: string;
+field?: string[];
+before?: string[];
+after?: string[];
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type CreateRecordBody = {[key: string]: unknown};
+
+export type GetRecordParams = {
+as_of?: string;
+};
+
+export type UpdateRecordHeaders = {
+'If-Match': string;
+};
+
+export type UpdateRecordBody = {[key: string]: unknown};
+
+export type RetireRecordHeaders = {
+'If-Match': string;
 };
 
 export type ReadRenditionTextParams = {
@@ -19567,6 +19705,320 @@ return sessionJSON<QueryPreview>(getParseQueryUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(savedQueryV1Schema)
+  }
+);}
+
+
+
+export const getListRecordTypesUrl = (params?: ListRecordTypesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/record-types?${stringifiedParams}` : `/api/v1/record-types`
+}
+
+/**
+ * @summary List record types
+ */
+export const listRecordTypes = async (params?: ListRecordTypesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<RecordType[]> => {
+
+  return sessionJSON<RecordType[]>(getListRecordTypesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetRecordTypeUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/record-types/${encodeURIComponent(String(type))}`
+}
+
+/**
+ * @summary Inspect a record type
+ */
+export const getRecordType = async (type: string, options?: Parameters<typeof sessionJSON>[1]): Promise<RecordType> => {
+
+  return sessionJSON<RecordType>(getGetRecordTypeUrl(type),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getActivateRecordTypeUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/record-types/${encodeURIComponent(String(type))}/activate`
+}
+
+/**
+ * @summary Change record type activation
+ */
+export const activateRecordType = async (type: string,
+    headers: ActivateRecordTypeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<RecordType> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RecordType>(getActivateRecordTypeUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getDeactivateRecordTypeUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/record-types/${encodeURIComponent(String(type))}/deactivate`
+}
+
+/**
+ * @summary Change record type activation
+ */
+export const deactivateRecordType = async (type: string,
+    headers: DeactivateRecordTypeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<RecordType> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RecordType>(getDeactivateRecordTypeUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getListRecordsUrl = (params: ListRecordsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/records?${stringifiedParams}` : `/api/v1/records`
+}
+
+/**
+ * @summary List records
+ */
+export const listRecords = async (params: ListRecordsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<RecordPage> => {
+
+  return sessionJSON<RecordPage>(getListRecordsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateRecordUrl = () => {
+
+
+
+
+  return `/api/v1/records`
+}
+
+/**
+ * @summary Create a record
+ */
+export const createRecord = async (createRecordBody: CreateRecordBody, options?: Parameters<typeof sessionJSON>[1]): Promise<Record> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Record>(getCreateRecordUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createRecordBody)
+  }
+);}
+
+
+
+export const getGetRecordUrl = (id: string,
+    params?: GetRecordParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/records/${encodeURIComponent(String(id))}?${stringifiedParams}` : `/api/v1/records/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Inspect a record
+ */
+export const getRecord = async (id: string,
+    params?: GetRecordParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Record> => {
+
+  return sessionJSON<Record>(getGetRecordUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdateRecordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/records/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Edit a record
+ */
+export const updateRecord = async (id: string,
+    updateRecordBody: UpdateRecordBody,
+    headers: UpdateRecordHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Record> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Record>(getUpdateRecordUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateRecordBody)
+  }
+);}
+
+
+
+export const getRetireRecordUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/records/${encodeURIComponent(String(id))}/retire`
+}
+
+/**
+ * @summary Retire a record
+ */
+export const retireRecord = async (id: string,
+    headers: RetireRecordHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Record> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Record>(getRetireRecordUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
   }
 );}
 

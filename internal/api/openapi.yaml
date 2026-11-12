@@ -3859,6 +3859,44 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/report
         name: report
+    Definition:
+      additionalProperties: false
+      properties:
+        fields:
+          items:
+            $ref: "#/components/schemas/Field"
+          type: array
+        groups:
+          items:
+            $ref: "#/components/schemas/Group"
+          type: array
+        icon:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        label_plural:
+          type: string
+        status:
+          $ref: "#/components/schemas/StatusDefinition"
+        version:
+          format: int64
+          type: integer
+      required:
+        - id
+        - version
+        - label
+        - label_plural
+        - icon
+        - groups
+        - fields
+        - status
+      type: object
+      x-go-type: recordtype.Definition
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/recordtype
+        name: recordtype
     DerivativePurgeEvent:
       additionalProperties: false
       properties:
@@ -4090,6 +4128,34 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DerivedStatus:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        only_from:
+          items:
+            type: string
+          type: array
+        retired:
+          type: boolean
+        tone:
+          type: string
+        when_past:
+          type: string
+      required:
+        - id
+        - label
+        - tone
+        - when_past
+        - only_from
+      type: object
+      x-go-type: recordtype.DerivedStatus
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/recordtype
+        name: recordtype
     DocumentEventCoverage:
       additionalProperties: false
       properties:
@@ -7219,6 +7285,39 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    Field:
+      additionalProperties: false
+      properties:
+        end_label:
+          type: string
+        group:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        pattern:
+          type: string
+        retired:
+          type: boolean
+        start_label:
+          type: string
+        suggestions:
+          items:
+            type: string
+          type: array
+        type:
+          type: string
+      required:
+        - id
+        - label
+        - type
+        - group
+      type: object
+      x-go-type: recordtype.Field
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/recordtype
+        name: recordtype
     Filters:
       additionalProperties: false
       properties:
@@ -7657,6 +7756,25 @@ components:
       required:
         - run
       type: object
+    Group:
+      additionalProperties: false
+      properties:
+        empty_text:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        retired:
+          type: boolean
+      required:
+        - id
+        - label
+      type: object
+      x-go-type: recordtype.Group
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/recordtype
+        name: recordtype
     GroupPhotoStacksRequest:
       additionalProperties: false
       properties:
@@ -17572,6 +17690,127 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/pdfstamp
         name: pdfstamp
+    Record:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Record.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          type: string
+        effective_status:
+          type: string
+        fields:
+          additionalProperties: {}
+          type: object
+        note:
+          type: string
+        record_id:
+          type: string
+        retired_at:
+          type:
+            - string
+            - "null"
+        revision:
+          format: int64
+          type: integer
+        status:
+          type: string
+        title:
+          type: string
+        type_id:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - record_id
+        - type_id
+        - title
+        - note
+        - status
+        - effective_status
+        - fields
+        - revision
+        - created_at
+        - updated_at
+        - retired_at
+      type: object
+      x-go-type: api.Record
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    RecordPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RecordPage.json
+          format: uri
+          readOnly: true
+          type: string
+        as_of:
+          type: string
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        records:
+          items:
+            $ref: "#/components/schemas/Record"
+          type: array
+        total:
+          format: int64
+          type: integer
+      required:
+        - records
+        - total
+        - limit
+        - offset
+        - as_of
+      type: object
+      x-go-type: api.RecordPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    RecordType:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RecordType.json
+          format: uri
+          readOnly: true
+          type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+        definition:
+          $ref: "#/components/schemas/Definition"
+        revision:
+          format: int64
+          type: integer
+        updated_at:
+          type: string
+      required:
+        - definition
+        - active
+        - revision
+        - created_at
+        - updated_at
+      type: object
+      x-go-type: api.RecordType
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     RedactionArchive:
       additionalProperties: false
       properties:
@@ -20242,6 +20481,46 @@ components:
       required:
         - preview_token
       type: object
+    Status:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        initial:
+          type: boolean
+        label:
+          type: string
+        retired:
+          type: boolean
+        tone:
+          type: string
+      required:
+        - id
+        - label
+        - tone
+      type: object
+      x-go-type: recordtype.Status
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/recordtype
+        name: recordtype
+    StatusDefinition:
+      additionalProperties: false
+      properties:
+        derived:
+          items:
+            $ref: "#/components/schemas/DerivedStatus"
+          type: array
+        values:
+          items:
+            $ref: "#/components/schemas/Status"
+          type: array
+      required:
+        - values
+      type: object
+      x-go-type: recordtype.StatusDefinition
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/recordtype
+        name: recordtype
     StorageOperation:
       additionalProperties: false
       properties:
@@ -30712,6 +30991,356 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Validate a search expression and resolve its saved references
+  /api/v1/record-types:
+    get:
+      operationId: listRecordTypes
+      parameters:
+        - explode: false
+          in: query
+          name: include_inactive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/RecordType"
+                type: array
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List record types
+  /api/v1/record-types/{type}:
+    get:
+      operationId: getRecordType
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordType"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect a record type
+  /api/v1/record-types/{type}/activate:
+    post:
+      operationId: activateRecordType
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordType"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Change record type activation
+  /api/v1/record-types/{type}/deactivate:
+    post:
+      operationId: deactivateRecordType
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordType"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Change record type activation
+  /api/v1/records:
+    get:
+      operationId: listRecords
+      parameters:
+        - explode: false
+          in: query
+          name: type
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: status
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: q
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: as_of
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: field
+          schema:
+            items:
+              type: string
+            type: array
+        - explode: false
+          in: query
+          name: before
+          schema:
+            items:
+              type: string
+            type: array
+        - explode: false
+          in: query
+          name: after
+          schema:
+            items:
+              type: string
+            type: array
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordPage"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List records
+    post:
+      operationId: createRecord
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: {}
+              type: object
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Record"
+          description: Created
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create a record
+  /api/v1/records/{id}:
+    get:
+      operationId: getRecord
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: as_of
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Record"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect a record
+    patch:
+      operationId: updateRecord
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: {}
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Record"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Edit a record
+  /api/v1/records/{id}/retire:
+    post:
+      operationId: retireRecord
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Record"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Retire a record
   /api/v1/redaction/prepare:
     post:
       operationId: prepareNativePDF
