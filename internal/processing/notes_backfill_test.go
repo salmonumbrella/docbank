@@ -85,6 +85,13 @@ func TestNoteBackfillDrainsBadNotes(t *testing.T) {
 		failing := &notePublicationFailure{NoteCatalog: catalog, err: failure}
 		for _, target := range page.Targets {
 			if target.Path == "/good.md" {
+				src, err := loadNoteOriginal(ctx, blobs, target)
+				require.NoError(t, err)
+				require.Equal(t, "---\ntags: [blue]\n---\n# Original\n", string(src))
+				wrongSize := target
+				wrongSize.Size++
+				_, err = loadNoteOriginal(ctx, blobs, wrongSize)
+				require.Error(t, err)
 				require.ErrorIs(t, processNoteTarget(ctx, failing, blobs, target), failure)
 			}
 		}

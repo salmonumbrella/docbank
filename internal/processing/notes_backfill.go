@@ -50,20 +50,9 @@ func processNoteTarget(ctx context.Context, catalog NoteCatalog, blobs *blob.Sto
 	if target.Size > store.MaxNoteBytes {
 		return catalog.PublishNoteParse(ctx, target, notemarkdown.Recipe, "too_large", notemarkdown.Note{})
 	}
-	reader, size, err := blobs.OpenStreamContext(ctx, target.BlobHash)
+	src, err := loadNoteOriginal(ctx, blobs, target)
 	if err != nil {
 		return err
-	}
-	// The extra byte detects an incorrect catalog size without allocating an
-	// unbounded blob. Successful input must reach the verified reader's EOF.
-	src, readErr := io.ReadAll(io.LimitReader(reader, store.MaxNoteBytes+1))
-	verified := reader.Verified()
-	closeErr := reader.Close()
-	if err := errors.Join(readErr, closeErr); err != nil {
-		return err
-	}
-	if size != target.Size || int64(len(src)) != target.Size || !verified {
-		return fmt.Errorf("note original does not match version %s", target.VersionID)
 	}
 	note, state, err := parseNoteOriginal(ctx, src)
 	if err != nil {
@@ -74,6 +63,28 @@ func processNoteTarget(ctx context.Context, catalog NoteCatalog, blobs *blob.Sto
 		return catalog.PublishNoteParse(ctx, target, notemarkdown.Recipe, "limit", notemarkdown.Note{})
 	}
 	return err
+}
+
+func loadNoteOriginal(ctx context.Context, blobs *blob.Store, target store.NoteTarget) ([]byte, error) {
+	if target.Size < 0 || target.Size > store.MaxNoteBytes {
+		return nil, fmt.Errorf("note original size is outside the allowed range")
+	}
+	reader, size, err := blobs.OpenStreamContext(ctx, target.BlobHash)
+	if err != nil {
+		return nil, err
+	}
+	// The extra byte detects an incorrect catalog size without allocating an
+	// unbounded blob. Successful input must reach the verified reader's EOF.
+	src, readErr := io.ReadAll(io.LimitReader(reader, store.MaxNoteBytes+1))
+	verified := reader.Verified()
+	closeErr := reader.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, err
+	}
+	if size != target.Size || int64(len(src)) != target.Size || !verified {
+		return nil, fmt.Errorf("note original does not match version %s", target.VersionID)
+	}
+	return src, nil
 }
 
 func parseNoteOriginal(ctx context.Context, src []byte) (notemarkdown.Note, string, error) {
