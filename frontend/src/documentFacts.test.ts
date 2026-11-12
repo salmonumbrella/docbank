@@ -100,3 +100,47 @@ it("stops all work on the first current 401", async () => {
   facts.retain("next");
   expect(requests).toHaveLength(2);
 });
+
+it("rereads pending facts only after the last interest leaves, preserving published facts", async () => {
+  const facts = new DocumentFacts("session", vi.fn());
+  const first = facts.retain("v");
+  const second = facts.retain("v");
+  requests[0]!.resolve({ state: "pending" });
+  requests[1]!.resolve({ state: "published" });
+  await flush();
+  first();
+  expect(facts.get("v").dates.status).toBe("ready");
+  second();
+  expect(facts.get("v").dates.status).toBe("idle");
+  const release = facts.retain("v");
+  expect(requests.map((r) => r.resource)).toEqual(["dates", "people", "dates"]);
+  release();
+  facts.dispose();
+});
+
+it("ignores a canceled read that resolves after renewed interest", async () => {
+  const facts = new DocumentFacts("session", vi.fn());
+  const release = facts.retain("v");
+  release();
+  facts.retain("v");
+  requests[0]!.resolve({ state: "published", old: true });
+  await flush();
+  expect(facts.get("v").dates.status).toBe("loading");
+  requests[2]!.resolve({ state: "published", old: false });
+  await flush();
+  expect(facts.get("v").dates.value).toEqual({ state: "published", old: false });
+  facts.dispose();
+});
+
+it("keeps a published result released before its request finishes cleanup", async () => {
+  const facts = new DocumentFacts("session", vi.fn());
+  const release = facts.retain("v");
+  requests[0]!.resolve({ state: "published" });
+  await Promise.resolve();
+  release();
+  await flush();
+  facts.retain("v");
+  expect(facts.get("v").dates.value).toEqual({ state: "published" });
+  expect(requests.filter((r) => r.resource === "dates")).toHaveLength(1);
+  facts.dispose();
+});

@@ -47,7 +47,7 @@ it("groups safe roles, assertions, and distinct pending names", () => {
     ["custodian", ["D"]],
     ["recipient", ["B"]],
   ]);
-  expect(roleRows(data)[0]!.people[0]!.colorKey).toBe("uid");
+  expect(roleRows(data)[0]!.people[0]!.colorKey).toBe("A");
   expect(pendingNames(data)).toEqual([{ candidateID: "k", name: "Name" }]);
   expect(tablePeople(data).people.map((p) => p.id)).toEqual(["A", "E", "D"]);
   expect(tablePeople(data).review).toBe(1);

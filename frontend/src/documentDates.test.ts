@@ -67,3 +67,19 @@ it("never converts floating values using the process timezone", () => {
     else process.env.TZ = saved;
   }
 });
+
+it("shows only the clock fields supported by exact and floating precision", () => {
+  const zone = { name: "UTC", supported: true };
+  const expected = [
+    ["hour", "3 AM"],
+    ["minute", "3:40 AM"],
+    ["second", "3:40:12 AM"],
+    ["fraction", "3:40:12.123456 AM"],
+  ] as const;
+  for (const [precision, clock] of expected) {
+    const exact = when({ precision, at: "2026-03-11T03:40:12.123456Z" });
+    const floating = when({ state: "floating", precision, local: "2026-03-11T03:40:12.123456" });
+    expect(formatWhen(exact, zone).value).toContain(clock);
+    expect(formatWhen(floating, zone).value).toContain(clock);
+  }
+});

@@ -23,7 +23,7 @@ export function roleRows(data: VersionPeople) {
           people.set(edge.person_id, {
             id: edge.person_id,
             name: edge.display_name,
-            colorKey: edge.external[0]?.uid || edge.person_id,
+            colorKey: edge.person_id,
           });
       }
       for (const assertion of data.assertions) {

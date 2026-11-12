@@ -40,8 +40,37 @@ function civilDate(value: string): Date {
   const [hour = "0", minute = "0", second = "0"] = time.split(":");
   const result = new Date(0);
   result.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
-  result.setUTCHours(Number(hour), Number(minute), Number(second), 0);
+  const [seconds, fraction = ""] = second.split(".");
+  result.setUTCHours(
+    Number(hour),
+    Number(minute),
+    Number(seconds),
+    Number(fraction.padEnd(3, "0").slice(0, 3)),
+  );
   return result;
+}
+
+function clockOptions(precision: string): Intl.DateTimeFormatOptions {
+  const options: Intl.DateTimeFormatOptions = { hour: "numeric" };
+  if (precision !== "hour") options.minute = "2-digit";
+  if (precision === "second" || precision === "fraction") options.second = "2-digit";
+  if (precision === "fraction") options.fractionalSecondDigits = 3;
+  return options;
+}
+
+// Intl accepts at most three fractional digits; retain the source's remaining digits.
+function formatClock(
+  formatter: Intl.DateTimeFormat,
+  date: Date,
+  source: string,
+  precision: string,
+) {
+  const fraction = precision === "fraction" ? source.match(/\.(\d+)/)?.[1] : undefined;
+  if (!fraction) return formatter.format(date);
+  return formatter
+    .formatToParts(date)
+    .map((part) => (part.type === "fractionalSecond" ? fraction : part.value))
+    .join("");
 }
 
 export function formatWhen(
@@ -65,16 +94,19 @@ export function formatWhen(
         zoneNote,
         floating,
       };
-    const value = new Intl.DateTimeFormat(locale, {
+    const formatter = new Intl.DateTimeFormat(locale, {
       timeZone: zone.name,
       year: "numeric",
       month: "short",
       day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
+      ...clockOptions(when.precision),
       timeZoneName: "short",
-    }).format(new Date(when.at!));
-    return { value, zoneNote, floating };
+    });
+    return {
+      value: formatClock(formatter, new Date(when.at!), when.at!, when.precision),
+      zoneNote,
+      floating,
+    };
   }
   const civil = when.local || when.date || when.period;
   if (!civil) return { value: "—", zoneNote, floating };
@@ -86,13 +118,12 @@ export function formatWhen(
   if (when.precision === "year") delete options.month;
   else if (when.precision !== "month") options.day = "numeric";
   if (floating) {
-    options.hour = "numeric";
-    options.minute = "2-digit";
+    Object.assign(options, clockOptions(when.precision));
   }
   const formatter = new Intl.DateTimeFormat(locale, options);
   const value = when.end_date
     ? formatter.formatRange(civilDate(civil), civilDate(when.end_date))
-    : formatter.format(civilDate(civil));
+    : formatClock(formatter, civilDate(civil), civil, when.precision);
   return { value: floating ? `${value} (no zone)` : value, zoneNote, floating };
 }
 

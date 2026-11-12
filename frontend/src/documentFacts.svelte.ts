@@ -124,8 +124,12 @@ export class DocumentFacts {
         if (controller) {
           delete entry.controllers[resource];
           controller.abort();
-          entry.facts[resource] = { status: "idle" };
         }
+        if (
+          entry.facts[resource].status === "loading" ||
+          entry.facts[resource].value?.state === "pending"
+        )
+          entry.facts[resource] = { status: "idle" };
       }
     }
   }

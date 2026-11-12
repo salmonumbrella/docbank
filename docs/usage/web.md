@@ -98,8 +98,9 @@ zone, exact times say "Timeline zone unavailable". **People** groups people by
 role; select a person to search for their documents. Names found only in
 metadata appear under **In metadata** as "needs review". Blind-copy recipients
 never appear. When the results area is at least 900 px wide, tables also show
-**Document date** and **People** (up to three avatars and an "N to review"
-count). Docbank reads them only for rows on screen.
+**Document date** and **People** (up to three avatars, a "+N" count for
+additional people, and an "N to review" count). Docbank reads them only for
+rows on screen.
 
 ![The slide-out navigation menu on a narrow screen](https://docbank.ai/assets/generated/web-navigation-mobile.png)
 

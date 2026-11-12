@@ -1413,8 +1413,10 @@
         : `live:${directory?.id ?? ""}:${activeQuery}:${activeTagID}`,
   );
   let documentFacts = $state<DocumentFacts>();
+  let factsRefresh = $state(0);
   $effect(() => {
     const view = factsView;
+    void factsRefresh;
     const session = webSession;
     if (!view) {
       documentFacts = undefined;
@@ -2992,6 +2994,7 @@
   }
 
   function refreshCurrentView(): void {
+    factsRefresh += 1;
     productionsDiscoveryRevision += 1;
     void loadTagCatalog();
     refreshDocumentsView();
