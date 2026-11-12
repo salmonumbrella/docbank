@@ -59,7 +59,7 @@ func DateKeysFor(events []DocumentEventV1) ([]DateKey, error) {
 		if _, err := eventCivil(event.DateValue, event.Precision); err != nil {
 			return nil, err
 		}
-		key := DateKey{CivilYear: event.DateValue[:4], Sensitive: eventHasSensitiveEvidence(event)}
+		key := DateKey{CivilYear: event.DateValue[:4], Sensitive: EventHasSensitiveEvidence(event)}
 		if event.Precision != "year" {
 			key.CivilMonth = event.DateValue[:7]
 		}
