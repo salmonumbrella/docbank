@@ -1,0 +1,222 @@
+name: R1 fork-only generation
+on:
+  workflow_dispatch:
+  push:
+    branches: [scratch/records-r1-acceptance]
+permissions:
+  contents: read
+jobs:
+  generate:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend tools
+        run: npm --prefix frontend ci
+      - name: Bootstrap OpenAPI without importing the old client
+        run: |
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+            "os"
+            "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+            data, err := api.OpenAPIYAML()
+            if err != nil { panic(err) }
+            if err := os.WriteFile("internal/api/openapi.yaml", data, 0644); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi
+          go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+          npm --prefix frontend run generate:api
+      - name: Generate exact API artifacts
+        run: make generate-api
+      - name: Generate schema contract from canonical catalog
+        run: go test -tags fts5 ./internal/store -run '^TestR1GenerateSchemaContract$' -count=1 -v
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: record-types-generated
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts
+            internal/store/testdata/schema-contracts/*.schema
+          if-no-files-found: error
+      - name: Verify generation is stable
+        run: |
+          sha256sum internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts > /tmp/r1-generated.sha256
+          make generate-api
+          sha256sum --check /tmp/r1-generated.sha256
+
+  sqlite:
+    if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
+    needs: generate
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['1', '0']
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: record-types-generated
+          path: .
+      - name: Focused record, upgrade and schema checks
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+        run: |
+          go test -tags fts5 ./internal/recordtype ./internal/store ./internal/api ./internal/daemonconn ./cmd/docbank -run 'TestContract|TestEffectiveStatus|TestRecord|TestEveryReleasedSchemaFixtureUpgrades|TestStorageSchema|TestBackendContractsSQLite/records|TestCommandGroups' -count=1
+
+  postgres:
+    if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
+    needs: generate
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['16', '18']
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+          POSTGRES_DB: docbank_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U docbank_test" --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: record-types-generated
+          path: .
+      - name: PostgreSQL record contracts
+        env:
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:${{ github.run_id }}@127.0.0.1:5432/docbank_test?sslmode=disable
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/records/' -count=1 -v
+
+  docs:
+    if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
+    needs: generate
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: record-types-generated
+          path: .
+      - run: make docs-build
+
+  lint:
+    if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
+    needs: generate
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: record-types-generated
+          path: .
+      - uses: step-security/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          skip-cache: true
+      - name: Run repository lint
+        if: always()
+        run: make lint
+      - name: Check Huma contract
+        if: always()
+        run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...
+
+  lifecycle:
+    if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
+    needs: generate
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: record-types-generated
+          path: .
+      - name: Exercise synthetic vault lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_home=$(mktemp -d)
+          export DOCBANK_HOME="$task_home/vault"
+          trap 'bin/docbank daemon stop >/dev/null 2>&1 || true; rm -rf "$task_home"' EXIT
+          mkdir -p bin
+          go build -tags fts5 -o bin/docbank ./cmd/docbank
+          bin/docbank types activate contract
+          created=$(bin/docbank record create contract 'Synthetic agreement' --status active --set contract_type=service --set term.end=2026-01-01 --json)
+          id=$(jq -er .record_id <<<"$created")
+          bin/docbank record edit "$id" --title 'Synthetic agreement' --expect-revision 1 --json | jq -e '.revision == 1'
+          if bin/docbank record edit "$id" --title Changed --expect-revision 2; then exit 1; fi
+          bin/docbank record list --type contract --status expired --as-of 2026-01-02 --field contract_type=service --before term.end=2026-01-02 --q SYNTHETIC --json | jq -e '.total == 1'
+          bin/docbank types deactivate contract
+          bin/docbank record list --type contract --as-of 2026-01-02 --json | jq -e '.total == 0'
+          bin/docbank record list --type contract --include-inactive --as-of 2026-01-02 --json | jq -e '.total == 1'
+          bin/docbank types activate contract
+          bin/docbank record retire "$id" --json | jq -e '.retired_at != null'
+          preview=$(bin/docbank audit enable / --json)
+          token=$(jq -er .preview_token <<<"$preview")
+          bin/docbank audit enable --run --token "$token" --acknowledge-permanent-retention
+          if bin/docbank record create contract 'Blocked'; then exit 1; fi
