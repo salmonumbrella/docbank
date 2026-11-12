@@ -621,3 +621,50 @@ func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
 	require.Zero(t, scratch)
 	require.Empty(t, s.LeasedLexicalGenerationRoots())
 }
+
+func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	for i, version := range versions {
+		target := requireDocumentEventTarget(t, s, version)
+		record := documentEventRecord(t, s.VaultID(), version, fmt.Sprintf("e%x", i+1))
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+	}
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	scope := TimelineScope{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"mercury"}`), Zone: "UTC"}
+	assertMatches := func(want int) TimelineDayPage {
+		t.Helper()
+		days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
+		require.NoError(t, err)
+		if want == 0 {
+			require.Empty(t, days.Days)
+		} else {
+			require.EqualValues(t, want, days.Days[0].Count)
+		}
+		page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, want)
+		return page
+	}
+	assertMatches(0)
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, catalogBuildID, "eligible mercury phrase")
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: build.ID, Profile: profile, AttachedAt: "2026-08-22T10:00:00.000000000Z",
+	}
+	require.NoError(t, publishRenditionForTest(t, s, attachment, "2026-08-22T10:01:00.000000000Z", fakeHash("91")))
+	page := assertMatches(1)
+	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	require.Equal(t, node.ID, page.DateOnly[0].NodeID)
+	require.Empty(t, s.LeasedLexicalGenerationRoots())
+}
