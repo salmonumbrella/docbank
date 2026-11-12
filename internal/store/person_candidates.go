@@ -738,49 +738,87 @@ var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces
 
 // VersionCandidate contains only the occurrences belonging to the requested version.
 type VersionCandidate struct {
-	CandidateID, DisplayName, ActorKey string
-	Occurrences                        []PersonCandidateOccurrence
-	OccurrenceLabels                   map[PersonCandidateOccurrence]string
+	CandidateID, ActorKey string
+	Occurrences           []PersonCandidateOccurrence
+	OccurrenceLabels      map[PersonCandidateOccurrence]string
 }
 
-func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
-	// Matched fresh actors are required for emitted occurrences in both modes.
-	// Canonical writes and validated imports store occurrence UUIDs as literal
-	// lowercase ASCII, so the hex filter finds them; exact comparison below
-	// removes false matches. Admission and import validation cap open candidates
-	// at maxOpenPersonCandidates and evidence at maxPersonCandidateEvidence bytes.
-	// Do not truncate the results.
-	evidenceHex := "hex(evidence_json)"
-	if s.postgresSchema != "" {
-		evidenceHex = "upper(encode(evidence_json, 'hex'))"
-	}
-	rows, err := q.QueryContext(ctx, `SELECT candidate_id,display_name,actor_key,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match' AND `+evidenceHex+` LIKE $1 ORDER BY created_at,candidate_id`, fmt.Sprintf("%%%X%%", versionID))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	result := []VersionCandidate{}
-	for rows.Next() {
-		var c VersionCandidate
-		var raw []byte
-		if err := rows.Scan(&c.CandidateID, &c.DisplayName, &c.ActorKey, &raw); err != nil {
-			return nil, err
+func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string, actorKeys []string) ([]VersionCandidate, error) {
+	// Each emitted occurrence must match a fresh actor. Deduplicate keys before
+	// querying both partial-index partitions, without limiting the results.
+	keys := make([]string, 0, len(actorKeys))
+	seen := make(map[string]bool, len(actorKeys))
+	for _, key := range actorKeys {
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
 		}
-		occurrences, err := decodeStoredCandidateEvidence(raw)
+	}
+	type orderedCandidate struct {
+		VersionCandidate
+
+		createdAt string
+	}
+	var candidates []orderedCandidate
+	// Keep the parameter count portable across SQLite builds and PostgreSQL.
+	for start := 0; start < len(keys); start += 400 {
+		chunk := keys[start:min(start+400, len(keys))]
+		args := make([]any, len(chunk)+1)
+		placeholders := make([]string, len(chunk))
+		for i, key := range chunk {
+			args[i] = key
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+		}
+		args[len(chunk)] = versionID
+		versionParam := fmt.Sprintf("$%d", len(args))
+		membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o WHERE json_extract(o.value, '$.content_version_id') = ` + versionParam + `)`
+		if s.postgresSchema != "" {
+			membership = `EXISTS (SELECT 1 FROM jsonb_array_elements(convert_from(evidence_json,'UTF8')::jsonb) o(value) WHERE o.value->>'content_version_id' = ` + versionParam + `)`
+		}
+		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `) AND ` + membership
+		columns := `candidate_id,actor_key,evidence_json,created_at`
+		query := `SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NULL AND ` + filter +
+			` UNION ALL SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NOT NULL AND ` + filter
+		err := func() error {
+			rows, err := q.QueryContext(ctx, query, args...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var c orderedCandidate
+				var raw []byte
+				if err := rows.Scan(&c.CandidateID, &c.ActorKey, &raw, &c.createdAt); err != nil {
+					return err
+				}
+				occurrences, err := decodeStoredCandidateEvidence(raw)
+				if err != nil {
+					return err
+				}
+				for _, occurrence := range occurrences {
+					if occurrence.ContentVersionID == versionID {
+						c.Occurrences = append(c.Occurrences, occurrence)
+					}
+				}
+				if len(c.Occurrences) > 0 {
+					candidates = append(candidates, c)
+				}
+			}
+			return rows.Err()
+		}()
 		if err != nil {
 			return nil, err
 		}
-		for _, occurrence := range occurrences {
-			if occurrence.ContentVersionID == versionID {
-				c.Occurrences = append(c.Occurrences, occurrence)
-			}
-		}
-		if len(c.Occurrences) > 0 {
-			result = append(result, c)
-		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	slices.SortFunc(candidates, func(a, b orderedCandidate) int {
+		if n := strings.Compare(a.createdAt, b.createdAt); n != 0 {
+			return n
+		}
+		return strings.Compare(a.CandidateID, b.CandidateID)
+	})
+	result := make([]VersionCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		result = append(result, c.VersionCandidate)
 	}
 	return result, nil
 }

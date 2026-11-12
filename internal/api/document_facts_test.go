@@ -66,16 +66,36 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 
 func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	t.Parallel()
-	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{PersonID: "visible", DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
+	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{PersonID: "visible", DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
 	f.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Private Bcc", State: "provisional", Origin: "derived"}, Visible: true}
 	f.Edges[0].RawLabel = "Public Author"
 	// The store supplies already-filtered candidate occurrences for safe reads.
 	safeFacts := f
 	safeFacts.Edges = f.Edges[:2]
-	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Private Name", Occurrences: []store.PersonCandidateOccurrence{{Role: "author"}}, OccurrenceLabels: map[store.PersonCandidateOccurrence]string{{Role: "author"}: "Recipient"}}}
+	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.PersonCandidateOccurrence{{Role: "author"}}, OccurrenceLabels: map[store.PersonCandidateOccurrence]string{{Role: "author"}: "Recipient"}}}
 	safe := versionPeopleAPI(safeFacts, true, "")
 	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || safe.Edges[0].DisplayName != "Public Author" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
 		t.Fatalf("safe: %+v", safe)
+	}
+	// Only explicit assignments may use a provisional derived catalog name in safe reads.
+	for _, tc := range []struct {
+		name, evidence, basis, label, want string
+	}{
+		{"automatic", "source_metadata", "identifier_match", "Public Author", "Public Author"},
+		{"automatic empty label", "source_metadata", "identifier_match", "", ""},
+		{"operator assertion", "operator_assertion", "operator_assigned", "", "Private Bcc"},
+		{"operator custodian", "custodian_assignment", "operator_assigned", "Assigned Label", "Private Bcc"},
+		{"inferred custodian", "custodian_assignment", "package_column", "Package Label", "Package Label"},
+		{"inferred custodian empty label", "custodian_assignment", "transfer_record", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			edgeFacts := safeFacts
+			edgeFacts.Edges = []document.DocumentPersonEdgeV1{{PersonID: "visible", EvidenceKind: tc.evidence, Basis: tc.basis, RawLabel: tc.label}}
+			got := versionPeopleAPI(edgeFacts, true, "")
+			if len(got.Edges) != 1 || got.Edges[0].DisplayName != tc.want || got.Edges[0].RawLabel != tc.label {
+				t.Fatalf("safe edges = %+v; want name %q and label %q", got.Edges, tc.want, tc.label)
+			}
+		})
 	}
 	safeFacts.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Confirmed Name", State: "curated", Origin: "derived"}, Visible: true}
 	if got := versionPeopleAPI(safeFacts, true, "").Edges[0].DisplayName; got != "Confirmed Name" {

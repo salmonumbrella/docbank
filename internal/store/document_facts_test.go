@@ -7,9 +7,9 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestDocumentFactsDatesState(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentFactsDatesState(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
 	version, _ := ingestDocumentEventTarget(t, s, "example.txt", "a1")
 	facts, err := s.DocumentDateFacts(t.Context(), version.ID)
 	require.NoError(t, err)
@@ -109,6 +109,9 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NotEmpty(t, facts.Edges)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
 	require.NoError(t, err)
+	edges, _, err := s.DocumentPeopleForVersion(t.Context(), version.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	require.Empty(t, edges)
 	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
 	require.Equal(t, "pending", facts.State)
@@ -124,9 +127,9 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.Empty(t, facts.Edges)
 }
 
-func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *Store) (*Store, string, DocumentPeopleInputs, PersonDocumentAssertion) {
+	t.Helper()
+	s := newStore(t)
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "recipient", Sensitive: true}
 	version, target := ingestDocumentEventTarget(t, s, "sensitive.txt", "d9")
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d9")
@@ -137,10 +140,20 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
 	require.NoError(t, err)
+	person, err := s.CreatePerson(t.Context(), "Asserted Author", "operator")
+	require.NoError(t, err)
+	assertion, err := s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET display_name=$1 WHERE actor_key=$2`, "Private Name", "email:sender@example.test")
-	require.NoError(t, err)
+	// Exact email actors are auto-provisioned, so seed the unresolved candidate
+	// whose mixed-disclosure occurrences this test exercises.
+	senderCandidate := candidateForTest(t, "email:sender@example.test", "Private Name", "", []PersonCandidateOccurrence{
+		{ContentVersionID: version.ID, Role: "blind_copy", EvidenceKind: "source_metadata", EvidenceID: record.Events[0].EvidenceID},
+		{ContentVersionID: version.ID, Role: "sender", EvidenceKind: "source_metadata", EvidenceID: record.Events[0].EvidenceID},
+	})
+	senderCandidate.Reason = "identifier_conflict"
+	openCandidateForTest(t, s, senderCandidate)
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:unmatched", "Unmatched", "", []PersonCandidateOccurrence{{ContentVersionID: version.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "missing"}}))
 	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
 	require.NoError(t, err)
@@ -148,7 +161,6 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	for _, c := range safe.Candidates {
 		if c.ActorKey == "email:sender@example.test" {
 			require.Len(t, c.Occurrences, 1)
-			require.Equal(t, "Private Name", c.DisplayName)
 			require.Equal(t, "sender@example.test", c.OccurrenceLabels[c.Occurrences[0]])
 			foundSender = true
 		} else {
@@ -158,7 +170,7 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	require.True(t, foundSender)
 	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
-	require.Len(t, full.Candidates, 3)
+	require.Len(t, full.Candidates, 2)
 	for _, c := range full.Candidates {
 		if c.ActorKey == "email:sender@example.test" {
 			for _, o := range c.Occurrences {
@@ -168,22 +180,47 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 			}
 		}
 	}
+	return s, version.ID, input, assertion
+}
+
+func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s, versionID, input, assertion := sensitiveUnresolvedActorFixture(t, newStore)
 	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
-	failed, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
+}
+
+func TestDocumentPeopleFactsSuppressionIgnoresCorruptEventGeneration(t *testing.T) {
+	t.Parallel()
+	s, versionID, input, assertion := sensitiveUnresolvedActorFixture(t, newTestStore)
+	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
+	// The current event generation is unused while candidate reads are suppressed.
+	_, err := s.db.ExecContext(t.Context(), `DROP TRIGGER document_event_generations_immutable_update`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), versionID)
+	require.NoError(t, err)
+	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
+}
+
+func checkSuppressedPeopleCandidates(t *testing.T, s *Store, versionID string, assertion PersonDocumentAssertion) {
+	t.Helper()
+	failed, err := s.DocumentPeopleFacts(t.Context(), versionID, false)
 	require.NoError(t, err)
 	require.Equal(t, "failed", failed.State)
 	require.Empty(t, failed.Candidates)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
+	require.Equal(t, []PersonDocumentAssertion{assertion}, failed.Assertions)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", versionID)
 	require.NoError(t, err)
-	pending, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	pending, err := s.DocumentPeopleFacts(t.Context(), versionID, false)
 	require.NoError(t, err)
 	require.Equal(t, "pending", pending.State)
 	require.Empty(t, pending.Candidates)
+	require.Equal(t, []PersonDocumentAssertion{assertion}, pending.Assertions)
 }
 
-func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
 	ctx := t.Context()
 	photo := browsePhotoNode(t, s, "hidden-facts.jpg", fakeHash("c2"), "image/jpeg")
 	asset, err := s.PhotoAssetForNode(ctx, photo.ID)

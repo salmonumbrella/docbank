@@ -102,10 +102,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if err != nil {
 		return DocumentPeopleFacts{}, err
 	}
-	_, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
-	if err != nil {
-		return DocumentPeopleFacts{}, err
-	}
 	facts := DocumentPeopleFacts{Version: version, State: factsStateNone, Edges: []document.DocumentPersonEdgeV1{}, Assertions: []PersonDocumentAssertion{}, Candidates: []VersionCandidate{}, Persons: map[string]FactPerson{}}
 	edges, head, err := documentPeopleForVersionTx(ctx, tx, versionID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -139,15 +135,26 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		facts.Assertions = slices.DeleteFunc(facts.Assertions, func(a PersonDocumentAssertion) bool { return a.Role == "blind_copy" })
 	}
+	var events []document.DocumentEventV1
 	if facts.State != factsStatePending && facts.State != factsStateFailed {
-		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID)
+		_, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
+		if err != nil {
+			return DocumentPeopleFacts{}, err
+		}
+		events = eventView.Events.Events
+		var actorKeys []string
+		for _, event := range events {
+			for _, actor := range event.Actors {
+				actorKeys = append(actorKeys, actor.ActorKey)
+			}
+		}
+		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID, actorKeys)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
 		}
 	}
 	// Candidates omit sensitivity. Match each occurrence to the current event
 	// generation and fail closed when its authoritative evidence is absent.
-	events := eventView.Events.Events
 	for i := range facts.Candidates {
 		c := &facts.Candidates[i]
 		c.OccurrenceLabels = make(map[PersonCandidateOccurrence]string)

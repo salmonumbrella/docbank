@@ -2,9 +2,10 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"uuid"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -21,21 +22,20 @@ func documentFactsSelection(raw []byte) (documentFactsInput, error) {
 	if err := decodeReadArguments(raw, &in); err != nil {
 		return in, err
 	}
-	if (in.NodeID > 0) == (in.ContentVersionID != "") || in.NodeID < 0 || in.ContentVersionID != "" && !daemonconn.IsCanonicalUUIDv4(in.ContentVersionID) {
-		return in, invalidToolArgumentsError()
-	}
 	return in, nil
 }
 
 type documentDatesOutput struct {
 	privateCache
 	api.VersionDates
+
 	Offset     int  `json:"offset"`
 	NextOffset *int `json:"next_offset,omitzero"`
 }
 type documentPeopleOutput struct {
 	privateCache
 	api.VersionPeople
+
 	Offset     int  `json:"offset"`
 	NextOffset *int `json:"next_offset,omitzero"`
 }
@@ -45,46 +45,54 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 	if err != nil {
 		return nil, err
 	}
-	return daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (any, error) {
+	type factsResponse struct {
+		dates     *api.VersionDates
+		people    *api.VersionPeople
+		noVersion bool
+	}
+	response, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (factsResponse, error) {
 		id := in.ContentVersionID
 		if in.NodeID > 0 {
 			node, err := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: in.NodeID}})
 			if err != nil {
-				return nil, err
+				return factsResponse{}, err
 			}
 			id = node.CurrentVersionID
 			if id == "" {
-				return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
+				return factsResponse{noVersion: true}, nil
 			}
 		}
 		version, err := uuid.Parse(id)
 		if err != nil {
-			return nil, invalidToolArgumentsError()
+			return factsResponse{}, fmt.Errorf("parse content version ID: %w", err)
 		}
 		if kind == "dates" {
 			d := apiclient.GetVersionDatesQueryDisclosure("safe")
 			result, err := c.API().GetVersionDates(ctx, &apiclient.GetVersionDatesRequestOptions{PathParams: &apiclient.GetVersionDatesPath{VersionID: version}, Query: &apiclient.GetVersionDatesQuery{Disclosure: &d}})
-			if err != nil {
-				return nil, err
-			}
-			return documentDatesPage(*result, in.Offset)
+			return factsResponse{dates: result}, err
 		}
 		d := apiclient.GetVersionPeopleQueryDisclosure("safe")
 		result, err := c.API().GetVersionPeople(ctx, &apiclient.GetVersionPeopleRequestOptions{PathParams: &apiclient.GetVersionPeoplePath{VersionID: version}, Query: &apiclient.GetVersionPeopleQuery{Disclosure: &d}})
-		if err != nil {
-			return nil, err
-		}
-		return documentPeoplePage(*result, in.Offset)
+		return factsResponse{people: result}, err
 	})
+	if err != nil {
+		return nil, err
+	}
+	if response.dates != nil {
+		return documentDatesPage(*response.dates, in.Offset)
+	}
+	if response.people != nil {
+		return documentPeoplePage(*response.people, in.Offset)
+	}
+	if response.noVersion {
+		return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
+	}
+	return nil, errors.New("document facts response is empty")
 }
 
 // documentDatesPage pages claims followed by diagnostics, retaining the primary
 // and version metadata on every page. Oversized individual items fail visibly.
 func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput, error) {
-	const maxItems = document.MaxDocumentEvents + document.MaxDocumentEventsEncodedBytes/32
-	if offset < 0 || offset > maxItems {
-		return documentDatesOutput{}, invalidToolArgumentsError()
-	}
 	total := len(dates.Claims) + len(dates.Diagnostics)
 	start := min(offset, total)
 	output := documentDatesOutput{privateCache: newPrivateCache(), VersionDates: dates, Offset: start}
@@ -110,9 +118,6 @@ func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput,
 
 // documentPeoplePage traverses edges, assertions and unresolved names in order.
 func documentPeoplePage(people api.VersionPeople, offset int) (documentPeopleOutput, error) {
-	if offset < 0 || offset > 1<<31-1 {
-		return documentPeopleOutput{}, invalidToolArgumentsError()
-	}
 	edges, assertions := len(people.Edges), len(people.Assertions)
 	total := edges + assertions + len(people.Unresolved)
 	start := min(offset, total)
