@@ -385,6 +385,11 @@ Photo metadata edits and undo, XMP conflict settlement and sidecar publication
 also use shared operations for explicit asset selections. Quality scores, hidden-photo
 sessions and photo settings have native Store contracts as well.
 
+The internal timeline day and day-count operations accept only unscoped Query
+values on PostgreSQL, with duplicate collapsing allowed. Narrowing scopes return
+`ErrTimelineScopeUnsupported`; shared Query and search portability is tracked in
+`docbank#p4dq`. SQLite retains arbitrary Query scope.
+
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
@@ -576,7 +581,8 @@ GRANT INSERT, DELETE, UPDATE(suggested_person_id, state, decided_person_id, deci
 GRANT INSERT, DELETE ON documents.person_candidate_faces TO docbank_runtime;
 GRANT UPDATE(assertion_id) ON documents.photo_faces TO docbank_runtime;
 GRANT INSERT ON documents.source_metadata_generations, documents.document_event_generations,
-    documents.document_events, documents.document_event_actors, documents.document_event_primaries
+    documents.document_events, documents.document_event_actors, documents.document_event_primaries,
+    documents.document_date_keys
     TO docbank_runtime;
 GRANT INSERT, UPDATE(generation_id, published_at)
     ON documents.source_metadata_heads TO docbank_runtime;

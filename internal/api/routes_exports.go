@@ -68,6 +68,7 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		Body    bundle.SourceRequest
 		RawBody []byte
 	}) (*sourceOutput, error) {
+		ctx = browserPeopleScope(ctx)
 		owner, err := exportOwner(ctx)
 		if err != nil {
 			return nil, err
@@ -137,6 +138,12 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return err
 		})
 		if err != nil {
+			if errors.Is(err, store.ErrDocumentDatesPending) {
+				return nil, workspaceQueryError(err)
+			}
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
 				return nil, workspaceQueryError(err)
 			}

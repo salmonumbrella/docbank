@@ -145,12 +145,16 @@ func (s *Store) ListPhotoAssets(
 	dimensions, coverage := request.Facets, request.Coverage
 	var page PhotoBrowsePage
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+		ctx, err := s.scopeQueryPeople(ctx, q)
+		if err != nil {
+			return err
+		}
 		if request.Hidden {
 			if _, err := s.hiddenSession(ctx, q); err != nil {
 				return err
 			}
 		}
-		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(
+		compiled, err := (queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(
 			ctx, request.Query, queryResolver{q: q})
 		if err != nil {
 			return err
@@ -245,7 +249,7 @@ func (s *Store) ListPhotoAssets(
 		if boundary == nil {
 			countScope := scope
 			if len(request.assetIDs) == 0 {
-				countCompiled, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
+				countCompiled, err := (queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
 				if err != nil {
 					return err
 				}

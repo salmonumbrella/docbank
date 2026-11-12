@@ -41,15 +41,38 @@ type lexicalOperand struct {
 }
 
 type compiledQueryFragment struct {
-	lexical   []lexicalOperand
-	sql       string
-	args      []any
-	relations compiledQueryRelations
+	lexical     []lexicalOperand
+	sql         string
+	args        []any
+	relations   compiledQueryRelations
+	personEdges bool
+	leaves      []compiledLeaf
+}
+
+// compiledLeaf records one complete CTE-bearing operand inside a fragment:
+// its SQL byte and argument intervals [start,end) and the shared relations it
+// reads. Occurrences are disjoint and stay in SQL order through wrap and join.
+type compiledLeaf struct {
+	sqlStart, sqlEnd int
+	argStart, argEnd int
+	relations        compiledQueryRelations
+}
+
+// atomicCompiledLeaf marks a whole operand fragment as one leaf occurrence.
+func atomicCompiledLeaf(fragment compiledQueryFragment) compiledQueryFragment {
+	fragment.leaves = []compiledLeaf{{
+		sqlEnd: len(fragment.sql), argEnd: len(fragment.args), relations: fragment.relations,
+	}}
+	return fragment
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
 // parameterized document-membership predicate.
 type CompiledQuery struct {
+	Timezone          string
+	TimezoneDefaulted bool
+	FullDisclosure    bool
+
 	Query        query.Query
 	Dependencies []query.Dependency
 
@@ -57,6 +80,7 @@ type CompiledQuery struct {
 	withoutSuggestion bool
 	predicate         compiledQueryFragment
 	positiveTextTerms []string
+	roleMatches       []compiledRoleMatch
 }
 
 // compileQuery resolves references and compiles one bounded query without
@@ -69,20 +93,57 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
+	photos            bool
+	fullDisclosure    bool
+	requireFreshDates bool
+	dateZone          string
+
 	photoDisplayMetadata bool
 	photoMetadataSet     bool
 	photoMetadataDensity func(string) (bool, error)
 	pdfOnly              bool
 	photoHidden          bool
+	safePeople           bool
+	hideLocked           string
+	personNames          func(string) ([]string, error)
 }
 
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
+	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
+	c.hideLocked = "0"
+	if c.safePeople && queryPeopleHideLocked(ctx) {
+		c.hideLocked = "1"
+	}
+	mentionNames := make(map[string][]string)
+	if r, ok := resolver.(queryResolver); ok {
+		c.personNames = func(id string) ([]string, error) {
+			if names, ok := mentionNames[id]; ok {
+				return names, nil
+			}
+			names, err := r.personMentionNames(ctx, id)
+			if err == nil {
+				mentionNames[id] = names
+			}
+			return names, err
+		}
+	}
+	if c.photos {
+		if err := ValidatePhotoDocumentDates(value); err != nil {
+			return CompiledQuery{}, err
+		}
+	}
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
 	}
+	if c.photos {
+		if err := validateResolvedPhotoDates(resolved); err != nil {
+			return CompiledQuery{}, err
+		}
+	}
+	zone, defaulted := resolveDocumentDateZones(&resolved, QueryDefaultZone(ctx))
 	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
 		c.photoMetadataDensity = func(value string) (bool, error) {
 			return r.photoMetadataHeadsFirst(ctx, value)
@@ -92,11 +153,24 @@ func (c queryCompiler) compile(
 	if err != nil {
 		return CompiledQuery{}, err
 	}
+	if zone != "" && c.requireFreshDates {
+		if r, ok := resolver.(queryResolver); ok {
+			if q, ok := r.q.(metadataQuerier); ok {
+				if err := requireDocumentDateIndex(ctx, q); err != nil {
+					return CompiledQuery{}, err
+				}
+			}
+		}
+	}
 	compiled := CompiledQuery{
-		Query: resolved.Query, Dependencies: resolved.Dependencies,
+		Query: resolved.Query, Dependencies: resolved.Dependencies, Timezone: zone, TimezoneDefaulted: defaulted, FullDisclosure: c.fullDisclosure,
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
-		positiveTextTerms: query.PositiveTextTerms(resolved),
+		positiveTextTerms: query.PositiveTextTermsWithMentions(resolved, mentionNames),
+	}
+	compiled.roleMatches, err = c.collectRoleMatches(resolved)
+	if err != nil {
+		return CompiledQuery{}, err
 	}
 	if _, err := compiled.bind("", nil); err != nil {
 		return CompiledQuery{}, err
@@ -111,6 +185,10 @@ func (compiled CompiledQuery) PositiveTextTerms() []string {
 }
 
 func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, error) {
+	c.dateZone = ""
+	if resolved.Query.Timezone != nil {
+		c.dateZone = *resolved.Query.Timezone
+	}
 	if resolved.Query.Sort.Field == "relevance" && !c.photoDisplayMetadata {
 		return compiledQueryFragment{},
 			compileExpressionError(0, len(resolved.Query.Text), "relevance sort is not supported by bound queries")
@@ -125,10 +203,17 @@ func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compi
 			expression = c.compileLexicalPredicate(fts, true)
 		}
 	} else {
-		expression, err = c.compileResolvedExpression(resolved.Expression, "")
+		expression, err = c.compileDateScope(resolved.Expression, resolved.Query.Filters.DocumentDate)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
+	}
+	if resolved.Query.Syntax == "simple" && resolved.Query.Filters.DocumentDate != nil {
+		part, dateErr := c.compileDatePredicate(dateScope{ranges: [][2]string{{resolved.Query.Filters.DocumentDate.From, resolved.Query.Filters.DocumentDate.To}}, kinds: resolved.Query.Filters.DocumentDate.Kinds, precisionGroups: datePrecisionGroup(resolved.Query.Filters.DocumentDate.Precisions)})
+		if dateErr != nil {
+			return compiledQueryFragment{}, dateErr
+		}
+		expression = joinCompiledFragments([]compiledQueryFragment{expression, part}, ` AND `)
 	}
 	filters, err := c.compileQueryFilters(resolved.Query.Filters, 0, len(resolved.Query.Text))
 	if err != nil {
@@ -192,11 +277,20 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 		if c.pdfOnly && query.PDFFieldKind(syntax.Field) == "" {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
 		}
+		if field == "" && query.IsDocumentDateField(syntax.Field) {
+			return c.compileDateScope(expression, nil)
+		}
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")
 		}
+		if syntax.Field == "between" {
+			return c.compileBetween(expression)
+		}
 		return c.compileResolvedExpression(expression.Children[0], syntax.Field)
 	case query.ExpressionAnd, query.ExpressionOr:
+		if syntax.Kind == query.ExpressionAnd && field == "" {
+			return c.compileDateScope(expression, nil)
+		}
 		parts, err := c.compileAssociativeChildren(expression, field, syntax.Kind)
 		if err != nil {
 			return compiledQueryFragment{}, err
@@ -279,7 +373,35 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
 		}
-		return c.compilePersonPredicate(expression.Dependency.ID), nil
+		return c.compilePersonPredicate(expression.Dependency.ID, nil), nil
+	case slices.Contains([]string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee"}, field):
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+		}
+		if expression.Dependency == nil {
+			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
+		}
+		roles, err := rolesForOperand(field, c.safePeople)
+		if err != nil {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, err.Error())
+		}
+		return c.compilePersonPredicate(expression.Dependency.ID, roles), nil
+	case field == "mentions":
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+		}
+		if expression.Dependency == nil || c.personNames == nil {
+			return compiledQueryFragment{}, errors.New("resolved mention lacks names")
+		}
+		names, err := c.personNames(expression.Dependency.ID)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+		parts := make([]compiledQueryFragment, 0, len(names))
+		for _, name := range names {
+			parts = append(parts, compileDocumentContentPredicate(quoteFTSOperand(name, false)))
+		}
+		return joinCompiledFragments(parts, ` OR `), nil
 	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
@@ -326,9 +448,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 	nested, err := c.compileResolvedQuery(*expression.Saved)
 	if err != nil {
 		if expressionErr, ok := errors.AsType[*query.ExpressionError](err); ok {
-			return compiledQueryFragment{}, compileExpressionError(
-				expression.Syntax.Start, expression.Syntax.End, expressionErr.Message,
-			)
+			return compiledQueryFragment{}, &query.ExpressionError{Offset: expression.Syntax.Start, End: expression.Syntax.End, Message: expressionErr.Message, Cause: expressionErr}
 		}
 		return compiledQueryFragment{}, err
 	}
@@ -341,12 +461,9 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 		}, ` AND `)
 	}
 	population := selectCompiledPopulation(nested, true)
-	return compiledQueryFragment{
-		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
+	return wrapCompiledFragment(population, `EXISTS (SELECT 1 FROM (`, `) saved_population
 			WHERE saved_population.node_id=n.id
-			  AND saved_population.content_version_id=cv.version_id)`,
-		args: population.args, relations: population.relations, lexical: nested.lexical,
-	}, nil
+			  AND saved_population.content_version_id=cv.version_id)`), nil
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
@@ -354,7 +471,7 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 		return compilePDFPredicate(field, value, start, end)
 	}
 	if field == "person" {
-		return c.compilePersonPredicate(value), nil
+		return c.compilePersonPredicate(value, nil), nil
 	}
 	if isPhotoScalarField(field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
@@ -407,11 +524,21 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 }
 
 func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
+	var people []compiledQueryFragment
+	for _, entry := range filters.People {
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{}, compileExpressionError(start, end, "role operands apply to documents, not photos")
+		}
+		if c.safePeople && slices.Contains(entry.Roles, "blind_copy") {
+			return compiledQueryFragment{}, compileExpressionError(start, end, "bcc: is not available in browser sessions")
+		}
+		people = append(people, c.compilePersonPredicate(entry.PersonID, entry.Roles))
+	}
 	photo, err := c.compilePhotoFilters(filters, start, end)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	parts := []compiledQueryFragment{photo,
+	parts := []compiledQueryFragment{photo, joinCompiledFragments(people, ` AND `),
 		compileValuePredicates(filters.Paths, compilePathPredicate),
 		negateCompiledFragment(compileValuePredicates(filters.ExcludePaths, compilePathPredicate)),
 		compileValuePredicates(filters.CollectionIDs, compileCollectionPredicate),
@@ -468,11 +595,11 @@ func compileSizePredicate(field string, bound int64) compiledQueryFragment {
 func compileTextCoveragePredicate(value string, start, end int) (compiledQueryFragment, error) {
 	switch value {
 	case "complete", "partial", "failed", "unprocessed", "none", "unavailable":
-		return compiledQueryFragment{
+		return atomicCompiledLeaf(compiledQueryFragment{
 			sql: `EXISTS (SELECT 1 FROM processing_coverage pc
 				WHERE pc.node_id=n.id AND pc.version_id=cv.version_id AND pc.state=?)`,
 			args: []any{value}, relations: compiledRelationProcessingCoverage,
-		}, nil
+		}), nil
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "invalid text_coverage operand")
 	}
@@ -487,13 +614,13 @@ func compileHasDuplicatesPredicate(value string, start, end int) (compiledQueryF
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "has_duplicates operand must be true or false")
 	}
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: negate + `EXISTS (SELECT 1 FROM current_content_members duplicate_member
 			WHERE duplicate_member.blob_hash=cv.blob_hash
 			  AND duplicate_member.size=cv.size
 			  AND duplicate_member.node_id<>n.id)`,
 		relations: compiledRelationCurrentContent,
-	}, nil
+	}), nil
 }
 
 func compileValuePredicates(
@@ -510,7 +637,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 	if path == "/" {
 		return trueCompiledFragment()
 	}
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: `EXISTS (
 			WITH RECURSIVE query_ancestry(id,parent_id,path) AS (
 				SELECT n.id,n.parent_id,n.name
@@ -526,7 +653,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 			  AND (path=? OR substr(path,1,length(?)+1)=? || '/')
 		)`,
 		args: []any{path, path, path},
-	}
+	})
 }
 
 func compileTagPredicate(id string) compiledQueryFragment {
@@ -537,11 +664,11 @@ func compileTagPredicate(id string) compiledQueryFragment {
 }
 
 func compileCollectionPredicate(id string) compiledQueryFragment {
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: `EXISTS (WITH ` + CollectionMembershipCTE + `
 			SELECT 1 FROM collection_members cm WHERE cm.node_id=n.id AND cm.ingest_id=?)`,
 		args: []any{id},
-	}
+	})
 }
 
 func compileMIMEPredicate(value string) compiledQueryFragment {
@@ -576,8 +703,18 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	if !includeContent {
 		return name
 	}
+	content := compileDocumentContentPredicate(fts)
+	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
+	parts := []compiledQueryFragment{name, content}
+	if c.photoDisplayMetadata {
+		parts = append(parts, metadata, photoAssetTextPredicate(fts))
+	}
+	return joinCompiledFragments(parts, ` OR `)
+}
+
+func compileDocumentContentPredicate(fts string) compiledQueryFragment {
 	marker := compiledGenerationArgument{}
-	content := compiledQueryFragment{
+	return compiledQueryFragment{
 		sql: `(
 			(?='' AND cv.blob_hash IN (
 				SELECT content_fts.blob_hash FROM content_fts WHERE content_fts MATCH ?
@@ -599,12 +736,6 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 		)`,
 		args: []any{marker, fts, marker, compiledProfileArgument{}, compiledProfileArgument{}, fts, marker},
 	}
-	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
-	parts := []compiledQueryFragment{name, content}
-	if c.photoDisplayMetadata {
-		parts = append(parts, metadata, photoAssetTextPredicate(fts))
-	}
-	return joinCompiledFragments(parts, ` OR `)
 }
 
 // photoAssetTextPredicate matches a photo when any live, non-sidecar file of
@@ -634,9 +765,9 @@ func negateCompiledFragment(fragment compiledQueryFragment) compiledQueryFragmen
 	for i := range lexical {
 		lexical[i].negated = !lexical[i].negated
 	}
-	return compiledQueryFragment{
-		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations, lexical: lexical,
-	}
+	fragment = wrapCompiledFragment(fragment, `NOT (`, `)`)
+	fragment.lexical = lexical
+	return fragment
 }
 
 func compiledLiveCurrentPredicate() compiledQueryFragment {
@@ -649,23 +780,106 @@ func trueCompiledFragment() compiledQueryFragment {
 	return compiledQueryFragment{sql: `1`}
 }
 
+// wrapCompiledFragment preserves fragment metadata while wrapping its SQL.
+func wrapCompiledFragment(fragment compiledQueryFragment, prefix, suffix string) compiledQueryFragment {
+	fragment.sql = prefix + fragment.sql + suffix
+	fragment.leaves = appendShiftedLeaves(nil, fragment.leaves, len(prefix), 0)
+	return fragment
+}
+
+// appendShiftedLeaves copies leaf occurrences to their offsets in a composed
+// fragment; source descriptors are never modified.
+func appendShiftedLeaves(dst, leaves []compiledLeaf, sqlOffset, argOffset int) []compiledLeaf {
+	for _, leaf := range leaves {
+		leaf.sqlStart += sqlOffset
+		leaf.sqlEnd += sqlOffset
+		leaf.argStart += argOffset
+		leaf.argEnd += argOffset
+		dst = append(dst, leaf)
+	}
+	return dst
+}
+
 func joinCompiledFragments(parts []compiledQueryFragment, operator string) compiledQueryFragment {
-	var sqlParts []string
-	var args []any
-	var relations compiledQueryRelations
-	var lexical []lexicalOperand
+	var result compiledQueryFragment
 	for _, part := range parts {
 		if part.sql == "" {
 			continue
 		}
-		sqlParts = append(sqlParts, `(`+part.sql+`)`)
-		args = append(args, part.args...)
-		relations |= part.relations
-		lexical = append(lexical, part.lexical...)
+		if result.sql != "" {
+			result.sql += operator
+		}
+		result.leaves = appendShiftedLeaves(result.leaves, part.leaves, len(result.sql)+1, len(result.args))
+		result.sql += `(` + part.sql + `)`
+		result.args = append(result.args, part.args...)
+		result.relations |= part.relations
+		result.personEdges = result.personEdges || part.personEdges
+		result.lexical = append(result.lexical, part.lexical...)
 	}
-	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical}
+	return result
 }
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {
 	return &query.ExpressionError{Offset: start, End: end, Message: message}
+}
+
+func (c queryCompiler) compileBetween(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
+	syntax := expression.Syntax
+	if c.photoDisplayMetadata {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "role operands apply to documents, not photos")
+	}
+	if len(expression.Children) != 1 || len(expression.Children[0].Children) != 2 {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
+	}
+	children := expression.Children[0].Children
+	if children[0].Dependency == nil || children[1].Dependency == nil || children[0].Dependency.ID == children[1].Dependency.ID {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
+	}
+	return joinCompiledFragments([]compiledQueryFragment{c.compilePersonPredicate(children[0].Dependency.ID, betweenPersonRoles), c.compilePersonPredicate(children[1].Dependency.ID, betweenPersonRoles)}, ` AND `), nil
+}
+
+// ValidatePhotoDocumentDates rejects document-only vocabulary before ranking changes intent.
+func ValidatePhotoDocumentDates(value query.Query) error {
+	if query.UsesDocumentDate(value) {
+		return compileExpressionError(0, len(value.Text), "document dates are only supported in Documents")
+	}
+	return nil
+}
+
+// ValidatePhotoQuery resolves saved scopes before a photo ranking operation starts.
+func (s *Store) ValidatePhotoQuery(ctx context.Context, value query.Query) error {
+	if err := ValidatePhotoDocumentDates(value); err != nil {
+		return err
+	}
+	lexical := value
+	lexical.Mode = query.ModeLexical
+	resolved, err := query.ResolveQuery(ctx, lexical, queryResolver{q: s.db})
+	if err != nil {
+		return err
+	}
+	return validateResolvedPhotoDates(resolved)
+}
+
+func validateResolvedPhotoDates(resolved query.ResolvedQuery) error {
+	if err := ValidatePhotoDocumentDates(resolved.Query); err != nil {
+		return err
+	}
+	var visit func(*query.ResolvedExpression) error
+	visit = func(e *query.ResolvedExpression) error {
+		if e == nil {
+			return nil
+		}
+		if e.Saved != nil {
+			if err := validateResolvedPhotoDates(*e.Saved); err != nil {
+				return err
+			}
+		}
+		for _, child := range e.Children {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return visit(resolved.Expression)
 }

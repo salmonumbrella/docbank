@@ -22,6 +22,27 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "timeline-day-query", postgres: "native operations", scope: "Unscoped safe current document placements and day counts; shared Query/search remains unqualified (docbank#p4dq).", scenarios: []backendScenario{
+		{"TimelineDaysUndatedAndPending", func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newTestStore) }, func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore) }},
+		{"TimelinePeopleScopeRespectsHiddenLock", func(t *testing.T) { checkTimelinePeopleScopeRespectsHiddenLock(t, newTestStore) }, func(t *testing.T) { checkTimelinePeopleScopeRespectsHiddenLock(t, newPostgresQueryStore) }},
+		{"TimelineDuplicateCollapse", func(t *testing.T) { checkTimelineDuplicateCollapse(t, newTestStore) }, func(t *testing.T) { checkTimelineDuplicateCollapse(t, newPostgresQueryStore) }},
+		{"TimelineHydrationCandidateEvidence", func(t *testing.T) { checkTimelineHydrationCandidateEvidence(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationCandidateEvidence(t, newPostgresQueryStore) }},
+		{"TimelineHydrationChunking", func(t *testing.T) { checkTimelineHydrationChunking(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationChunking(t, newPostgresQueryStore) }},
+		{"TimelineHydrationEmailFamily", func(t *testing.T) { checkTimelineHydrationEmailFamily(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationEmailFamily(t, newPostgresQueryStore) }},
+		{"TimelineHydrationStalePeopleHeads", func(t *testing.T) { checkTimelineHydrationStalePeopleHeads(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationStalePeopleHeads(t, newPostgresQueryStore) }},
+		{"TimelineHydrationCurrentPeople", func(t *testing.T) { checkTimelineHydrationCurrentPeople(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationCurrentPeople(t, newPostgresQueryStore) }},
+		{"TimelineUndatedSafeOnly", func(t *testing.T) { checkTimelineUndatedSafeOnly(t, newTestStore) }, func(t *testing.T) { checkTimelineUndatedSafeOnly(t, newPostgresQueryStore) }},
+		{"TimelinePairedCalendarDates", func(t *testing.T) { checkTimelinePairedCalendarDates(t, newTestStore) }, func(t *testing.T) { checkTimelinePairedCalendarDates(t, newPostgresQueryStore) }},
+		{"TimelinePlacementTiers", func(t *testing.T) { checkTimelinePlacementTiers(t, newTestStore) }, func(t *testing.T) { checkTimelinePlacementTiers(t, newPostgresQueryStore) }},
+		{"TimelineFreshnessSourceRevision", func(t *testing.T) { checkTimelineFreshnessSourceRevision(t, newTestStore) }, func(t *testing.T) { checkTimelineFreshnessSourceRevision(t, newPostgresQueryStore) }},
+		{"TimelineFreshnessTerminalAttempts", func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newTestStore) }, func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newPostgresQueryStore) }},
+		{"TimelineScopeRejected", nil, func(t *testing.T) { checkTimelineScopeRejected(t, newPostgresQueryStore) }},
+		{"TimelineAnomalousInstantPlacement", func(t *testing.T) { checkTimelineAnomalousInstantPlacement(t, newTestStore) }, func(t *testing.T) { checkTimelineAnomalousInstantPlacement(t, newPostgresQueryStore) }},
+		{"TimelineDayBoundsOperations", func(t *testing.T) { checkTimelineDayBoundsOperations(t, newTestStore) }, func(t *testing.T) { checkTimelineDayBoundsOperations(t, newPostgresQueryStore) }},
+		{"TimelineDayStripAccounting", func(t *testing.T) { checkTimelineDayStripAccounting(t, newTestStore) }, func(t *testing.T) { checkTimelineDayStripAccounting(t, newPostgresQueryStore) }},
+		{"TimelineHiddenChangeInvalidatesContinuation", func(t *testing.T) { checkTimelineHiddenChangeInvalidatesContinuation(t, newTestStore) }, func(t *testing.T) { checkTimelineHiddenChangeInvalidatesContinuation(t, newPostgresQueryStore) }},
+		{"TimelineDayFrozenAfterTrash", func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newTestStore) }, func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newPostgresQueryStore) }},
+	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{
 		{"StorageRepairRollback", nil, checkStorageRepairRollbackPostgres},
 		{"MultiStorePhysicalRoundTrip", nil, checkMultiStorePhysicalRoundTripPostgres},
@@ -502,6 +523,7 @@ var backendSuites = []backendSuite{
 	}},
 
 	{name: "document-people", postgres: "native operations", scope: "Document-person inputs, immutable attribution publication, freshness, failure coverage and rebuilds; excludes general People discovery and public vault opening.", scenarios: []backendScenario{
+		{"RoleSearchCurrentPersonRelation", func(t *testing.T) { t.Helper(); checkRoleSearchCurrentPersonRelation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRoleSearchCurrentPersonRelation(t, newPostgresQueryStore) }},
 		{"AuthorityInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkDocumentPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkDocumentPeopleRollbackPostgres},
@@ -827,6 +849,38 @@ var backendSuites = []backendSuite{
 		{"SplitPersonMovesCustodianAndExternalUID", func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newPostgresQueryStore) }},
 		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
 		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
+		{"DocumentFactsDatesState", func(t *testing.T) { t.Helper(); checkDocumentFactsDatesState(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentFactsDatesState(t, newPostgresQueryStore) }},
+		{"DocumentPeopleFactsSensitiveUnresolvedActor", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t, newPostgresQueryStore)
+		}},
+		{"DocumentDateFactsNeverReturnsStaleClaims", func(t *testing.T) { t.Helper(); checkDocumentDateFactsNeverReturnsStaleClaims(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateFactsNeverReturnsStaleClaims(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsPublicationAndFailure", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsPublicationAndFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsPublicationAndFailure(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsFiltersBlindCopyEdge", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newPostgresQueryStore) }},
+		{"DocumentPeopleFactsFiltersBlindCopyAssertion", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyAssertion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsFiltersBlindCopyAssertion(t, newPostgresQueryStore)
+		}},
+		{"OpenCandidatesForVersionScopesOccurrences", func(t *testing.T) {
+			t.Helper()
+			checkOpenCandidatesForVersionScopesOccurrences(t, false)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkOpenCandidatesForVersionScopesOccurrences(t, true)
+		}},
 		{"OpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence", func(t *testing.T) {
 			t.Helper()
 			checkOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t, newTestStore)
@@ -2118,6 +2172,20 @@ var backendSuites = []backendSuite{
 		}, func(t *testing.T) {
 			t.Helper()
 			checkPhotoTechnicalMetadataVersionBinding(t, newPostgresQueryStore)
+		}},
+		{"DocumentDateFailedHeadIsNotVisible", func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateFailedHeadIsNotVisible(t, newTestStore, false)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateFailedHeadIsNotVisible(t, newPostgresQueryStore, true)
+		}},
+		{"DocumentDateKeysFollowGeneration", func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateKeysFollowGeneration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateKeysFollowGeneration(t, newPostgresQueryStore)
 		}},
 		{"PublishDocumentEventsAcceptsCanonicalEmptyProjection", func(t *testing.T) {
 			t.Helper()

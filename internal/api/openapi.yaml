@@ -4090,6 +4090,29 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentDateFilter:
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+        kinds:
+          items:
+            type: string
+          type: array
+        precisions:
+          items:
+            type: string
+          type: array
+        to:
+          type: string
+      required:
+        - from
+        - to
+      type: object
+      x-go-type: query.DocumentDateFilter
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/query
+        name: query
     DocumentEventCoverage:
       additionalProperties: false
       properties:
@@ -7219,6 +7242,51 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    FactDiagnostic:
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+      required:
+        - code
+        - detail
+      type: object
+      x-go-type: api.FactDiagnostic
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FactExternal:
+      additionalProperties: false
+      properties:
+        archive_id:
+          type: string
+        system:
+          type: string
+        uid:
+          type: string
+      required:
+        - system
+        - archive_id
+        - uid
+      type: object
+      x-go-type: api.FactExternal
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FactOpen:
+      additionalProperties: false
+      properties:
+        web:
+          type: string
+      required:
+        - web
+      type: object
+      x-go-type: api.FactOpen
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Filters:
       additionalProperties: false
       properties:
@@ -7288,6 +7356,8 @@ components:
           type:
             - string
             - "null"
+        document_date:
+          $ref: "#/components/schemas/DocumentDateFilter"
         exclude_collection_ids:
           items:
             type: string
@@ -7371,6 +7441,10 @@ components:
         paths:
           items:
             type: string
+          type: array
+        people:
+          items:
+            $ref: "#/components/schemas/PersonFilter"
           type: array
         person_ids:
           items:
@@ -12808,6 +12882,23 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PersonFilter:
+      additionalProperties: false
+      properties:
+        person_id:
+          type: string
+        roles:
+          items:
+            type: string
+          type: array
+      required:
+        - person_id
+        - roles
+      type: object
+      x-go-type: query.PersonFilter
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/query
+        name: query
     PersonIdentity:
       additionalProperties: false
       properties:
@@ -17391,6 +17482,10 @@ components:
           type: string
         text:
           type: string
+        timezone:
+          type:
+            - string
+            - "null"
         v:
           format: int64
           type: integer
@@ -18922,6 +19017,29 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SavedQueryDateSchema:
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+        kinds:
+          items:
+            type: string
+          type: array
+        precisions:
+          items:
+            enum:
+              - exact
+              - day
+              - coarse
+            type: string
+          type: array
+        to:
+          type: string
+      required:
+        - from
+        - to
+      type: object
     SavedQueryFiltersSchema:
       additionalProperties: false
       properties:
@@ -19016,6 +19134,8 @@ components:
           type:
             - string
             - "null"
+        document_date:
+          $ref: "#/components/schemas/SavedQueryDateSchema"
         exclude_collection_ids:
           items:
             format: uuid
@@ -19182,6 +19302,11 @@ components:
             type: string
           maxItems: 64
           type: array
+        people:
+          items:
+            $ref: "#/components/schemas/SavedQueryPersonFilterSchema"
+          maxItems: 64
+          type: array
         person_ids:
           items:
             format: uuid
@@ -19282,6 +19407,22 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SavedQueryPersonFilterSchema:
+      additionalProperties: false
+      properties:
+        person_id:
+          format: uuid
+          type: string
+        roles:
+          items:
+            type: string
+          maxItems: 64
+          minItems: 1
+          type: array
+      required:
+        - person_id
+        - roles
+      type: object
     SavedQueryRun:
       additionalProperties: false
       properties:
@@ -19395,8 +19536,9 @@ components:
               - size
               - text_coverage
               - duplicates
+              - person_role
             type: string
-          maxItems: 8
+          maxItems: 9
           type: array
           uniqueItems: true
         page_size:
@@ -19464,6 +19606,7 @@ components:
             - capture_time
             - import_time
             - added_time
+            - document_date
           type: string
       type: object
     SavedQueryV1Schema:
@@ -19495,6 +19638,8 @@ components:
           type: string
         text:
           maxLength: 8192
+          type: string
+        timezone:
           type: string
         v:
           default: 1
@@ -21394,6 +21539,32 @@ components:
         - url
         - receipt
       type: object
+    TimelineBounds:
+      additionalProperties: false
+      properties:
+        end:
+          format: date-time
+          type: string
+        minutes:
+          format: int64
+          type: integer
+        start:
+          format: date-time
+          type: string
+        ticks:
+          items:
+            $ref: "#/components/schemas/TimelineTick"
+          type: array
+      required:
+        - start
+        - end
+        - minutes
+        - ticks
+      type: object
+      x-go-type: api.TimelineBounds
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TimelineBuild:
       additionalProperties: false
       properties:
@@ -21456,6 +21627,309 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TimelineCitation:
+      additionalProperties: false
+      properties:
+        content_sha256:
+          type: string
+        content_version_id:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        vault_uid:
+          type: string
+      required:
+        - vault_uid
+        - node_id
+        - content_version_id
+        - content_sha256
+      type: object
+      x-go-type: api.TimelineCitation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDayCount:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        date:
+          type: string
+        date_only:
+          format: int64
+          type: integer
+        floating:
+          format: int64
+          type: integer
+      required:
+        - date
+        - count
+        - floating
+        - date_only
+      type: object
+      x-go-type: api.TimelineDayCount
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDayRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDayRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        cursor:
+          maxLength: 2048
+          type: string
+        date:
+          type: string
+        date_kinds:
+          items:
+            type: string
+          maxItems: 16
+          type: array
+        limit:
+          format: int64
+          type: integer
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+        timezone:
+          type: string
+      required:
+        - query
+        - date
+      type: object
+      x-go-type: api.TimelineDayRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDayResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDayResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        date:
+          type: string
+        date_only:
+          items:
+            $ref: "#/components/schemas/TimelineItem"
+          type: array
+        date_only_truncated:
+          type: boolean
+        day:
+          $ref: "#/components/schemas/TimelineBounds"
+        items:
+          items:
+            $ref: "#/components/schemas/TimelineItem"
+          type: array
+        month_only:
+          items:
+            $ref: "#/components/schemas/TimelineItem"
+          type: array
+        month_only_truncated:
+          type: boolean
+        next_cursor:
+          type: string
+        timezone:
+          type: string
+        timezone_defaulted:
+          type: boolean
+      required:
+        - date
+        - timezone
+        - timezone_defaulted
+        - day
+        - items
+        - date_only
+        - date_only_truncated
+        - month_only
+        - month_only_truncated
+        - next_cursor
+      type: object
+      x-go-type: api.TimelineDayResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDaysRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDaysRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        date_kinds:
+          items:
+            type: string
+          maxItems: 16
+          type: array
+        from:
+          type: string
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+        timezone:
+          type: string
+        to:
+          type: string
+      required:
+        - query
+        - from
+        - to
+      type: object
+      x-go-type: api.TimelineDaysRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDaysResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDaysResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        days:
+          items:
+            $ref: "#/components/schemas/TimelineDayCount"
+          type: array
+        from:
+          type: string
+        months:
+          items:
+            $ref: "#/components/schemas/TimelineMonthCount"
+          type: array
+        state:
+          $ref: "#/components/schemas/TimelineState"
+        timezone:
+          type: string
+        timezone_defaulted:
+          type: boolean
+        to:
+          type: string
+        undated_count:
+          format: int64
+          type: integer
+      required:
+        - timezone
+        - timezone_defaulted
+        - from
+        - to
+        - days
+        - months
+        - undated_count
+        - state
+      type: object
+      x-go-type: api.TimelineDaysResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineItem:
+      additionalProperties: false
+      properties:
+        citation:
+          $ref: "#/components/schemas/TimelineCitation"
+        content_version_id:
+          type: string
+        family_parent_node_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        media_type:
+          type: string
+        name:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        path:
+          type: string
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        size:
+          format: int64
+          type: integer
+        unresolved_count:
+          format: int64
+          type: integer
+        when:
+          $ref: "#/components/schemas/WhenV1"
+      required:
+        - node_id
+        - content_version_id
+        - name
+        - path
+        - media_type
+        - size
+        - family_parent_node_id
+        - when
+        - people
+        - unresolved_count
+        - citation
+      type: object
+      x-go-type: api.TimelineItem
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineMonthCount:
+      additionalProperties: false
+      properties:
+        coarse:
+          format: int64
+          type: integer
+        month:
+          type: string
+      required:
+        - month
+        - coarse
+      type: object
+      x-go-type: api.TimelineMonthCount
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelinePerson:
+      additionalProperties: false
+      properties:
+        archive_id:
+          type: string
+        display_name:
+          type: string
+        linked_contact:
+          type: boolean
+        person_id:
+          type: string
+        roles:
+          items:
+            type: string
+          type: array
+        uid:
+          type: string
+      required:
+        - person_id
+        - display_name
+        - roles
+        - linked_contact
+      type: object
+      x-go-type: api.TimelinePerson
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TimelineRebuildRequest:
       additionalProperties: false
       properties:
@@ -21474,6 +21948,35 @@ components:
         - operation_id
       type: object
       x-go-type: api.TimelineRebuildRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineState:
+      additionalProperties: false
+      properties:
+        pending_versions:
+          format: int64
+          type: integer
+      required:
+        - pending_versions
+      type: object
+      x-go-type: api.TimelineState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineTick:
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        minute:
+          format: int64
+          type: integer
+      required:
+        - minute
+        - label
+      type: object
+      x-go-type: api.TimelineTick
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21818,6 +22321,245 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    VersionDateClaim:
+      additionalProperties: false
+      properties:
+        axis_key:
+          type: string
+        claim_basis:
+          type: string
+        date_kind:
+          type: string
+        date_value:
+          type: string
+        event_id:
+          type: string
+        evidence_id:
+          type: string
+        evidence_kind:
+          type: string
+        offset_seconds:
+          format: int64
+          type: integer
+        parse_confidence:
+          type: string
+        precision:
+          type: string
+        primary:
+          type: boolean
+        raw_value:
+          type: string
+        source_kind_raw:
+          type: string
+        timezone_kind:
+          type: string
+        utc_key:
+          type: string
+        when:
+          $ref: "#/components/schemas/WhenV1"
+        zone_text:
+          type: string
+      required:
+        - event_id
+        - date_kind
+        - primary
+        - date_value
+        - raw_value
+        - precision
+        - timezone_kind
+        - zone_text
+        - axis_key
+        - claim_basis
+        - parse_confidence
+        - evidence_kind
+        - evidence_id
+        - when
+      type: object
+      x-go-type: api.VersionDateClaim
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionDatePrimary:
+      additionalProperties: false
+      properties:
+        disclosure:
+          type: string
+        event_id:
+          type: string
+        reason:
+          type: string
+        rule_id:
+          type: string
+      required:
+        - event_id
+        - reason
+        - rule_id
+        - disclosure
+      type: object
+      x-go-type: api.VersionDatePrimary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionDates:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/VersionDates.json
+          format: uri
+          readOnly: true
+          type: string
+        claims:
+          items:
+            $ref: "#/components/schemas/VersionDateClaim"
+          type: array
+        content_version_id:
+          type: string
+        diagnostics:
+          items:
+            $ref: "#/components/schemas/FactDiagnostic"
+          type: array
+        document_kind:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        open:
+          $ref: "#/components/schemas/FactOpen"
+        primary:
+          $ref: "#/components/schemas/VersionDatePrimary"
+        state:
+          type: string
+      required:
+        - content_version_id
+        - node_id
+        - state
+        - claims
+        - diagnostics
+      type: object
+      x-go-type: api.VersionDates
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionPeople:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/VersionPeople.json
+          format: uri
+          readOnly: true
+          type: string
+        assertions:
+          items:
+            $ref: "#/components/schemas/VersionPersonAssertion"
+          type: array
+        content_version_id:
+          type: string
+        edges:
+          items:
+            $ref: "#/components/schemas/VersionPersonEdge"
+          type: array
+        open:
+          $ref: "#/components/schemas/FactOpen"
+        state:
+          type: string
+        unresolved:
+          items:
+            $ref: "#/components/schemas/VersionUnresolvedName"
+          type: array
+      required:
+        - content_version_id
+        - state
+        - edges
+        - assertions
+        - unresolved
+      type: object
+      x-go-type: api.VersionPeople
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionPersonAssertion:
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+        assertion_id:
+          type: string
+        display_name:
+          type: string
+        note:
+          type: string
+        person_id:
+          type: string
+        recorded_at:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        role:
+          type: string
+      required:
+        - assertion_id
+        - person_id
+        - display_name
+        - role
+        - action
+        - note
+        - recorded_at
+        - revision
+      type: object
+      x-go-type: api.VersionPersonAssertion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionPersonEdge:
+      additionalProperties: false
+      properties:
+        basis:
+          type: string
+        claim_count:
+          format: int64
+          type: integer
+        confidence:
+          type: string
+        display_name:
+          type: string
+        evidence_id:
+          type: string
+        evidence_kind:
+          type: string
+        external:
+          items:
+            $ref: "#/components/schemas/FactExternal"
+          type: array
+        linked_contact:
+          type: boolean
+        person_id:
+          type: string
+        raw_label:
+          type: string
+        role:
+          type: string
+      required:
+        - person_id
+        - display_name
+        - role
+        - basis
+        - confidence
+        - evidence_kind
+        - evidence_id
+        - raw_label
+        - claim_count
+        - linked_contact
+        - external
+      type: object
+      x-go-type: api.VersionPersonEdge
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VersionPruneReport:
       additionalProperties: false
       properties:
@@ -21948,6 +22690,27 @@ components:
           uniqueItems: true
       type: object
       x-go-type: api.VersionPruneRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionUnresolvedName:
+      additionalProperties: false
+      properties:
+        candidate_id:
+          type: string
+        evidence_kind:
+          type: string
+        raw_label:
+          type: string
+        role:
+          type: string
+      required:
+        - raw_label
+        - role
+        - candidate_id
+        - evidence_kind
+      type: object
+      x-go-type: api.VersionUnresolvedName
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -22094,6 +22857,70 @@ components:
         - token
         - upload_secret
       type: object
+    WhenPlacedBy:
+      additionalProperties: false
+      properties:
+        claim_basis:
+          type: string
+        event_id:
+          type: string
+        fallback:
+          type: boolean
+        rule:
+          type: string
+        source:
+          type: string
+      required:
+        - source
+        - rule
+        - fallback
+        - event_id
+        - claim_basis
+      type: object
+      x-go-type: api.WhenPlacedBy
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    WhenV1:
+      additionalProperties: false
+      properties:
+        at:
+          type: string
+        axis_minute:
+          format: int64
+          type: integer
+        date:
+          type: string
+        day:
+          type: string
+        end_date:
+          type: string
+        local:
+          type: string
+        period:
+          type: string
+        placed_by:
+          $ref: "#/components/schemas/WhenPlacedBy"
+        precision:
+          type: string
+        source_offset_seconds:
+          format: int64
+          type: integer
+        source_zone:
+          type: string
+        state:
+          type: string
+        zone_state:
+          type: string
+      required:
+        - state
+        - precision
+        - placed_by
+      type: object
+      x-go-type: api.WhenV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceFacetValue:
       additionalProperties: false
       properties:
@@ -22105,6 +22932,11 @@ components:
           type: string
         label:
           type: string
+        roles:
+          items:
+            type: string
+          maxItems: 11
+          type: array
         selected:
           type: boolean
       required:
@@ -22146,6 +22978,12 @@ components:
           format: uri
           readOnly: true
           type: string
+        disclosure:
+          description: Full date disclosure requires an API key
+          enum:
+            - safe
+            - full
+          type: string
         facets:
           items:
             enum:
@@ -22157,8 +22995,9 @@ components:
               - size
               - text_coverage
               - duplicates
+              - person_role
             type: string
-          maxItems: 8
+          maxItems: 9
           type: array
           uniqueItems: true
         page_size:
@@ -22302,7 +23141,7 @@ components:
               - available
               - values
             type: object
-          maxItems: 8
+          maxItems: 9
           type: array
         fallback_reason:
           type: string
@@ -22347,6 +23186,10 @@ components:
         snapshot_id:
           pattern: ^[0-9a-f]{32}$
           type: string
+        timezone:
+          type: string
+        timezone_defaulted:
+          type: boolean
         total:
           format: int64
           minimum: 0
@@ -22358,6 +23201,7 @@ components:
         truncated:
           type: boolean
       required:
+        - timezone_defaulted
         - query
         - dependencies
         - query_fingerprint
@@ -22417,6 +23261,11 @@ components:
             - pick
             - reject
           type: string
+        matched_roles:
+          items:
+            type: string
+          maxItems: 16
+          type: array
         media_family:
           type: string
         mime_type:
@@ -33102,6 +33951,52 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read current-file timeline coverage
+  /api/v1/timeline/day:
+    post:
+      operationId: listTimelineDay
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TimelineDayRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineDayResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List documents on one civil day
+  /api/v1/timeline/days:
+    post:
+      operationId: countTimelineDays
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TimelineDaysRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineDaysResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Count documents per civil day
   /api/v1/timeline/rebuilds:
     post:
       operationId: createTimelineRebuild
@@ -33425,6 +34320,39 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream one immutable content version by stable ID
+  /api/v1/versions/{version_id}/dates:
+    get:
+      operationId: getVersionDates
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: disclosure
+          schema:
+            default: safe
+            enum:
+              - safe
+              - full
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionDates"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a version's date claims
   /api/v1/versions/{version_id}/download-ticket:
     post:
       operationId: prepareOriginalDownload
@@ -33653,6 +34581,39 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream one verified immutable email part artifact
+  /api/v1/versions/{version_id}/people:
+    get:
+      operationId: getVersionPeople
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: disclosure
+          schema:
+            default: safe
+            enum:
+              - safe
+              - full
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionPeople"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a version's people
   /api/v1/watches:
     get:
       operationId: listWatchedInboxes

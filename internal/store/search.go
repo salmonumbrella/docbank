@@ -1930,9 +1930,9 @@ func (s *Store) acquireLexicalGeneration(
 func (s *Store) withLexicalGenerationRead(
 	ctx context.Context, fn func(queryer metadataQuerier, generation LexicalGeneration) error,
 ) (retErr error) {
-	conn, err := s.db.Conn(ctx)
+	conn, err := s.pinLexicalRead(ctx)
 	if err != nil {
-		return fmt.Errorf("acquiring lexical generation connection: %w", err)
+		return err
 	}
 	active := false
 	var lease *LexicalGenerationLease
@@ -1945,7 +1945,7 @@ func (s *Store) withLexicalGenerationRead(
 		if lease != nil {
 			retErr = errors.Join(retErr, lease.Release())
 		}
-		retErr = errors.Join(retErr, conn.Close())
+		retErr = errors.Join(retErr, conn.release(ctx))
 	}()
 	if _, err := conn.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
 		return fmt.Errorf("starting lexical generation read: %w", err)
@@ -2610,6 +2610,10 @@ func (s *Store) SearchPageWithOptions(
 // The generation lease also keeps publication from collecting their FTS rows.
 func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
 	return s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
+		ctx, err := s.scopeQueryPeople(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if opts.PhotoScope != nil {
 			lease, err := s.acquireLexicalGeneration(ctx, tx)
 			if err != nil && !errors.Is(err, ErrNotFound) {
@@ -2641,7 +2645,7 @@ func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn 
 // photoSearchFragment compiles one photo query as lexical node membership.
 func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoBrowseRequest) (compiledQueryFragment, error) {
 	request.Query.Mode = querypkg.ModeLexical
-	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: queryer})
+	compiled, err := (queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: queryer})
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}

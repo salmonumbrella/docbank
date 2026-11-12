@@ -222,6 +222,10 @@ const photoRejectsSelect = `SELECT a.asset_id,a.revision,COALESCE(member.file_id
 func (s *Store) photoRejects(
 	ctx context.Context, q metadataQuerier, generation string, request PhotoRejectsRequest,
 ) (PhotoRejectsPreflight, error) {
+	ctx, err := s.scopeQueryPeople(ctx, q)
+	if err != nil {
+		return PhotoRejectsPreflight{}, err
+	}
 	if request.Hidden {
 		if _, err := s.hiddenSession(ctx, q); err != nil {
 			return PhotoRejectsPreflight{}, err
@@ -231,7 +235,7 @@ func (s *Store) photoRejects(
 	if err != nil {
 		return PhotoRejectsPreflight{}, err
 	}
-	compiler := queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}
+	compiler := queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}
 	compiled, err := compiler.compile(ctx, request.Query, queryResolver{q: q})
 	if err != nil {
 		return PhotoRejectsPreflight{}, err

@@ -248,6 +248,8 @@ func NewServer(d Deps) *Server {
 	registerProcessingRoutes(humaAPI, d)
 	registerEmailRoutes(mux, humaAPI, d, g)
 	registerTimelineRoutes(humaAPI, d, g)
+	registerTimelineDayRoutes(humaAPI, d, snapshots)
+	registerDocumentFactsRoutes(humaAPI, d)
 	registerMediaRoutes(mux, humaAPI, d, g)
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
@@ -293,7 +295,10 @@ func NewServer(d Deps) *Server {
 	registerOriginalDownload(humaAPI, d, s.webDownloads)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
-	h := photoHiddenMiddleware(http.Handler(mux))
+	queryHandler := photoHiddenMiddleware(timelineStrictParameters(http.Handler(mux)))
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queryHandler.ServeHTTP(w, r.WithContext(store.WithQueryDefaultTimezone(r.Context(), d.Cfg.Web.TimelineTimezone)))
+	})
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = webHostMiddleware(h, s.webSessions.login)
 	h = loopbackMiddleware(h)

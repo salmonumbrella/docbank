@@ -2075,6 +2075,13 @@ export interface DerivativePurgePlanRequest {
   content_version_ids?: string[];
 }
 
+export interface DocumentDateFilter {
+  from: string;
+  kinds?: string[];
+  precisions?: string[];
+  to: string;
+}
+
 export interface DocumentEventCoverage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3313,11 +3320,31 @@ export interface ExportJob {
   state: string;
 }
 
+export interface FactDiagnostic {
+  code: string;
+  detail: string;
+}
+
+export interface FactExternal {
+  archive_id: string;
+  system: string;
+  uid: string;
+}
+
+export interface FactOpen {
+  web: string;
+}
+
 export interface GPSBounds {
   east: string;
   north: string;
   south: string;
   west: string;
+}
+
+export interface PersonFilter {
+  person_id: string;
+  roles: string[];
 }
 
 export interface Filters {
@@ -3351,6 +3378,7 @@ export interface Filters {
   color_red_max?: string | null;
   /** @nullable */
   color_red_min?: string | null;
+  document_date?: DocumentDateFilter;
   exclude_collection_ids?: string[];
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
@@ -3380,6 +3408,7 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
+  people?: PersonFilter[];
   person_ids?: string[];
   /** @nullable */
   rating_max?: number | null;
@@ -5397,6 +5426,22 @@ export interface WorkspaceQueryCoverage {
   profile_fingerprint?: string;
 }
 
+export type SavedQueryDateSchemaPrecisionsItem = typeof SavedQueryDateSchemaPrecisionsItem[keyof typeof SavedQueryDateSchemaPrecisionsItem];
+
+
+export const SavedQueryDateSchemaPrecisionsItem = {
+  exact: 'exact',
+  day: 'day',
+  coarse: 'coarse',
+} as const;
+
+export interface SavedQueryDateSchema {
+  from: string;
+  kinds?: string[];
+  precisions?: SavedQueryDateSchemaPrecisionsItem[];
+  to: string;
+}
+
 export type SavedQueryFiltersSchemaFlagsItem = typeof SavedQueryFiltersSchemaFlagsItem[keyof typeof SavedQueryFiltersSchemaFlagsItem];
 
 
@@ -5444,6 +5489,15 @@ export const SavedQueryFiltersSchemaMediaFamiliesItem = {
   cad: 'cad',
   unknown: 'unknown',
 } as const;
+
+export interface SavedQueryPersonFilterSchema {
+  person_id: string;
+  /**
+     * @minItems 1
+     * @maxItems 64
+     */
+  roles: string[];
+}
 
 export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
 
@@ -5544,6 +5598,7 @@ export interface SavedQueryFiltersSchema {
      * @nullable
      */
   color_red_min?: string | null;
+  document_date?: SavedQueryDateSchema;
   /** @maxItems 64 */
   exclude_collection_ids?: string[];
   /** @maxItems 64 */
@@ -5614,6 +5669,8 @@ export interface SavedQueryFiltersSchema {
   /** @maxItems 64 */
   paths?: string[];
   /** @maxItems 64 */
+  people?: SavedQueryPersonFilterSchema[];
+  /** @maxItems 64 */
   person_ids?: string[];
   /**
      * @minimum 0
@@ -5679,6 +5736,7 @@ export const SavedQuerySortSchemaField = {
   capture_time: 'capture_time',
   import_time: 'import_time',
   added_time: 'added_time',
+  document_date: 'document_date',
 } as const;
 
 export interface SavedQuerySortSchema {
@@ -5710,6 +5768,7 @@ export interface SavedQueryV1Schema {
   syntax?: SavedQueryV1SchemaSyntax;
   /** @maxLength 8192 */
   text?: string;
+  timezone?: string;
   v?: SavedQueryV1SchemaV;
 }
 
@@ -6220,6 +6279,8 @@ export interface WorkspaceFacetValue {
   count: number;
   key: string;
   label: string;
+  /** @maxItems 11 */
+  roles?: string[];
   selected: boolean;
 }
 
@@ -6739,6 +6800,8 @@ export interface Query {
   sort: Sort;
   syntax: string;
   text: string;
+  /** @nullable */
+  timezone?: string | null;
   v: number;
 }
 
@@ -8174,6 +8237,7 @@ export const SavedQueryRunRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  person_role: 'person_role',
 } as const;
 
 export type SavedQueryRunRequestPageSize = typeof SavedQueryRunRequestPageSize[keyof typeof SavedQueryRunRequestPageSize];
@@ -8188,7 +8252,7 @@ export const SavedQueryRunRequestPageSize = {
 export interface SavedQueryRunRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
   photos?: boolean;
@@ -8244,6 +8308,8 @@ export interface WorkspaceQueryRow {
   excerpt?: string;
   /** Display-file flag in a photo snapshot; absent in a document snapshot. */
   flag?: WorkspaceQueryRowFlag;
+  /** @maxItems 16 */
+  matched_roles?: string[];
   media_family: string;
   mime_type: string;
   modified_at: string;
@@ -8279,7 +8345,7 @@ export interface WorkspaceQueryResponse {
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets: WorkspaceQueryResponseFacetsItem[];
   fallback_reason?: string;
   generation: WorkspaceQueryGeneration;
@@ -8302,6 +8368,8 @@ export interface WorkspaceQueryResponse {
   snapshot_fingerprint: string;
   /** @pattern ^[0-9a-f]{32}$ */
   snapshot_id: string;
+  timezone?: string;
+  timezone_defaulted: boolean;
   /** @minimum 0 */
   total: number;
   /** @minimum 0 */
@@ -8940,6 +9008,18 @@ export interface TicketOutputBody {
   url: string;
 }
 
+export interface TimelineTick {
+  label: string;
+  minute: number;
+}
+
+export interface TimelineBounds {
+  end: string;
+  minutes: number;
+  start: string;
+  ticks: TimelineTick[];
+}
+
 export type TimelineBuildState = typeof TimelineBuildState[keyof typeof TimelineBuildState];
 
 
@@ -8964,6 +9044,129 @@ export interface TimelineBuild {
   target_epoch: number;
   unavailable: number;
   updated_at: string;
+}
+
+export interface TimelineCitation {
+  content_sha256: string;
+  content_version_id: string;
+  node_id: number;
+  vault_uid: string;
+}
+
+export interface TimelineDayCount {
+  count: number;
+  date: string;
+  date_only: number;
+  floating: number;
+}
+
+export interface TimelineDayRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 2048 */
+  cursor?: string;
+  date: string;
+  /** @maxItems 16 */
+  date_kinds?: string[];
+  limit?: number;
+  query: SavedQueryV1Schema;
+  timezone?: string;
+}
+
+export interface TimelinePerson {
+  archive_id?: string;
+  display_name: string;
+  linked_contact: boolean;
+  person_id: string;
+  roles: string[];
+  uid?: string;
+}
+
+export interface WhenPlacedBy {
+  claim_basis: string;
+  event_id: string;
+  fallback: boolean;
+  rule: string;
+  source: string;
+}
+
+export interface WhenV1 {
+  at?: string;
+  axis_minute?: number;
+  date?: string;
+  day?: string;
+  end_date?: string;
+  local?: string;
+  period?: string;
+  placed_by: WhenPlacedBy;
+  precision: string;
+  source_offset_seconds?: number;
+  source_zone?: string;
+  state: string;
+  zone_state?: string;
+}
+
+export interface TimelineItem {
+  citation: TimelineCitation;
+  content_version_id: string;
+  /** @nullable */
+  family_parent_node_id: number | null;
+  media_type: string;
+  name: string;
+  node_id: number;
+  path: string;
+  people: TimelinePerson[];
+  size: number;
+  unresolved_count: number;
+  when: WhenV1;
+}
+
+export interface TimelineDayResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  date: string;
+  date_only: TimelineItem[];
+  date_only_truncated: boolean;
+  day: TimelineBounds;
+  items: TimelineItem[];
+  month_only: TimelineItem[];
+  month_only_truncated: boolean;
+  next_cursor: string;
+  timezone: string;
+  timezone_defaulted: boolean;
+}
+
+export interface TimelineDaysRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 16 */
+  date_kinds?: string[];
+  from: string;
+  query: SavedQueryV1Schema;
+  timezone?: string;
+  to: string;
+}
+
+export interface TimelineMonthCount {
+  coarse: number;
+  month: string;
+}
+
+export interface TimelineState {
+  pending_versions: number;
+}
+
+export interface TimelineDaysResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  days: TimelineDayCount[];
+  from: string;
+  months: TimelineMonthCount[];
+  state: TimelineState;
+  timezone: string;
+  timezone_defaulted: boolean;
+  to: string;
+  undated_count: number;
 }
 
 export interface TimelineRebuildRequest {
@@ -9076,6 +9279,89 @@ export interface VerifyReport {
   problems?: VerifyProblem[];
 }
 
+export interface VersionDateClaim {
+  axis_key: string;
+  claim_basis: string;
+  date_kind: string;
+  date_value: string;
+  event_id: string;
+  evidence_id: string;
+  evidence_kind: string;
+  offset_seconds?: number;
+  parse_confidence: string;
+  precision: string;
+  primary: boolean;
+  raw_value: string;
+  source_kind_raw?: string;
+  timezone_kind: string;
+  utc_key?: string;
+  when: WhenV1;
+  zone_text: string;
+}
+
+export interface VersionDatePrimary {
+  disclosure: string;
+  event_id: string;
+  reason: string;
+  rule_id: string;
+}
+
+export interface VersionDates {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  claims: VersionDateClaim[];
+  content_version_id: string;
+  diagnostics: FactDiagnostic[];
+  document_kind?: string;
+  node_id: number;
+  open?: FactOpen;
+  primary?: VersionDatePrimary;
+  state: string;
+}
+
+export interface VersionPersonAssertion {
+  action: string;
+  assertion_id: string;
+  display_name: string;
+  note: string;
+  person_id: string;
+  recorded_at: string;
+  revision: number;
+  role: string;
+}
+
+export interface VersionPersonEdge {
+  basis: string;
+  claim_count: number;
+  confidence: string;
+  display_name: string;
+  evidence_id: string;
+  evidence_kind: string;
+  external: FactExternal[];
+  linked_contact: boolean;
+  person_id: string;
+  raw_label: string;
+  role: string;
+}
+
+export interface VersionUnresolvedName {
+  candidate_id: string;
+  evidence_kind: string;
+  raw_label: string;
+  role: string;
+}
+
+export interface VersionPeople {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assertions: VersionPersonAssertion[];
+  content_version_id: string;
+  edges: VersionPersonEdge[];
+  open?: FactOpen;
+  state: string;
+  unresolved: VersionUnresolvedName[];
+}
+
 export interface VersionPruneReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -9161,6 +9447,17 @@ export interface WebTabSession {
   upload_secret: string;
 }
 
+/**
+ * Full date disclosure requires an API key
+ */
+export type WorkspaceQueryCreateRequestDisclosure = typeof WorkspaceQueryCreateRequestDisclosure[keyof typeof WorkspaceQueryCreateRequestDisclosure];
+
+
+export const WorkspaceQueryCreateRequestDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -9173,6 +9470,7 @@ export const WorkspaceQueryCreateRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  person_role: 'person_role',
 } as const;
 
 export type WorkspaceQueryCreateRequestPageSize = typeof WorkspaceQueryCreateRequestPageSize[keyof typeof WorkspaceQueryCreateRequestPageSize];
@@ -9187,7 +9485,9 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 8 */
+  /** Full date disclosure requires an API key */
+  disclosure?: WorkspaceQueryCreateRequestDisclosure;
+  /** @maxItems 9 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
   photos?: boolean;
@@ -10438,7 +10738,31 @@ export type GetContentVersionBytesHeaders = {
 Range?: string;
 };
 
+export type GetVersionDatesParams = {
+disclosure?: GetVersionDatesDisclosure;
+};
+
+export type GetVersionDatesDisclosure = typeof GetVersionDatesDisclosure[keyof typeof GetVersionDatesDisclosure];
+
+
+export const GetVersionDatesDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
+
 export type EnsureEmailMetadataBody = { [key: string]: unknown };
+
+export type GetVersionPeopleParams = {
+disclosure?: GetVersionPeopleDisclosure;
+};
+
+export type GetVersionPeopleDisclosure = typeof GetVersionPeopleDisclosure[keyof typeof GetVersionPeopleDisclosure];
+
+
+export const GetVersionPeopleDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
 
 export type Health200 = {
   status: string;
@@ -21791,6 +22115,82 @@ export const readTimelineCoverage = async ( options?: Parameters<typeof sessionJ
 
 
 
+export const getListTimelineDayUrl = () => {
+
+
+
+
+  return `/api/v1/timeline/day`
+}
+
+/**
+ * @summary List documents on one civil day
+ */
+export const listTimelineDay = async (timelineDayRequest: NonReadonly<TimelineDayRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TimelineDayResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TimelineDayResponse>(getListTimelineDayUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(timelineDayRequest)
+  }
+);}
+
+
+
+export const getCountTimelineDaysUrl = () => {
+
+
+
+
+  return `/api/v1/timeline/days`
+}
+
+/**
+ * @summary Count documents per civil day
+ */
+export const countTimelineDays = async (timelineDaysRequest: NonReadonly<TimelineDaysRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TimelineDaysResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TimelineDaysResponse>(getCountTimelineDaysUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(timelineDaysRequest)
+  }
+);}
+
+
+
 export const getCreateTimelineRebuildUrl = () => {
 
 
@@ -22084,6 +22484,39 @@ return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
 
 
 
+export const getGetVersionDatesUrl = (versionId: string,
+    params?: GetVersionDatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/versions/${encodeURIComponent(String(versionId))}/dates?${stringifiedParams}` : `/api/v1/versions/${encodeURIComponent(String(versionId))}/dates`
+}
+
+/**
+ * @summary Read a version's date claims
+ */
+export const getVersionDates = async (versionId: string,
+    params?: GetVersionDatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<VersionDates> => {
+
+  return sessionJSON<VersionDates>(getGetVersionDatesUrl(versionId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getPrepareOriginalDownloadUrl = (versionId: string,) => {
 
 
@@ -22232,6 +22665,39 @@ export const getEmailPart = (versionId: string,
     role: 'raw_headers' | 'decoded_payload' | 'body_utf8', options?: Parameters<typeof sessionResponse>[1]) => {
 
   return sessionResponse<Blob>(getGetEmailPartUrl(versionId,generationId,partPath,role),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetVersionPeopleUrl = (versionId: string,
+    params?: GetVersionPeopleParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/versions/${encodeURIComponent(String(versionId))}/people?${stringifiedParams}` : `/api/v1/versions/${encodeURIComponent(String(versionId))}/people`
+}
+
+/**
+ * @summary Read a version's people
+ */
+export const getVersionPeople = async (versionId: string,
+    params?: GetVersionPeopleParams, options?: Parameters<typeof sessionJSON>[1]): Promise<VersionPeople> => {
+
+  return sessionJSON<VersionPeople>(getGetVersionPeopleUrl(versionId,params),
   {
     ...options,
     method: 'GET'

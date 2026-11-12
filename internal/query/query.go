@@ -41,6 +41,8 @@ var (
 
 // Query is a normalized QueryV1 value. Text is retained exactly as entered.
 type Query struct {
+	Timezone *string `json:"timezone,omitzero"`
+
 	V       int     `json:"v"`
 	Text    string  `json:"text"`
 	Syntax  string  `json:"syntax"`
@@ -59,6 +61,8 @@ type Sort struct {
 // Filters contains the complete set of typed QueryV1 facets. Slice fields are
 // set-valued after normalization.
 type Filters struct {
+	DocumentDate *DocumentDateFilter `json:"document_date,omitzero"`
+
 	Unevaluated   bool    `json:"unevaluated,omitzero"`
 	FocusMin      *string `json:"focus_min,omitzero"`
 	FocusMax      *string `json:"focus_max,omitzero"`
@@ -94,6 +98,8 @@ type Filters struct {
 	SetIDs        []string   `json:"set_ids,omitzero"`
 	PersonIDs     []string   `json:"person_ids,omitzero"`
 
+	People []PersonFilter `json:"people,omitzero"`
+
 	Paths                []string `json:"paths,omitempty"`
 	ExcludePaths         []string `json:"exclude_paths,omitempty"`
 	CollectionIDs        []string `json:"collection_ids,omitempty"`
@@ -114,6 +120,8 @@ type Filters struct {
 }
 
 type queryInput struct {
+	Timezone *string `json:"timezone"`
+
 	V       *int          `json:"v"`
 	Text    *string       `json:"text"`
 	Syntax  *string       `json:"syntax"`
@@ -128,6 +136,8 @@ type sortInput struct {
 }
 
 type filtersInput struct {
+	DocumentDate *DocumentDateFilter `json:"document_date"`
+
 	Unevaluated   *bool   `json:"unevaluated"`
 	FocusMin      *string `json:"focus_min"`
 	FocusMax      *string `json:"focus_max"`
@@ -163,6 +173,8 @@ type filtersInput struct {
 	SetIDs        *[]string  `json:"set_ids"`
 	PersonIDs     *[]string  `json:"person_ids"`
 
+	People *[]PersonFilter `json:"people"`
+
 	Paths                *[]string `json:"paths"`
 	ExcludePaths         *[]string `json:"exclude_paths"`
 	CollectionIDs        *[]string `json:"collection_ids"`
@@ -183,11 +195,11 @@ type filtersInput struct {
 }
 
 var optionalFilterFields = withQualityFields(map[string]struct{}{
-	"paths": {}, "exclude_paths": {}, "collection_ids": {}, "exclude_collection_ids": {},
+	"document_date": {}, "paths": {}, "exclude_paths": {}, "collection_ids": {}, "exclude_collection_ids": {},
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
-	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "locations": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {}, "person_ids": {},
+	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "locations": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {}, "person_ids": {}, "people": {},
 })
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
@@ -199,7 +211,7 @@ func Parse(raw []byte) (Query, error) {
 	if err := json.Unmarshal(raw, &input, json.RejectUnknownMembers(true), json.MatchCaseInsensitiveNames(false)); err != nil {
 		return Query{}, fmt.Errorf("parse query: %w", err)
 	}
-	value := Query{V: 1, Syntax: "simple", Mode: "lexical", Sort: Sort{Field: "name", Direction: "asc"}}
+	value := Query{Timezone: input.Timezone, V: 1, Syntax: "simple", Mode: "lexical", Sort: Sort{Field: "name", Direction: "asc"}}
 	if input.V != nil {
 		value.V = *input.V
 	}
@@ -273,7 +285,7 @@ func Fingerprint(value Query) (string, error) {
 }
 
 func (input filtersInput) value() Filters {
-	value := Filters{}
+	value := Filters{DocumentDate: input.DocumentDate}
 	if input.Unevaluated != nil {
 		value.Unevaluated = *input.Unevaluated
 	}
@@ -332,6 +344,9 @@ func (input filtersInput) value() Filters {
 	}
 	if input.GPSBounds != nil {
 		value.GPSBounds = input.GPSBounds
+	}
+	if input.People != nil {
+		value.People = *input.People
 	}
 	if input.PersonIDs != nil {
 		value.PersonIDs = *input.PersonIDs
@@ -410,9 +425,14 @@ func normalizeQuery(value Query) (Query, error) {
 	if !oneOf(value.Mode, "lexical", "semantic", "hybrid") {
 		return Query{}, errors.New("query mode is unknown")
 	}
-	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time") ||
+	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time", "document_date") ||
 		!oneOf(value.Sort.Direction, "asc", "desc") {
 		return Query{}, errors.New("query sort is invalid")
+	}
+	if value.Timezone != nil {
+		if _, err := LoadZone(*value.Timezone); err != nil {
+			return Query{}, &DateError{Code: "invalid_timezone", Err: err}
+		}
 	}
 	filters, err := normalizeFilters(value.Filters)
 	if err != nil {
@@ -424,6 +444,16 @@ func normalizeQuery(value Query) (Query, error) {
 
 func normalizeFilters(value Filters) (Filters, error) {
 	var err error
+	value.People, err = normalizePeople(value.People)
+	if err != nil {
+		return Filters{}, err
+	}
+	if value.DocumentDate != nil {
+		value.DocumentDate, err = normalizeDocumentDate(value.DocumentDate)
+		if err != nil {
+			return Filters{}, err
+		}
+	}
 	value, err = normalizeQualityFilters(value)
 	if err != nil {
 		return Filters{}, err

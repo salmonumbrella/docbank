@@ -12,6 +12,9 @@ import {
   parseQuery,
   queryFingerprint as fingerprintQuery,
   type Query,
+  personRoles,
+  type PersonFilter,
+  type PersonRole,
 } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
@@ -23,6 +26,7 @@ export type SnapshotOptions = {
 };
 
 export interface SnapshotRow {
+  matched_roles?: (PersonRole | "mentioned")[];
   flag?: "" | "pick" | "reject";
   asset_id?: string;
   node_id: number;
@@ -65,6 +69,8 @@ type PhotoSearchStatus = Pick<
 >;
 
 export interface WorkspaceQueryResponse extends PhotoSearchStatus {
+  timezone?: string;
+  timezone_defaulted: boolean;
   query: Query;
   dependencies: { kind: "tag" | "collection" | "saved" | "person"; id: string; revision: number }[];
   query_fingerprint: string;
@@ -90,6 +96,7 @@ export interface WorkspaceQueryResponse extends PhotoSearchStatus {
       | "size"
       | "text_coverage"
       | "duplicates"
+      | "person_role"
       | "camera"
       | "lens"
       | "year"
@@ -101,7 +108,13 @@ export interface WorkspaceQueryResponse extends PhotoSearchStatus {
     available: boolean;
     reason?: string;
     total?: number | null;
-    values: { key: string; label: string; count: number; selected: boolean }[];
+    values: {
+      key: string;
+      label: string;
+      count: number;
+      selected: boolean;
+      roles?: PersonRole[];
+    }[];
     missing?: number | null;
     other?: number | null;
   }[];
@@ -164,6 +177,7 @@ const facetDimensions = new Set<WorkspaceQueryResponse["facets"][number]["dimens
   "size",
   "text_coverage",
   "duplicates",
+  "person_role",
   "camera",
   "lens",
   "year",
@@ -285,6 +299,20 @@ function parseTag(value: unknown, index: number): SnapshotRow["tags"][number] {
   };
 }
 
+function parseRoles(
+  value: unknown,
+  field: string,
+  allowMention: boolean,
+): (PersonRole | "mentioned")[] {
+  if (!Array.isArray(value) || value.length > (allowMention ? 16 : personRoles.length - 1))
+    malformed(`${field} exceeds its bound`);
+  const valid: readonly string[] = allowMention ? [...personRoles, "mentioned"] : personRoles;
+  if (!value.every((role) => typeof role === "string" && valid.includes(role)))
+    malformed(`${field} contains an invalid role`);
+  if (new Set(value).size !== value.length) malformed(`${field} repeats a role`);
+  return value as (PersonRole | "mentioned")[];
+}
+
 function parseRow(value: unknown, index: number): SnapshotRow {
   const raw = record(value, `rows[${index}]`);
   keys(
@@ -313,6 +341,7 @@ function parseRow(value: unknown, index: number): SnapshotRow {
       "excerpt",
       "asset_id",
       "flag",
+      "matched_roles",
     ],
     `rows[${index}]`,
   );
@@ -367,6 +396,9 @@ function parseRow(value: unknown, index: number): SnapshotRow {
   if (assetID === undefined && flag !== undefined)
     malformed(`rows[${index}].flag requires a photo identity`);
   return {
+    ...(raw.matched_roles === undefined
+      ? {}
+      : { matched_roles: parseRoles(raw.matched_roles, `rows[${index}].matched_roles`, true) }),
     ...(flag === undefined ? {} : { flag: flag as SnapshotRow["flag"] }),
     ...(assetID === undefined ? {} : { asset_id: assetID }),
     node_id: integer(raw.node_id, `rows[${index}].node_id`, 1),
@@ -437,7 +469,7 @@ function parseFacet(
     keys(
       facetValue,
       ["key", "label", "count", "selected"],
-      [],
+      ["roles"],
       `facets[${index}].values[${valueIndex}]`,
     );
     if (typeof facetValue.selected !== "boolean")
@@ -447,6 +479,15 @@ function parseFacet(
       label: string(facetValue.label, `facets[${index}].values[${valueIndex}].label`),
       count: integer(facetValue.count, `facets[${index}].values[${valueIndex}].count`),
       selected: facetValue.selected,
+      ...(facetValue.roles === undefined
+        ? {}
+        : {
+            roles: parseRoles(
+              facetValue.roles,
+              `facets[${index}].values[${valueIndex}].roles`,
+              false,
+            ) as PersonRole[],
+          }),
     };
   });
   if (new Set(values.map((entry) => entry.key)).size !== values.length)
@@ -498,7 +539,36 @@ function parseFacet(
   };
 }
 
-function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query) {
+function rolesKey(entry: PersonFilter): string {
+  return entry.roles.join("\0");
+}
+
+// The server resolves each requested filters.people person to its current
+// identity, so a merged (retired) ID comes back as the survivor and entries
+// that now name the same person collapse. That is the only difference a
+// receipt may have from its request: everything else matches exactly, every
+// returned role set was requested, and every requested role set survives.
+function resolvesRequestedQuery(response: Query, request: Query): boolean {
+  const withoutPeople = (value: Query) =>
+    canonicalQuery({ ...value, filters: { ...value.filters, people: undefined } });
+  if (withoutPeople(response) !== withoutPeople(request)) return false;
+  const returned = response.filters.people ?? [];
+  const requested = request.filters.people ?? [];
+  if (returned.length > requested.length || (returned.length === 0) !== (requested.length === 0))
+    return false;
+  const requestedRoles = new Set(requested.map(rolesKey));
+  const returnedRoles = new Set(returned.map(rolesKey));
+  return (
+    [...returnedRoles].every((key) => requestedRoles.has(key)) &&
+    [...requestedRoles].every((key) => returnedRoles.has(key))
+  );
+}
+
+function parseQueryEvidence(
+  raw: Record<string, unknown>,
+  expectedQuery?: Query,
+  match: "exact" | "resolved" = "exact",
+) {
   const queryRaw = record(raw.query, "query");
   let decodedQuery: Query;
   try {
@@ -508,7 +578,8 @@ function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query)
   }
   if (
     expectedQuery !== undefined &&
-    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery)
+    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery) &&
+    (match === "exact" || !resolvesRequestedQuery(decodedQuery, expectedQuery))
   ) {
     malformed("query does not match the request");
   }
@@ -590,7 +661,11 @@ function photoSearchStatus(raw: Record<string, unknown>): PhotoSearchStatus {
   return status;
 }
 
-async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<SnapshotPage> {
+async function parseSnapshot(
+  value: unknown,
+  expectedQuery?: Query,
+  match: "exact" | "resolved" = "exact",
+): Promise<SnapshotPage> {
   const raw = record(value, "receipt");
   keys(
     raw,
@@ -612,9 +687,11 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
       "snapshot_id",
       "created_at",
       "expires_at",
+      "timezone_defaulted",
     ],
     [
       "$schema",
+      "timezone",
       "previous_cursor",
       "next_cursor",
       "requested_mode",
@@ -627,7 +704,10 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0)
     malformed("receipt.$schema is invalid");
-  const evidence = parseQueryEvidence(raw, expectedQuery);
+  if (typeof raw.timezone_defaulted !== "boolean")
+    malformed("timezone_defaulted must be a boolean");
+  const timezone = optionalString(raw.timezone, "timezone");
+  const evidence = parseQueryEvidence(raw, expectedQuery, match);
   const decodedQuery = evidence.query;
   const queryFingerprint = string(raw.query_fingerprint, "query_fingerprint");
   if (
@@ -647,7 +727,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   if (total === 0 ? raw.rows.length !== 0 : raw.rows.length === 0)
     malformed("rows is inconsistent with total");
   const rows = raw.rows.map((value, index) => parseRow(value, index));
-  if (!Array.isArray(raw.facets) || raw.facets.length > 8) malformed("facets exceeds its bound");
+  if (!Array.isArray(raw.facets) || raw.facets.length > 9) malformed("facets exceeds its bound");
   const facets = raw.facets.map((value, index) => parseFacet(value, index));
   if (new Set(facets.map((facet) => facet.dimension)).size !== facets.length)
     malformed("facets repeat a dimension");
@@ -669,6 +749,8 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
     malformed("expiry exceeds the snapshot lifetime");
   return {
     ...evidence,
+    timezone_defaulted: raw.timezone_defaulted,
+    ...(timezone === undefined ? {} : { timezone }),
     ...photoSearchStatus(raw),
     query_fingerprint: queryFingerprint,
     member_hash: memberHash,
@@ -746,7 +828,7 @@ function normalizedOptions(
     throw new Error("Snapshot page size is invalid.");
   if (
     options.facets !== undefined &&
-    (!Array.isArray(options.facets) || options.facets.length > 8)
+    (!Array.isArray(options.facets) || options.facets.length > 9)
   ) {
     throw new Error("Snapshot facets exceed their bound.");
   }
@@ -801,7 +883,7 @@ export async function createSnapshot(
     { query: JSON.parse(canonical), ...normalized },
     { session, signal },
   );
-  const result = await parseSnapshot(await boundedJSON(response), query);
+  const result = await parseSnapshot(await boundedJSON(response), query, "resolved");
   validateFirstPage(result, normalized);
   return result;
 }
@@ -830,13 +912,15 @@ export async function fetchPhotoTimeline(
   if (!Array.isArray(raw.facets) || raw.facets.length !== 1)
     malformed("timeline response is inconsistent");
   const facet = parseFacet(raw.facets[0], 0, true);
-  return { ...parseQueryEvidence(raw, query), facets: [facet] };
+  return { ...parseQueryEvidence(raw, query, "resolved"), facets: [facet] };
 }
 
 function sameAuthority(left: SnapshotPage, right: SnapshotPage): boolean {
   return (
     canonicalQuery(left.query) === canonicalQuery(right.query) &&
     JSON.stringify(left.dependencies) === JSON.stringify(right.dependencies) &&
+    left.timezone === right.timezone &&
+    left.timezone_defaulted === right.timezone_defaulted &&
     left.query_fingerprint === right.query_fingerprint &&
     left.member_hash === right.member_hash &&
     left.snapshot_fingerprint === right.snapshot_fingerprint &&

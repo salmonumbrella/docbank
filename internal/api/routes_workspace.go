@@ -17,9 +17,13 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		Path: "/api/v1/workspace/queries", Summary: "Create an exact bounded query snapshot",
 		MaxBodyBytes: maxWorkspaceQueryRequestBytes,
 	}, func(ctx context.Context, in *struct{ Body WorkspaceQueryCreateRequest }) (*struct{ Body WorkspaceQueryResponse }, error) {
+		ctx = browserPeopleScope(ctx)
 		owner, ok := workspaceSnapshotOwner(ctx)
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
+		}
+		if in.Body.Disclosure == "full" && ctx.Value(authenticationContextKey{}) != "master" {
+			return nil, NewError(http.StatusForbidden, "forbidden", "full disclosure requires an API key")
 		}
 		value, err := parseWorkspaceQuery(in.Body.Query)
 		if err != nil {
@@ -33,7 +37,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
 		page, err := service.Create(ctx, owner, store.SnapshotRequest{
-			Photos: in.Body.Photos, Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			Photos: in.Body.Photos, FullDisclosure: in.Body.Disclosure == "full", Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		})
 		if err != nil {
 			return nil, workspaceQueryError(err)
@@ -85,10 +89,16 @@ func parseWorkspaceQuery(raw QueryPayload) (query.Query, error) {
 	if err == nil {
 		return value, nil
 	}
+	if problem := dateQueryError(err); problem != nil {
+		return query.Query{}, problem
+	}
 	return query.Query{}, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 }
 
 func workspaceQueryError(err error) error {
+	if problem := dateQueryError(err); problem != nil {
+		return problem
+	}
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
 	}
@@ -100,6 +110,8 @@ func workspaceQueryError(err error) error {
 		return problem
 	}
 	switch {
+	case errors.Is(err, store.ErrDocumentDatesPending):
+		return NewError(http.StatusServiceUnavailable, "document_dates_pending", "Document dates are still being indexed; check timeline coverage and retry.")
 	case errors.Is(err, store.ErrInvalidSnapshotRequest):
 		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	case errors.Is(err, store.ErrSnapshotGone):

@@ -15,6 +15,8 @@ const maxSnapshotCursorBytes = 2048
 var ErrSnapshotCursor = errors.New("invalid query snapshot cursor")
 
 type snapshotCursorPayload struct {
+	Projection       string `json:"projection,omitempty"`
+	Scope            string `json:"scope,omitempty"`
 	Version          int    `json:"v"`
 	SnapshotID       string `json:"snapshot_id"`
 	QueryFingerprint string `json:"query_fingerprint"`

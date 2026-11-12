@@ -99,10 +99,12 @@ type querySnapshotServiceOptions struct {
 }
 
 type cachedQuerySnapshot struct {
+	kind            string
 	id              string
 	owner           string
 	metadata        []byte
 	rows            [][]byte
+	extraRows       int64 // retained rows in metadata, such as timeline strips
 	created         time.Time
 	lastUsed        time.Time
 	used            uint64
@@ -291,12 +293,16 @@ func (s *QuerySnapshotService) RunSaved(
 	var run SavedQueryRun
 	write := func() error {
 		return s.store.withLogicalTx(prepared.ctx, func(tx *sql.Tx) error {
-			if err := validatePhotoSnapshotMembersTx(prepared.ctx, tx, frozen); err != nil {
+			scopedCtx, err := s.store.scopeQueryPeople(prepared.ctx, tx)
+			if err != nil {
+				return err
+			}
+			if err := validatePhotoSnapshotMembersTx(scopedCtx, tx, frozen); err != nil {
 				return err
 			}
 			var insertErr error
 			run, insertErr = insertSavedQueryRunTx(
-				prepared.ctx, tx, id, expectedRevision, prepared.projection, prepared.page,
+				scopedCtx, tx, id, expectedRevision, prepared.projection, prepared.page,
 			)
 			return insertErr
 		})
@@ -357,23 +363,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	options.Now = s.now
 	options.SavedQuery = saved
-	var chargedRows, chargedBytes int64
-	options.Charge = func(rows, bytes int64) error {
-		if err := buildCtx.Err(); err != nil {
-			return err
-		}
-		chargedRows += rows
-		chargedBytes += bytes
-		if chargedRows > build.reservedRows || chargedBytes > build.reservedBytes {
-			if err := s.chargeBuild(build, max(0, chargedRows-build.reservedRows), max(0, chargedBytes-build.reservedBytes)); err != nil {
-				return err
-			}
-		}
-		if s.chargeHook != nil {
-			return s.chargeHook(buildCtx, owner, rows, bytes)
-		}
-		return nil
-	}
+	options.Charge, _ = s.snapshotCharge(buildCtx, owner, build)
 	projection, err := s.store.materializeNormalizedQuerySnapshot(buildCtx, normalized, options)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
@@ -486,6 +476,9 @@ func (s *QuerySnapshotService) page(
 }
 
 func (s *QuerySnapshotService) cachedPage(owner, cursor string, cached *cachedQuerySnapshot) (SnapshotPage, error) {
+	if cached.kind != "" {
+		return SnapshotPage{}, ErrSnapshotCursor
+	}
 	payload, err := s.decodeCursor(owner, cursor)
 	if err != nil {
 		return SnapshotPage{}, err
@@ -494,7 +487,7 @@ func (s *QuerySnapshotService) cachedPage(owner, cursor string, cached *cachedQu
 	if err := json.Unmarshal(cached.metadata, &metadata); err != nil {
 		return SnapshotPage{}, fmt.Errorf("decoding cached query snapshot metadata: %w", err)
 	}
-	if payload.SnapshotID != cached.id || payload.QueryFingerprint != metadata.QueryFingerprint ||
+	if payload.Projection != "" || payload.Scope != "" || payload.SnapshotID != cached.id || payload.QueryFingerprint != metadata.QueryFingerprint ||
 		payload.SortField != metadata.Query.Sort.Field || payload.SortDirection != metadata.Query.Sort.Direction ||
 		payload.PageSize != metadata.PageSize || payload.Offset < 0 || payload.Offset >= int64(len(cached.rows)) ||
 		payload.Offset%int64(metadata.PageSize) != 0 {
@@ -574,6 +567,9 @@ func (s *QuerySnapshotService) copyMembersBounded(ctx context.Context, owner, sn
 	cached, err := s.lookup(owner, snapshotID)
 	if err != nil {
 		return nil, err
+	}
+	if cached.kind != "" {
+		return nil, ErrSnapshotCursor
 	}
 	if limit < 1 || len(cached.rows) > limit {
 		return nil, ErrQuerySnapshotTooLarge
@@ -749,6 +745,28 @@ func (s *QuerySnapshotService) admitBuild(
 	return build, false, nil
 }
 
+// snapshotCharge accounts for every row and byte until the build finishes.
+func (s *QuerySnapshotService) snapshotCharge(buildCtx context.Context, owner string, build *querySnapshotBuild) (func(int64, int64) error, *int64) {
+	var chargedRows, chargedBytes int64
+	charge := func(rows, bytes int64) error {
+		if err := buildCtx.Err(); err != nil {
+			return err
+		}
+		chargedRows += rows
+		chargedBytes += bytes
+		if chargedRows > build.reservedRows || chargedBytes > build.reservedBytes {
+			if err := s.chargeBuild(build, max(0, chargedRows-build.reservedRows), max(0, chargedBytes-build.reservedBytes)); err != nil {
+				return err
+			}
+		}
+		if s.chargeHook != nil {
+			return s.chargeHook(buildCtx, owner, rows, bytes)
+		}
+		return nil
+	}
+	return charge, &chargedBytes
+}
+
 func (s *QuerySnapshotService) chargeBuild(build *querySnapshotBuild, rows, bytes int64) error {
 	if rows < 0 || bytes < 0 {
 		return ErrSnapshotAdmission
@@ -809,7 +827,7 @@ func (s *QuerySnapshotService) publishBuildLocked(build *querySnapshotBuild, cac
 	delete(s.builds, build.id)
 	s.reservedRows -= build.reservedRows
 	s.reservedBytes -= build.reservedBytes
-	s.cachedRows += int64(len(cached.rows))
+	s.cachedRows += int64(len(cached.rows)) + cached.extraRows
 	s.cachedBytes += cached.bytes
 	s.serial++
 	cached.used = s.serial
@@ -941,7 +959,7 @@ func (s *QuerySnapshotService) removeSnapshotLocked(id string) {
 		return
 	}
 	delete(s.snapshots, id)
-	s.cachedRows -= int64(len(cached.rows))
+	s.cachedRows -= int64(len(cached.rows)) + cached.extraRows
 	s.cachedBytes -= cached.bytes
 	s.releaseOwnerHandleLocked(cached.owner)
 }
@@ -1001,6 +1019,9 @@ func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor 
 	cached, err := s.lookup(owner, id)
 	if err != nil {
 		return SnapshotPage{}, err
+	}
+	if cached.kind != "" {
+		return SnapshotPage{}, ErrSnapshotCursor
 	}
 	var first SnapshotProjection
 	if err := json.Unmarshal(cached.metadata, &first); err != nil {

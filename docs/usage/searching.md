@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-01
+last_edited: 2026-11-11
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -234,6 +234,29 @@ modification time or the age of an older version.
 QueryV1 advanced expressions accept `person:"Ada Lovelace"` or `person:<person-id>`. Names match exactly after Unicode folding. Duplicate names require an ID; merged IDs resolve to the surviving person. Structured queries use `filters.person_ids`.
 
 Document queries include current published person links and direct assertions. Stale published links stay out until rebuilt. Photo queries match depicted-person assertions across the asset's live image and RAW members, using each member's current version and keep Hidden photos locked.
+
+## Find documents by person and role
+
+Advanced QueryV1 expressions can select what a person did on a current document version. Use a quoted exact name or person ID. Combine the operands with `AND`, `OR`, `NOT`, and other filters. Photo queries reject role operands and `filters.people`; use `person:` or `filters.person_ids` for depicted people.
+
+| Operand | Document roles |
+| --- | --- |
+| `author:` | Author |
+| `from:` | Sender or organizer |
+| `to:` | Recipient, copied or attendee; full access also includes blind copy |
+| `cc:` | Copied |
+| `bcc:` | Blind copy; API-key access only |
+| `custodian:`, `participant:`, `organizer:`, `attendee:` | The named role |
+| `between:(A, B)` | Both people have a non-custodian role on the same version |
+| `mentions:` | Text contains the person's display name or a name alias |
+
+For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches at most 16 distinct names as literal phrases and labels a matched result `Mentioned`.
+
+Browser sessions see only authorized people evidence. A person known solely through concealed evidence resolves as unknown; a visible person's hidden Bcc edge does not match. Browsers refuse `bcc:` and structured `blind_copy` role filters. API-key queries retain full disclosure. `person:` still means any role within the caller's visibility.
+
+Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
+
+In the web app, frozen results show the matched roles as chips beside each name, such as `Sender`, `Cc` or `Mentioned`. The **People** filter group lists up to 20 people with their counts and roles. Selecting a person adds a `filters.people` entry with the roles shown; selecting them again removes only that person's entries.
 
 ## Can I search with filters alone?
 
@@ -607,6 +630,45 @@ That explicit form requires a mode, a profile, and an authorized source set. See
 [Automatic and processing search](search.md) for modes, coverage, and the consumer
 contract.
 
+## Find documents by their own date
+
+Use advanced search to find claims from a document rather than a file's
+modification time. For example, `date:2026-03-01..2026-03-31` searches the
+inclusive range. Add `date_kind:authored` to search authored claims instead
+of the primary claim, or `date_precision:day` to select date-only claims.
+The precision values are `exact`, `day`, and `coarse`; exact includes floating
+wall times, while coarse includes month and year claims. Constraints in one
+AND group apply to the same claim. OR branches and NOT operands each have
+separate scopes. Multiple date kinds in a group are alternatives. Date range
+endpoints must yield representable instant bounds; otherwise the API returns
+HTTP 400 `invalid_date` without clamping the range.
+
+Exact instants are compared in the query's `timezone`; floating times and
+all-day dates use their written civil dates. Month and year claims match any
+range they overlap. A multi-day all-day calendar event matches each of its
+days. An omitted zone uses `[web] timeline_timezone`, which defaults to UTC.
+The response echoes the zone and whether it was defaulted; the current interface
+does not display it. Saved searches retain the zone used when saved; running one
+reports that pinned zone as explicit. These date filters and the document date
+sort are available in Documents. Photos rejects them. Browser sessions see only
+claims whose event and actors are not sensitive.
+
+Date search can return `document_dates_pending` while the timeline
+index is rebuilding; check timeline coverage and retry after indexing. Failed or
+unavailable derivations hide older date claims and do not establish that a
+document is undated. `NOT date:` can include files with failed or unavailable
+derivations because no current claim is visible. An
+API-key caller may request `"disclosure":"full"` when creating a workspace
+query to include sensitive date claims. Browser sessions always use safe
+disclosure.
+
+Use `docbank timeline days --from 2026-03-01 --to 2026-03-31` to count
+matching documents per civil day, or `docbank timeline day 2026-03-10` to
+list a day's placements. Add an advanced query as the final argument,
+`--timezone` to choose an IANA zone, and repeat `--date-kind` to select date
+kinds. The command prints the selected zone to stderr and JSON to stdout.
+Both reads use safe disclosure; see [Document timeline](../architecture/document-timeline.md#read-documents-by-day)
+for paging and indexing behavior.
 Next: organize documents beyond paths with
 [Organizing and tagging](organizing.md), or see every search flag in the
 [CLI reference](../cli-reference.md).

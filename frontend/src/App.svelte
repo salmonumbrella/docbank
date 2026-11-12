@@ -111,6 +111,7 @@
   import PanelResizer from "./PanelResizer.svelte";
   import { readPanelWidth, watchWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
+  import { roleListLabel } from "./personRoles.js";
   import { resultColumns } from "./resultColumns.js";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
@@ -2645,6 +2646,7 @@
     return !!(
       naturalProfile &&
       searchSyntax === "simple" &&
+      query.sort.field !== "document_date" &&
       query.text.trim() &&
       (options?.page_size ?? 100) === 100 &&
       (!options?.profile || options.profile === naturalProfile.name) &&
@@ -4666,11 +4668,17 @@
                                   onchange={(checked) => snapshot.toggleSelection(row, checked)}
                                 />
                               </td>
-                              <td class="name-cell" aria-label={row.path}>
+                              <td
+                                class="name-cell"
+                                aria-label={row.matched_roles?.length
+                                  ? `${row.path}, matched as ${roleListLabel(row.matched_roles)}`
+                                  : row.path}
+                              >
                                 <ResultName
                                   name={row.name}
                                   folder={parentPath(row.path)}
                                   mime={row.mime_type}
+                                  roles={row.matched_roles}
                                 />
                               </td>
                               <td class="type-cell col-type"

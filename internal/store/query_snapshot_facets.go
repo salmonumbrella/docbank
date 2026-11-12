@@ -20,7 +20,7 @@ import (
 var photoFacetDimensions = []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField, snapshotFacetRating, snapshotFacetFlag, snapshotFacetLabel}
 
 var snapshotFacetDimensions = [...]string{
-	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, snapshotFacetDuplicates, "capture_day",
+	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, snapshotFacetDuplicates, "person_role", "capture_day",
 }
 
 const (
@@ -74,6 +74,8 @@ func materializeSnapshotFacets(
 		var facet SnapshotFacet
 		var err error
 		switch {
+		case dimension == "person_role":
+			facet, err = materializePersonRoleFacet(facetCtx, q, compiled, generationID, coverage, options.FacetMemberLimit)
 		case dimension == "capture_day":
 			facet, err = materializeCaptureDayFacet(facetCtx, q, compiled, generationID, coverage, options.FacetMemberLimit)
 		case options.MaterializeFacet != nil:
@@ -136,11 +138,11 @@ func materializeSnapshotFacet(
 	if dimension != snapshotFacetDuplicates && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
 	}
-	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q})
+	facetCompiled, err := (queryCompiler{fullDisclosure: compiled.FullDisclosure}).compile(ctx, facetQuery, queryResolver{q: q})
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	population, err := matchedPopulation(facetCompiled, generationID, nil)
+	population, err := documentSnapshotPopulation(ctx, q, facetCompiled, generationID, coverage)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -341,7 +343,7 @@ func finishSnapshotFacet(
 			observation.labels[value] = value
 		}
 	}
-	values, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, len(fixed) != 0)
+	values, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, len(fixed) != 0, 50)
 	visible := make(map[string]bool, len(values))
 	for _, value := range values {
 		visible[value.Key] = true
@@ -366,6 +368,8 @@ func finishSnapshotFacet(
 // nested saved queries retain their constraints in the same read transaction.
 func queryWithoutSnapshotFacet(value query.Query, dimension string) query.Query {
 	switch dimension {
+	case "person_role":
+		value.Filters.People = nil
 	case snapshotFacetRating:
 		value.Filters.RatingMin, value.Filters.RatingMax = nil, nil
 	case snapshotFacetFlag:
@@ -551,7 +555,7 @@ func fillSelectedSnapshotFacetLabels(
 }
 
 func finalizeSnapshotFacetValues(
-	counts map[string]int64, labels map[string]string, selected map[string]bool, fixed bool,
+	counts map[string]int64, labels map[string]string, selected map[string]bool, fixed bool, limit int,
 ) ([]SnapshotFacetValue, int64) {
 	observed := make([]SnapshotFacetValue, 0, len(counts))
 	for key, count := range counts {
@@ -563,7 +567,6 @@ func finalizeSnapshotFacetValues(
 		}
 		return strings.Compare(left.Key, right.Key)
 	})
-	limit := 50
 	if fixed || len(observed) < limit {
 		limit = len(observed)
 	}
@@ -622,7 +625,7 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 
 func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
 	value := queryWithoutSnapshotFacet(compiled.Query, dimensions[0])
-	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: compiled.photoHidden}).compile(ctx, value, queryResolver{q: q})
+	resolved, err := (queryCompiler{fullDisclosure: compiled.FullDisclosure, photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: compiled.photoHidden}).compile(ctx, value, queryResolver{q: q})
 	if err != nil {
 		return nil, err
 	}

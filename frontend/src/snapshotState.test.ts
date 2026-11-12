@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
-import { parseQuery, queryFingerprint } from "./query.js";
+import { canonicalQuery, parseQuery, queryFingerprint } from "./query.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
 
 const query = parseQuery("{}");
@@ -42,6 +42,7 @@ async function receipt(overrides: Record<string, unknown> = {}): Promise<Record<
     total_bytes: 10,
     rows: [{ ...snapshotRow(2), content_version_id: version, blob_hash: "c".repeat(64), size: 10 }],
     facets: [],
+    timezone_defaulted: false,
     snapshot: true,
     snapshot_id: "0123456789abcdef0123456789abcdef",
     created_at: "2026-09-11T00:00:00Z",
@@ -254,6 +255,42 @@ describe("snapshot request-epoch state", () => {
 
     expect(states.at(-1)).toMatchObject({ status: "ready", query: otherQuery });
     expect(states.filter((state) => state.status === "ready")).toHaveLength(1);
+  });
+
+  it("adopts the receipt's resolved survivor while keeping the request it sent", async () => {
+    const retired = "00000000-0000-4000-8000-0000000000aa";
+    const survivor = "00000000-0000-4000-8000-0000000000bb";
+    const requested = parseQuery(
+      JSON.stringify({
+        text: "synthetic",
+        filters: {
+          people: [
+            { person_id: retired, roles: ["recipient"] },
+            { person_id: survivor, roles: ["recipient"] },
+          ],
+        },
+      }),
+    );
+    const resolved = parseQuery(
+      JSON.stringify({
+        text: "synthetic",
+        filters: { people: [{ person_id: survivor, roles: ["recipient"] }] },
+      }),
+    );
+    const states: Readonly<SnapshotState>[] = [];
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(response(await receipt({ query: resolved })));
+    const session = new SnapshotSession("session", (state) => states.push(state));
+
+    await session.run(requested, { page_size: 50 });
+
+    const sent = JSON.parse(String(fetch.mock.calls[0][1]?.body)) as { query: unknown };
+    expect(sent.query).toEqual(JSON.parse(canonicalQuery(requested)));
+    const ready = states.at(-1)!;
+    expect(ready.status).toBe("ready");
+    expect(ready.query).toEqual(resolved);
+    expect(ready.query).toEqual(ready.firstPage!.query);
   });
 
   it("suppresses delayed work after dispose", async () => {

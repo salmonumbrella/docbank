@@ -380,6 +380,30 @@ merge and split operation IDs make retries replayable. When you omit one, the
 CLI generates it and prints it to stderr before the request. A split needs at
 least one identity, assertion, assignment, or external UID.
 
+## docbank timeline
+
+```text
+docbank timeline days --from DATE --to DATE [--timezone ZONE] [--date-kind KIND] [query]
+docbank timeline day DATE [--timezone ZONE] [--date-kind KIND] [--limit N] [--cursor CURSOR] [query]
+```
+
+Count or list documents by civil day. The optional query is an advanced search
+expression or a QueryV1 JSON object. The inclusive range is limited to 92 dates.
+The selected time zone is printed to stderr; the response is JSON on stdout.
+See [Document timeline](architecture/document-timeline.md#read-documents-by-day).
+
+## docbank document dates and people
+
+```sh
+docbank document dates <path-or-id> [--json] [--full]
+docbank document people <path-or-id> [--json] [--full]
+```
+
+Read the current version's date claims or people. The state identifies whether
+results are published, pending, failed, or absent. Dates also show diagnostics.
+Use `--full` to include sensitive claims and `--json` for structured output.
+See [People](usage/people.md) and [document timeline](architecture/document-timeline.md).
+
 ## docbank document stat
 
 ```

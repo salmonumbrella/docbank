@@ -16,6 +16,7 @@ func registerPhotoTimelineRoute(api huma.API, service *store.QuerySnapshotServic
 		Summary:      "Count matching photo assets by recorded capture day",
 		MaxBodyBytes: query.MaxInputBytes + (32 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoTimelineRequest }) (*struct{ Body PhotoTimeline }, error) {
+		ctx = browserPeopleScope(ctx)
 		owner, ok := workspaceSnapshotOwner(ctx)
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
@@ -28,7 +29,7 @@ func registerPhotoTimelineRoute(api huma.API, service *store.QuerySnapshotServic
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "photo timeline counts are unavailable")
 		}
 		projection, err := service.CreateFacets(ctx, owner, store.SnapshotRequest{
-			FacetsOnly: true, Query: value, Facets: []string{"capture_day"},
+			FacetsOnly: true, PhotoScope: true, Query: value, Facets: []string{"capture_day"},
 			Coverage: store.CoverageSelection{
 				Configuration:      in.Body.Coverage.Configuration,
 				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,

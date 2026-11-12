@@ -70,6 +70,7 @@
     { value: "name", label: "Name" },
     { value: "path", label: "Path" },
     { value: "modified_at", label: "Modified" },
+    { value: "document_date", label: "Document date" },
     { value: "size", label: "Size" },
     { value: "media_type", label: "File type" },
   ];
@@ -78,6 +79,13 @@
     ...[...new Set([...profiles.map((item) => item.name), ...(profile ? [profile] : [])])]
       .sort()
       .map((name) => ({ value: name, label: name })),
+  ]);
+  // Server validation codes whose 400/422 body may carry an expression byte span.
+  const positionedErrorCodes = new Set([
+    "invalid_query",
+    "invalid_date",
+    "invalid_timezone",
+    "date_not_in_zone",
   ]);
   const directionOptions: SelectDropdownOption[] = [
     { value: "asc", label: "Ascending" },
@@ -107,6 +115,7 @@
     "size",
     "text_coverage",
     "duplicates",
+    "person_role",
   ];
 
   function invalidate() {
@@ -163,7 +172,7 @@
             return;
           }
           failure = cause instanceof Error ? cause.message : String(cause);
-          if (cause instanceof APIError && cause.code === "invalid_query")
+          if (cause instanceof APIError && positionedErrorCodes.has(cause.code))
             position = cause.position;
         })
         .finally(() => {
@@ -278,6 +287,15 @@
                 PDF evidence: <code>pdf_embedded_file_count_min:1 OR pdf_has_javascript:true</code>.
               </p>
               <p>References: <code>tag:</code>, <code>collection:</code>, <code>saved:</code>.</p>
+              <p>
+                People by role: <code>author:</code>, <code>from:</code>, <code>to:</code>,
+                <code>cc:</code>, <code>custodian:</code>, <code>participant:</code>,
+                <code>organizer:</code>, <code>attendee:</code>, and <code>person:</code> for any role.
+              </p>
+              <code>between:("Mara Okonkwo-Fell", "Ines Albarrán")</code>
+              <p>
+                <code>mentions:</code> searches the text for a person's names.
+              </p>
             </Disclosure>{/if}
         </div>
       {:else if expressionError}<p class="error" role="alert">{expressionError}</p>{/if}

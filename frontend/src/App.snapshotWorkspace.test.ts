@@ -70,6 +70,7 @@ function snapshot(
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ].map((dimension) =>
       dimension === "extension"
         ? {
@@ -94,6 +95,7 @@ function snapshot(
             values: [],
           },
     ),
+    timezone_defaulted: false,
     snapshot: true,
     snapshot_id: "0123456789abcdef0123456789abcdef",
     created_at: "2026-09-11T12:34:00Z",
@@ -416,6 +418,7 @@ it("keeps rapid runs bound to the accepted frozen snapshot while live observatio
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ],
   });
 
@@ -537,6 +540,7 @@ it("reruns supported facets and sorting from the complete accepted query", async
       "size",
       "text_coverage",
       "duplicates",
+      "person_role",
     ],
   });
 

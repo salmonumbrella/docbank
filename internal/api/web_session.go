@@ -270,6 +270,23 @@ func (r *webSessionRegistry) waitRevocations() {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/timeline/day" || r.URL.Path == "/api/v1/timeline/days" {
+		return r.Method == http.MethodPost && r.URL.RawQuery == ""
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/versions/"); ok {
+		parts := strings.Split(after, "/")
+		if len(parts) == 2 && (parts[1] == "dates" || parts[1] == "people") {
+			values, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil || r.Method != http.MethodGet || !validPageJobPathID(parts[0]) {
+				return false
+			}
+			if len(values) == 0 {
+				return true
+			}
+			entries, ok := values["disclosure"]
+			return len(values) == 1 && ok && len(entries) == 1 && (entries[0] == "safe" || entries[0] == "full")
+		}
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/redaction/") {
 		return redactionBrowserRequestAllowed(r)
 	}

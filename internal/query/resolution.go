@@ -84,7 +84,7 @@ func ResolveQuery(ctx context.Context, value Query, resolver Resolver) (Resolved
 	}
 	normalized, canonical, err := normalizeCanonical(value)
 	if err != nil {
-		return ResolvedQuery{}, expressionError(0, len(value.Text), err.Error())
+		return ResolvedQuery{}, &ExpressionError{Offset: 0, End: len(value.Text), Message: err.Error(), Cause: err}
 	}
 	state := resolutionState{
 		resolver:       resolver,
@@ -110,7 +110,7 @@ func (state *resolutionState) resolveQuery(ctx context.Context, value Query, sav
 	if err != nil {
 		return ResolvedQuery{}, err
 	}
-	facetDependencies, err := state.resolveFacets(ctx, value)
+	facetDependencies, err := state.resolveFacets(ctx, &value)
 	if err != nil {
 		return ResolvedQuery{}, err
 	}
@@ -240,7 +240,7 @@ func (state *resolutionState) resolveLeaf(
 	delete(state.activeSaved, dependency.ID)
 	if err != nil {
 		if nestedExpressionErr, ok := errors.AsType[*ExpressionError](err); ok {
-			return nil, nil, nil, expressionError(syntax.Start, syntax.End, nestedExpressionErr.Message)
+			return nil, nil, nil, &ExpressionError{Offset: syntax.Start, End: syntax.End, Message: nestedExpressionErr.Message, Cause: nestedExpressionErr}
 		}
 		return nil, nil, nil, err
 	}
@@ -248,7 +248,7 @@ func (state *resolutionState) resolveLeaf(
 	return &dependency, &nestedResolved, dependencies, nil
 }
 
-func (state *resolutionState) resolveFacets(ctx context.Context, value Query) ([]Dependency, error) {
+func (state *resolutionState) resolveFacets(ctx context.Context, value *Query) ([]Dependency, error) {
 	type facet struct {
 		kind   ReferenceKind
 		values []string
@@ -261,6 +261,19 @@ func (state *resolutionState) resolveFacets(ctx context.Context, value Query) ([
 		{kind: ReferencePerson, values: value.Filters.PersonIDs},
 	}
 	var dependencies []Dependency
+	for i, person := range value.Filters.People {
+		ref, err := state.lookup(ctx, ReferencePerson, person.PersonID, true, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		value.Filters.People[i].PersonID = ref.Dependency.ID
+		dependencies = append(dependencies, ref.Dependency)
+	}
+	normalized, err := normalizePeople(value.Filters.People)
+	if err != nil {
+		return nil, err
+	}
+	value.Filters.People = normalized
 	for _, facet := range facets {
 		for _, id := range facet.values {
 			// Structured filters have no span in the query text.
@@ -357,7 +370,7 @@ func referenceKindForField(field string) (ReferenceKind, bool) {
 		return ReferenceTag, true
 	case string(ReferenceCollection):
 		return ReferenceCollection, true
-	case string(ReferencePerson):
+	case string(ReferencePerson), "author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "between", "mentions":
 		return ReferencePerson, true
 	case string(ReferenceSaved):
 		return ReferenceSaved, true

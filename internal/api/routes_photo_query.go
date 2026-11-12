@@ -70,14 +70,23 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		Summary:      "Browse matching photo assets",
 		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
+		ctx = browserPeopleScope(ctx)
 		if in.Body.Projection != "map" && in.Body.PageSize > store.MaxDocumentCatalogPageSize {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", fmt.Sprintf("page_size must be at most %d without projection map", store.MaxDocumentCatalogPageSize))
 		}
 		value, err := query.Parse(in.Body.Query)
 		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
+			return nil, queryInputError(err)
 		}
 		metadataSort := value.Sort
+		if in.Body.SnapshotID == "" {
+			err = d.Store.ValidatePhotoQuery(ctx, value)
+		} else {
+			err = store.ValidatePhotoDocumentDates(value)
+		}
+		if err != nil {
+			return nil, workspaceQueryError(err)
+		}
 		value = photoRankingQuery(value)
 		request := photoRankingRequest(value, in.Body.Hidden, store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint})
 		request.Stacks = in.Body.Stacks && in.Body.Projection != "map"

@@ -53,6 +53,10 @@ func (s *Store) MaterializeTermReportFrame(
 	}
 	var frame report.Frame
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+		ctx, err := s.scopeQueryPeople(ctx, q)
+		if err != nil {
+			return err
+		}
 		if coverage.Configuration == "configured" {
 			if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
 				return err
@@ -96,7 +100,7 @@ func (s *Store) MaterializeTermReportFrame(
 			}
 			value := query.Query{V: 1, Text: term.Expression, Syntax: term.Syntax,
 				Mode: query.ModeLexical, Sort: query.Sort{Field: string(DocumentCatalogSortName), Direction: "asc"}}
-			compiled, err := compileQuery(ctx, value, queryResolver{q: q})
+			compiled, err := (queryCompiler{requireFreshDates: true}).compile(WithQueryDefaultTimezone(ctx, request.Timezone), value, queryResolver{q: q})
 			if err != nil {
 				return fmt.Errorf("term %d: %w", term.Number, err)
 			}
@@ -105,7 +109,7 @@ func (s *Store) MaterializeTermReportFrame(
 					Kind: string(dependency.Kind), ID: dependency.ID, Revision: dependency.Revision,
 				})
 			}
-			population, err := matchedPopulation(compiled, generation.ID, &coverage.ProfileFingerprint)
+			population, err := preparedPopulation(ctx, q, compiled, generation.ID, &coverage.ProfileFingerprint, coverage)
 			if err != nil {
 				return err
 			}
