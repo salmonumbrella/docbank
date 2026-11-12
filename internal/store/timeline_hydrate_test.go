@@ -84,6 +84,19 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 		}
 	}
 
+	for _, state := range []string{"retired", "unlinked"} {
+		person, _, err = s.PersonByID(ctx, personID)
+		require.NoError(t, err)
+		_, err = s.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: personID, System: "msgvault", ArchiveID: "synthetic", UID: "person-a", UIDKind: "vcard_uid", UIDState: state}, person.Revision)
+		require.NoError(t, err)
+		page, err = svc.TimelineDay(ctx, "owner", req)
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, 1)
+		require.Len(t, page.DateOnly[0].People, 1)
+		require.False(t, page.DateOnly[0].People[0].LinkedContact)
+		require.Empty(t, page.DateOnly[0].People[0].UID)
+	}
+
 	// Suppression advances the binding epoch and excludes the stale derived edge.
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: personID, Role: "author", Action: "suppress", Revision: 1})
 	require.NoError(t, err)
