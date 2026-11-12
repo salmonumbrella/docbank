@@ -53,6 +53,20 @@ func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, postgres bool)
 	require.Equal(t, suggested.CandidateID, got[1].CandidateID)
 	require.Equal(t, candidate.CandidateID, got[2].CandidateID)
 	require.Equal(t, []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "first"}}, got[2].Occurrences)
+	batch, err := s.openCandidatesForVersions(t.Context(), s.db, []string{first, second}, keys)
+	require.NoError(t, err)
+	require.Len(t, batch, 6)
+	var shared *VersionCandidate
+	for i := range batch {
+		if batch[i].CandidateID == candidate.CandidateID {
+			shared = &batch[i]
+		}
+	}
+	require.NotNil(t, shared)
+	require.ElementsMatch(t, []PersonCandidateOccurrence{
+		{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "first"},
+		{ContentVersionID: second, Role: "blind_copy", EvidenceKind: "email_generation", EvidenceID: "second"},
+	}, shared.Occurrences)
 	empty, err := s.openCandidatesForVersion(t.Context(), s.db, first, nil)
 	require.NoError(t, err)
 	require.Empty(t, empty)

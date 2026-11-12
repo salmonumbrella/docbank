@@ -6,10 +6,10 @@ import (
 	"testing"
 	_ "time/tzdata"
 
+	"cloud.google.com/go/civil"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/kit/civiltime"
 )
 
 func TestTimelineDaysUndatedAndPending(t *testing.T) {
@@ -23,7 +23,7 @@ func checkTimelineDaysUndatedAndPending(t *testing.T, open func(*testing.T) *Sto
 	require.NoError(t, err)
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
 	_, err = svc.TimelineDays(ctx, "owner", scope, date, date)
@@ -63,7 +63,7 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 	store := &Store{postgresSchema: "synthetic"}
 	svc := NewQuerySnapshotService(store)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2026-03-10")
+	date, err := civil.ParseDate("2026-03-10")
 	require.NoError(t, err)
 	for _, text := range []string{"hello", "person:synthetic", "tag:synthetic", "date:2026-03-10", "saved:synthetic"} {
 		t.Run(text, func(t *testing.T) {
@@ -76,6 +76,35 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
 		})
 	}
+	filterCases := timelineNarrowingFilters()
+	for name, filters := range filterCases {
+		t.Run(name, func(t *testing.T) {
+			q := base
+			q.Filters = filters
+			scope := TimelineScope{Query: q, Zone: "invalid-zone"}
+			_, err := svc.TimelineDays(t.Context(), "owner", scope, date, date)
+			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+			_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
+			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+			_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Cursor: "invalid", Limit: 1})
+			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+		})
+	}
+	q := base
+	q = base
+	q.Filters.CollapseDuplicates = true
+	require.NoError(t, validatePostgresTimelineScope(q))
+	for _, mode := range []string{"lexical", "semantic", "hybrid"} {
+		for _, field := range []string{"name", "path", "modified_at", "size", "media_type", "capture_time", "import_time", "added_time", "document_date"} {
+			q.Mode, q.Sort.Field = mode, field
+			require.NoError(t, validatePostgresTimelineScope(q), "%s/%s", mode, field)
+		}
+	}
+	q.Sort.Field = "relevance"
+	require.Error(t, validatePostgresTimelineScope(q))
+}
+
+func timelineNarrowingFilters() map[string]query.Filters {
 	id := "90000000-0000-4000-8000-000000000001"
 	filterCases := map[string]query.Filters{
 		"document date":       {DocumentDate: &query.DocumentDateFilter{From: "2026-03-10", To: "2026-03-10"}},
@@ -121,11 +150,21 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 		reflect.ValueOf(&filters).Elem().FieldByName(name).Set(reflect.ValueOf(new("0.5")))
 		filterCases[name] = filters
 	}
-	for name, filters := range filterCases {
+	return filterCases
+}
+
+func checkTimelineScopeRejected(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civil.ParseDate("2026-03-10")
+	require.NoError(t, err)
+	for name, filters := range timelineNarrowingFilters() {
 		t.Run(name, func(t *testing.T) {
-			q := base
+			q := snapshotTestQuery(t, `{}`)
 			q.Filters = filters
-			scope := TimelineScope{Query: q, Zone: "invalid-zone"}
+			scope := TimelineScope{Query: q, Zone: "UTC"}
 			_, err := svc.TimelineDays(t.Context(), "owner", scope, date, date)
 			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
 			_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
@@ -134,34 +173,6 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
 		})
 	}
-	q := base
-	q = base
-	q.Filters.CollapseDuplicates = true
-	require.NoError(t, validatePostgresTimelineScope(q))
-	for _, mode := range []string{"lexical", "semantic", "hybrid"} {
-		for _, field := range []string{"name", "path", "modified_at", "size", "media_type", "capture_time", "import_time", "added_time", "document_date"} {
-			q.Mode, q.Sort.Field = mode, field
-			require.NoError(t, validatePostgresTimelineScope(q), "%s/%s", mode, field)
-		}
-	}
-	q.Sort.Field = "relevance"
-	require.Error(t, validatePostgresTimelineScope(q))
-}
-
-func checkTimelineScopeRejected(t *testing.T, open func(*testing.T) *Store) {
-	t.Helper()
-	s := open(t)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2026-03-10")
-	require.NoError(t, err)
-	q := snapshotTestQuery(t, `{}`)
-	q.Filters.Paths = []string{"/synthetic"}
-	scope := TimelineScope{Query: q, Zone: "UTC"}
-	_, err = svc.TimelineDays(t.Context(), "owner", scope, date, date)
-	require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
-	_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Cursor: "invalid", Limit: 1})
-	require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
 }
 
 // A terminal failed attempt can retain an old generation. Neither that head
@@ -181,14 +192,16 @@ func checkTimelineFreshnessTerminalAttempts(t *testing.T, open func(*testing.T) 
 	require.NoError(t, err)
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
 	for i, state := range []string{"failed", "unavailable"} {
-		_, err = s.StartDocumentEventRebuild(ctx, fmt.Sprintf("90000000-0000-4000-8000-%012d", i+1), fakeHash(state))
+		_, err = s.StartDocumentEventRebuild(ctx, fmt.Sprintf("90000000-0000-4000-8000-%012d", i+1), fakeHash(fmt.Sprintf("f%02x", i+1)))
 		require.NoError(t, err)
 		_, err = svc.TimelineDays(ctx, "owner", scope, date, date)
 		require.ErrorIs(t, err, ErrDocumentDatesPending, "a rebuild invalidates even an unfiltered query")
+		_, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+		require.ErrorIs(t, err, ErrDocumentDatesPending)
 		target = requireDocumentEventTarget(t, s, node.CurrentVersionID)
 		require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, requireDocumentEventInputsSHA256(t, s, target), state, []byte(`[]`)))
 		days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
@@ -256,7 +269,7 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 	}
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
 	days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
@@ -298,6 +311,57 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 	require.Equal(t, ids["exact"], page.Items[0].NodeID)
 }
 
+// Exact instants use containing day bounds even when the local date differs.
+func checkTimelineAnomalousInstantPlacement(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	for _, tc := range []struct {
+		zone, day, instant string
+		minute             int
+	}{
+		{"America/Santiago", "2026-09-06", "2026-09-06T04:10:00", 10},
+		{"America/St_Johns", "2010-11-07", "2010-11-07T03:00:00", 30},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
+			s := open(t)
+			ctx := t.Context()
+			node, err := s.CreateFile(ctx, s.RootID(), "instant.txt", fakeHash("da1"), 1, "text/plain")
+			require.NoError(t, err)
+			target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+			record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "da2")
+			e := &record.Events[0]
+			e.DateValue, e.RawValue, e.Precision, e.TimezoneKind = tc.instant, tc.instant, "second", "utc"
+			e.AxisKey, err = document.EventAxisKey(e.DateValue, e.Precision, e.TimezoneKind, nil)
+			require.NoError(t, err)
+			var hasUTC bool
+			e.UTCKey, hasUTC, err = document.EventUTCKey(e.DateValue, e.Precision, e.TimezoneKind, nil)
+			require.NoError(t, err)
+			require.True(t, hasUTC)
+			e.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, e.SourceKey, e.DateKind, e.DateValue, e.Precision, e.TimezoneKind, e.EvidenceSHA256)
+			record.Primaries = nil
+			for _, disclosure := range []string{"full", "safe"} {
+				primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", disclosure)
+				require.True(t, ok)
+				record.Primaries = append(record.Primaries, primary)
+			}
+			_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+			require.NoError(t, err)
+			svc := NewQuerySnapshotService(s)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			date, err := civil.ParseDate(tc.day)
+			require.NoError(t, err)
+			scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: tc.zone}
+			days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
+			require.NoError(t, err)
+			require.Equal(t, []TimelineDayCount{{Date: tc.day, Count: 1}}, days.Days)
+			page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+			require.NoError(t, err)
+			require.Len(t, page.Items, 1)
+			require.Equal(t, node.ID, page.Items[0].NodeID)
+			require.Equal(t, tc.minute, *page.Items[0].AxisMinute)
+		})
+	}
+}
+
 func checkTimelinePairedCalendarDates(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -328,7 +392,7 @@ func checkTimelinePairedCalendarDates(t *testing.T, open func(*testing.T) *Store
 	require.NoError(t, err)
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
 	for day := range 3 {
@@ -361,7 +425,7 @@ func checkTimelineUndatedSafeOnly(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
 	days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
@@ -394,7 +458,7 @@ func checkTimelineDuplicateCollapse(t *testing.T, open func(*testing.T) *Store) 
 	}
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
 	for _, tc := range []struct {

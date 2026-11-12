@@ -744,6 +744,19 @@ type VersionCandidate struct {
 }
 
 func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string, actorKeys []string) ([]VersionCandidate, error) {
+	return s.openCandidatesForVersions(ctx, q, []string{versionID}, actorKeys)
+}
+
+// openCandidatesForVersions reads indexed actor keys in batches and retains only
+// evidence for the requested versions. A candidate may span multiple versions.
+func (s *Store) openCandidatesForVersions(ctx context.Context, q metadataQuerier, versionIDs, actorKeys []string) ([]VersionCandidate, error) {
+	versions := make(map[string]bool, len(versionIDs))
+	for _, id := range versionIDs {
+		versions[id] = true
+	}
+	if len(versions) == 0 {
+		return nil, nil
+	}
 	// Each emitted occurrence must match a fresh actor. Deduplicate keys before
 	// querying both partial-index partitions, without limiting the results.
 	keys := make([]string, 0, len(actorKeys))
@@ -763,19 +776,22 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 	// Keep the parameter count portable across SQLite builds and PostgreSQL.
 	for start := 0; start < len(keys); start += 400 {
 		chunk := keys[start:min(start+400, len(keys))]
-		args := make([]any, len(chunk)+1)
+		args := make([]any, len(chunk))
 		placeholders := make([]string, len(chunk))
 		for i, key := range chunk {
 			args[i] = key
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 		}
-		args[len(chunk)] = versionID
-		versionParam := fmt.Sprintf("$%d", len(args))
-		membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o WHERE json_extract(o.value, '$.content_version_id') = ` + versionParam + `)`
-		if s.postgresSchema != "" {
-			membership = `EXISTS (SELECT 1 FROM jsonb_array_elements(convert_from(evidence_json,'UTF8')::jsonb) o(value) WHERE o.value->>'content_version_id' = ` + versionParam + `)`
+		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `)`
+		if len(versionIDs) == 1 {
+			args = append(args, versionIDs[0])
+			versionParam := fmt.Sprintf("$%d", len(args))
+			membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o WHERE json_extract(o.value, '$.content_version_id') = ` + versionParam + `)`
+			if s.postgresSchema != "" {
+				membership = `EXISTS (SELECT 1 FROM jsonb_array_elements(convert_from(evidence_json,'UTF8')::jsonb) o(value) WHERE o.value->>'content_version_id' = ` + versionParam + `)`
+			}
+			filter += ` AND ` + membership
 		}
-		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `) AND ` + membership
 		columns := `candidate_id,actor_key,evidence_json,created_at`
 		query := `SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NULL AND ` + filter +
 			` UNION ALL SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NOT NULL AND ` + filter
@@ -796,7 +812,7 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 					return err
 				}
 				for _, occurrence := range occurrences {
-					if occurrence.ContentVersionID == versionID {
+					if versions[occurrence.ContentVersionID] {
 						c.Occurrences = append(c.Occurrences, occurrence)
 					}
 				}

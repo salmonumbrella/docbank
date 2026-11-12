@@ -6,10 +6,11 @@ import (
 	"net/http"
 	"slices"
 
+	"cloud.google.com/go/civil"
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/kit/civiltime"
 )
 
 func timelineInput(d Deps, raw QueryPayload, zone *string, kinds []string) (store.TimelineScope, error) {
@@ -24,7 +25,7 @@ func timelineInput(d Deps, raw QueryPayload, zone *string, kinds []string) (stor
 	if zone != nil {
 		name = *zone
 	}
-	if _, err := civiltime.LoadZone(name); err != nil {
+	if _, err := query.LoadZone(name); err != nil {
 		return store.TimelineScope{}, NewError(http.StatusBadRequest, "invalid_timezone", err.Error())
 	}
 	if len(kinds) > 16 {
@@ -40,8 +41,8 @@ func timelineInput(d Deps, raw QueryPayload, zone *string, kinds []string) (stor
 	}
 	return store.TimelineScope{Query: value, Zone: name, Defaulted: zone == nil, DateKinds: kinds}, nil
 }
-func timelineDate(value string) (civiltime.Date, error) {
-	date, err := civiltime.ParseDate(value)
+func timelineDate(value string) (civil.Date, error) {
+	date, err := civil.ParseDate(value)
 	if err != nil {
 		return date, NewError(http.StatusBadRequest, "invalid_date", err.Error())
 	}
@@ -49,7 +50,7 @@ func timelineDate(value string) (civiltime.Date, error) {
 }
 func timelineError(err error) error {
 	switch {
-	case errors.Is(err, civiltime.ErrDateNotInZone):
+	case errors.Is(err, store.ErrTimelineDateNotInZone):
 		return NewError(http.StatusBadRequest, "date_not_in_zone", err.Error())
 	case errors.Is(err, store.ErrTimelineCursorMismatch):
 		return NewError(http.StatusBadRequest, "cursor_mismatch", err.Error())
@@ -85,9 +86,9 @@ func registerTimelineDayRoutes(api huma.API, d Deps, service *store.QuerySnapsho
 		if from.AddDays(91).Compare(to) < 0 {
 			return nil, NewError(http.StatusBadRequest, "range_too_large", "range exceeds 92 dates")
 		}
-		loc, _ := civiltime.LoadZone(scope.Zone)
-		if _, _, err := civiltime.RangeBounds(from, to, loc); err != nil {
-			return nil, timelineError(err)
+		loc, _ := query.LoadZone(scope.Zone)
+		if _, _, err := query.RangeBounds(from, to, loc); err != nil {
+			return nil, NewError(http.StatusBadRequest, "date_not_in_zone", err.Error())
 		}
 		counts, err := service.TimelineDays(browserPeopleScope(ctx), owner, scope, from, to)
 		if err != nil {

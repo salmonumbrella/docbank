@@ -4,15 +4,15 @@ import (
 	"database/sql"
 	"testing"
 
+	"cloud.google.com/go/civil"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/kit/civiltime"
 )
 
 func TestTimelineHydrationEmpty(t *testing.T) {
 	s := newTestStore(t)
 	err := s.withReadTx(t.Context(), func(tx *sql.Tx) error {
-		items, err := hydrateTimelineItems(t.Context(), tx, nil, false)
+		items, err := s.hydrateTimelineItems(t.Context(), tx, nil, false)
 		require.NoError(t, err)
 		require.Empty(t, items)
 		return nil
@@ -52,7 +52,7 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.NoError(t, err)
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10}
 	page, err := svc.TimelineDay(ctx, "owner", req)
@@ -104,4 +104,41 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.NoError(t, err)
 	require.Len(t, page.DateOnly, 1)
 	require.Empty(t, page.DateOnly[0].People)
+}
+
+// Candidate evidence must match a current, visible actor on each placement.
+func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	var versions []string
+	for i, name := range []string{"first.txt", "second.txt"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash([]string{"dc3", "dc4"}[i]), 1, "text/plain")
+		require.NoError(t, err)
+		versions = append(versions, node.CurrentVersionID)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "dc2")
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+	}
+	openCandidateForTest(t, s, candidateForTest(t, "email:ada@example.test", "Ada", "", []PersonCandidateOccurrence{
+		{ContentVersionID: versions[0], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/dc2"},
+		{ContentVersionID: versions[1], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/dc2"},
+	}))
+	openCandidateForTest(t, s, candidateForTest(t, "email:ada@example.test", "Ada", "", []PersonCandidateOccurrence{
+		{ContentVersionID: versions[0], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/other"},
+	}))
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.DateOnly, 2)
+	for _, item := range page.DateOnly {
+		require.Equal(t, 1, item.UnresolvedCount)
+	}
 }

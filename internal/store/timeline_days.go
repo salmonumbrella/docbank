@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/civil"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/kit/civiltime"
@@ -76,10 +77,10 @@ func (b *timelineBinds) add(value any) string {
 
 // timelinePlacedSQL creates one row per current version and day after ranking
 // eligible date claims. The same relation drives counts and the day view.
-func timelinePlacedSQL(compiled CompiledQuery, generation string, scope TimelineScope, from, to civiltime.Date, loc *time.Location, hidden, postgres bool, tail func(*timelineBinds) string) (string, []any, error) {
-	start, end, err := civiltime.RangeBounds(from, to, loc)
+func timelinePlacedSQL(compiled CompiledQuery, generation string, scope TimelineScope, from, to civil.Date, loc *time.Location, hidden, postgres bool, tail func(*timelineBinds) string) (string, []any, error) {
+	start, end, err := query.RangeBounds(from, to, loc)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("%w: %v", ErrTimelineDateNotInZone, err)
 	}
 	startKey, err := document.EventInstantUTCKey(start)
 	if err != nil {
@@ -107,7 +108,7 @@ func timelinePlacedSQL(compiled CompiledQuery, generation string, scope Timeline
 		values = append(values, "(CAST("+binds.add(day.String())+" AS TEXT),CAST("+binds.add(ak)+" AS TEXT),CAST("+binds.add(bk)+" AS TEXT))")
 	}
 	if len(values) == 0 {
-		return "", nil, civiltime.ErrDateNotInZone
+		return "", nil, ErrTimelineDateNotInZone
 	}
 	var population compiledQueryFragment
 	if postgres {
@@ -156,7 +157,7 @@ func timelinePlacedSQL(compiled CompiledQuery, generation string, scope Timeline
 	return bindQueryPopulation(fragment, CoverageSelection{}, generation)
 }
 
-func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, scope TimelineScope, from, to civiltime.Date) (TimelineDays, error) {
+func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, scope TimelineScope, from, to civil.Date) (TimelineDays, error) {
 	result := TimelineDays{Days: []TimelineDayCount{}, Months: []TimelineMonthCount{}}
 	if s.store != nil && s.store.postgresSchema != "" {
 		if err := validatePostgresTimelineScope(scope.Query); err != nil {
@@ -166,7 +167,7 @@ func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, s
 	if from.Compare(to) > 0 || from.AddDays(maxTimelineRangeDates-1).Compare(to) < 0 {
 		return result, errors.New("invalid timeline range")
 	}
-	loc, err := civiltime.LoadZone(scope.Zone)
+	loc, err := query.LoadZone(scope.Zone)
 	if err != nil {
 		return result, err
 	}

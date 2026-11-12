@@ -43,8 +43,8 @@ func timelineBindList(placements []TimelinePlacement) (string, []any) {
 }
 
 // hydrateTimelineItems reads each group of versions in bounded statements;
-// the candidate catalog is scanned once and checked against fresh actors.
-func hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []TimelinePlacement, hideLocked bool) ([]TimelineItem, error) {
+// candidate evidence is fetched by bounded fresh-actor keys.
+func (s *Store) hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []TimelinePlacement, hideLocked bool) ([]TimelineItem, error) {
 	result := make([]TimelineItem, len(placements))
 	byVersion := make(map[string]int, len(placements))
 	events := make(map[string][]document.DocumentEventV1, len(placements))
@@ -148,22 +148,29 @@ func hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []Timeline
 	if len(placements) == 0 {
 		return result, nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT actor_key,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match'`)
+	var versions, actorKeys []string
+	for version, recordEvents := range events {
+		if !candidateEligible[version] {
+			continue
+		}
+		versions = append(versions, version)
+		for _, event := range recordEvents {
+			if event.Sensitive {
+				continue
+			}
+			for _, actor := range event.Actors {
+				if !actor.Sensitive && actor.Role != "blind_copy" {
+					actorKeys = append(actorKeys, actor.ActorKey)
+				}
+			}
+		}
+	}
+	candidates, err := s.openCandidatesForVersions(ctx, tx, versions, actorKeys)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var actorKey string
-		var raw []byte
-		if err := rows.Scan(&actorKey, &raw); err != nil {
-			return nil, err
-		}
-		occurrences, err := decodeStoredCandidateEvidence(raw)
-		if err != nil {
-			return nil, err
-		}
-		for _, o := range occurrences {
+	for _, candidate := range candidates {
+		for _, o := range candidate.Occurrences {
 			i, ok := byVersion[o.ContentVersionID]
 			if !ok || !candidateEligible[o.ContentVersionID] || o.Role == "blind_copy" {
 				continue
@@ -178,7 +185,7 @@ func hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []Timeline
 					if kind == "" {
 						kind, id = event.EvidenceKind, event.EvidenceID
 					}
-					if !actor.Sensitive && actor.ActorKey == actorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
+					if !actor.Sensitive && actor.ActorKey == candidate.ActorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
 						matched = true
 						break
 					}
@@ -191,9 +198,6 @@ func hydrateTimelineItems(ctx context.Context, tx *sql.Tx, placements []Timeline
 				result[i].UnresolvedCount++
 			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	return result, nil
 }

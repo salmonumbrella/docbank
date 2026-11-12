@@ -8,13 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
-	"slices"
-
 	"fmt"
-	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/query"
+	"slices"
 	"time"
 
+	"cloud.google.com/go/civil"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/kit/civiltime"
 )
 
@@ -29,7 +29,7 @@ type TimelineDayBounds struct {
 	Ticks      []TimelineTick
 }
 
-func timelineDayBounds(date civiltime.Date, loc *time.Location) (TimelineDayBounds, bool) {
+func timelineDayBounds(date civil.Date, loc *time.Location) (TimelineDayBounds, bool) {
 	start, end, ok := civiltime.DayBounds(date, loc)
 	if !ok {
 		return TimelineDayBounds{}, false
@@ -69,9 +69,12 @@ const maxTimelineStrip = 200
 
 var ErrTimelineCursorMismatch = errors.New("timeline cursor mismatch")
 
+// ErrTimelineDateNotInZone identifies a skipped civil endpoint.
+var ErrTimelineDateNotInZone = errors.New("date does not exist in timezone")
+
 type TimelineDayRequest struct {
 	Scope        TimelineScope
-	Date         civiltime.Date
+	Date         civil.Date
 	Cursor       string
 	Limit        int
 	HiddenLocked bool
@@ -152,13 +155,13 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 		}
 		return s.renderTimelinePage(&cached, meta, cursor.Offset)
 	}
-	loc, err := civiltime.LoadZone(req.Scope.Zone)
+	loc, err := query.LoadZone(req.Scope.Zone)
 	if err != nil {
 		return TimelineDayPage{}, err
 	}
 	bounds, ok := timelineDayBounds(req.Date, loc)
 	if !ok {
-		return TimelineDayPage{}, civiltime.ErrDateNotInZone
+		return TimelineDayPage{}, ErrTimelineDateNotInZone
 	}
 	buildCtx, cancel := context.WithTimeout(ctx, querySnapshotBuildTimeout)
 	defer cancel()
@@ -237,11 +240,7 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 				if p.tier == 0 {
 					instant, err = time.Parse(time.RFC3339Nano, utc)
 				} else {
-					var local civiltime.DateTime
-					local, err = civiltime.ParseDateTime(axis)
-					if err == nil {
-						instant, _ = civiltime.ResolveLocal(local, loc)
-					}
+					instant, err = document.EventLocalInstant(axis, "fraction", loc)
 				}
 				if err != nil {
 					_ = rows.Close()
@@ -267,7 +266,7 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		items, err := hydrateTimelineItems(scoped, tx, placements, req.HiddenLocked)
+		items, err := s.store.hydrateTimelineItems(scoped, tx, placements, req.HiddenLocked)
 		if err != nil {
 			return err
 		}

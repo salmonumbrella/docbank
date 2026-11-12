@@ -8,9 +8,10 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"cloud.google.com/go/civil"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/kit/civiltime"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func TestTimelineDayBoundsVectors(t *testing.T) {
@@ -25,9 +26,9 @@ func TestTimelineDayBoundsVectors(t *testing.T) {
 		{"America/St_Johns", "2010-11-07", "2010-11-07T02:30:00Z", 1500, 26},
 	} {
 		t.Run(tc.zone+"/"+tc.date, func(t *testing.T) {
-			loc, err := civiltime.LoadZone(tc.zone)
+			loc, err := query.LoadZone(tc.zone)
 			require.NoError(t, err)
-			date, err := civiltime.ParseDate(tc.date)
+			date, err := civil.ParseDate(tc.date)
 			require.NoError(t, err)
 			bounds, ok := timelineDayBounds(date, loc)
 			require.True(t, ok)
@@ -40,9 +41,9 @@ func TestTimelineDayBoundsVectors(t *testing.T) {
 			}
 		})
 	}
-	loc, err := civiltime.LoadZone("Pacific/Apia")
+	loc, err := query.LoadZone("Pacific/Apia")
 	require.NoError(t, err)
-	date, err := civiltime.ParseDate("2011-12-30")
+	date, err := civil.ParseDate("2011-12-30")
 	require.NoError(t, err)
 	_, ok := timelineDayBounds(date, loc)
 	require.False(t, ok)
@@ -77,7 +78,7 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	}
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
 	var saved SavedQuery
@@ -162,7 +163,7 @@ func TestTimelineDayFrozenOwnerAndScope(t *testing.T) {
 	s := newTestStore(t)
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2026-03-10")
+	date, err := civil.ParseDate("2026-03-10")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
 	page, err := svc.TimelineDay(t.Context(), "owner", req)
@@ -202,7 +203,7 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 	}
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
 	first, err := svc.TimelineDay(ctx, "owner", req)
@@ -254,7 +255,7 @@ func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store
 		{"America/St_Johns", "2010-11-07", 1500, 26},
 	} {
 		t.Run(tc.zone+"/"+tc.date, func(t *testing.T) {
-			date, err := civiltime.ParseDate(tc.date)
+			date, err := civil.ParseDate(tc.date)
 			require.NoError(t, err)
 			scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: tc.zone}
 			page, err := svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
@@ -264,12 +265,12 @@ func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store
 		})
 	}
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "Pacific/Apia"}
-	skipped, err := civiltime.ParseDate("2011-12-30")
+	skipped, err := civil.ParseDate("2011-12-30")
 	require.NoError(t, err)
 	_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: skipped, Limit: 10})
-	require.ErrorIs(t, err, civiltime.ErrDateNotInZone)
+	require.ErrorIs(t, err, ErrTimelineDateNotInZone)
 	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped, skipped)
-	require.ErrorIs(t, err, civiltime.ErrDateNotInZone)
+	require.ErrorIs(t, err, ErrTimelineDateNotInZone)
 	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped.AddDays(-1), skipped.AddDays(1))
 	require.NoError(t, err)
 }
@@ -323,7 +324,7 @@ func TestTimelineDayScaleCI(t *testing.T) {
 	}
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civiltime.ParseDate("2019-03-04")
+	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 500}
 	for pageNumber := range 10 {
