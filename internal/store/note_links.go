@@ -85,7 +85,7 @@ func (s *Store) NoteLinks(ctx context.Context, nodeID int64, direction, selected
 			keys = append(keys, strings.ToLower(norm.NFC.String(alias)))
 		}
 		if direction == "incoming" {
-			if err := queryRows(ctx, tx, `SELECT a.alias_key FROM note_aliases a JOIN note_parses p ON p.version_id=a.version_id AND p.recipe=$2 AND p.state='ok' WHERE a.version_id=$1`, []any{n.CurrentVersionID, notemarkdown.Recipe}, func(rows *sql.Rows) error {
+			if err := queryRows(ctx, tx, `SELECT a.alias_key FROM note_aliases a JOIN note_parses p ON p.version_id=a.version_id WHERE a.version_id=$1 AND p.recipe=$2 AND p.state='ok'`, []any{n.CurrentVersionID, notemarkdown.Recipe}, func(rows *sql.Rows) error {
 				var key string
 				if err := rows.Scan(&key); err != nil {
 					return err
@@ -251,9 +251,9 @@ func (s *Store) resolveNoteLink(ctx context.Context, tx *sql.Tx, link noteRawLin
 		return result, nil
 	}
 	var stems, aliases []string
-	err := queryRows(ctx, tx, noteTreeCTE+` SELECT t.path,n.name,EXISTS(SELECT 1 FROM note_aliases a JOIN note_parses p ON p.version_id=a.version_id AND p.recipe=$3 AND p.state='ok' WHERE a.version_id=cv.version_id AND a.alias_key=$1)
+	err := queryRows(ctx, tx, noteTreeCTE+` SELECT t.path,n.name,EXISTS(SELECT 1 FROM note_aliases a JOIN note_parses p ON p.version_id=a.version_id WHERE a.alias_key=$1 AND p.recipe=$2 AND p.state='ok' AND a.version_id=cv.version_id)
  FROM note_tree t JOIN nodes n ON n.id=t.id JOIN content_versions cv ON cv.version_id=n.current_version_id
- WHERE `+noteCandidateSQL+` AND cv.size<=$2 AND `+sourcePresentSQL, []any{*key, MaxNoteBytes, notemarkdown.Recipe}, func(rows *sql.Rows) error {
+ WHERE `+noteCandidateSQL+` AND cv.size<=$3 AND `+sourcePresentSQL, []any{*key, notemarkdown.Recipe, MaxNoteBytes}, func(rows *sql.Rows) error {
 		var p, name string
 		var alias bool
 		if err := rows.Scan(&p, &name, &alias); err != nil {

@@ -188,14 +188,14 @@ func checkNoteList(t *testing.T, newStore func(*testing.T) *Store) {
 	s := newStore(t)
 	ctx := t.Context()
 	for _, test := range []struct{ name, src string }{
-		{"a.md", "---\ntags: [red]\n---\n# Alpha\n"},
-		{"b.md", "---\ntags: [blue, green]\n---\n# Beta\n"},
-		{"c.md", "---\ntags: [blue]\n---\n# Gamma\n"},
+		{"a.md", "---\ntags: [red]\ngroup: keep\n---\n# Alpha\n"},
+		{"b.md", "---\ntags: [blue, green]\ngroup: keep\n---\n# Beta\n"},
+		{"c.md", "---\ntags: [blue]\ngroup: keep\n---\n# Gamma\n"},
 	} {
 		createNoteFixture(t, s, s.RootID(), test.name, test.src, "text/markdown")
 		publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], test.src, notemarkdown.Recipe)
 	}
-	query := NoteListQuery{UnderPath: "/", Recursive: true, Sort: "path", Direction: "asc", PageSize: 1, Fields: []NoteFieldFilter{{Key: "tags", Value: "blue"}}}
+	query := NoteListQuery{UnderPath: "/", Recursive: true, Sort: "path", Direction: "asc", PageSize: 1, Fields: []NoteFieldFilter{{Key: "tags", Value: "blue"}, {Key: "group", Value: "keep"}}}
 	page, err := s.ListNotes(ctx, query, nil)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)

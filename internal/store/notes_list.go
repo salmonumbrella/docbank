@@ -93,7 +93,7 @@ func (s *Store) ListNotes(ctx context.Context, q NoteListQuery, boundary *NoteLi
 			prefix += "/"
 		}
 		prefixArg := add(prefix)
-		where := ` WHERE substr(t.path,1,length(` + prefixArg + `))=` + prefixArg
+		where := ` AND substr(t.path,1,length(` + prefixArg + `))=` + prefixArg
 		if q.SourcePresent {
 			where += ` AND ` + sourcePresentSQL
 		}
@@ -115,7 +115,8 @@ func (s *Store) ListNotes(ctx context.Context, q NoteListQuery, boundary *NoteLi
  CASE WHEN COALESCE(p.title,'')<>'' THEN 1 ELSE 0 END AS parsed_title,
  CASE WHEN NOT EXISTS(SELECT 1 FROM watch_sources ws WHERE ws.node_id=n.id) THEN 'not_watched' WHEN ` + sourcePresentSQL + ` THEN 'present' ELSE 'gone' END AS source_state
  FROM note_tree t JOIN nodes n ON n.id=t.id JOIN content_versions cv ON cv.version_id=n.current_version_id
- JOIN suffix ON suffix.id=n.id LEFT JOIN note_parses p ON p.version_id=cv.version_id AND p.recipe=$1` + where + ` AND ` + noteCandidateSQL + ` AND cv.size<=$2)`
+ JOIN suffix ON suffix.id=n.id LEFT JOIN note_parses p ON p.version_id=cv.version_id AND p.recipe=$1
+ WHERE cv.size<=$2 AND ` + noteCandidateSQL + where + `)`
 		if !q.Recursive {
 			rows, err := tx.QueryContext(ctx, cte+` SELECT path FROM eligible ORDER BY path`, args...)
 			if err != nil {
