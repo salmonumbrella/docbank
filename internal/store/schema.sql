@@ -3256,3 +3256,42 @@ BEGIN
     SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id)
     ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
 END;
+
+CREATE TABLE IF NOT EXISTS record_types (
+    type_id TEXT PRIMARY KEY NOT NULL,
+    source TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    definition BLOB,
+    fingerprint TEXT NOT NULL,
+    active INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS records (
+    record_id TEXT PRIMARY KEY NOT NULL,
+    type_id TEXT NOT NULL REFERENCES record_types(type_id),
+    title TEXT NOT NULL,
+    note TEXT NOT NULL,
+    status TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_records_type_title ON records(type_id, retired_at, title, record_id);
+CREATE INDEX IF NOT EXISTS idx_records_type_status ON records(type_id, status);
+CREATE TABLE IF NOT EXISTS record_values (
+    record_id TEXT NOT NULL REFERENCES records(record_id),
+    type_id TEXT NOT NULL REFERENCES record_types(type_id),
+    field_id TEXT NOT NULL,
+    value_text TEXT,
+    value_int INTEGER,
+    value_date TEXT,
+    value_date_end TEXT,
+    value_currency TEXT,
+    PRIMARY KEY(record_id, field_id)
+);
+CREATE INDEX IF NOT EXISTS idx_record_values_date ON record_values(type_id, field_id, value_date);
+CREATE INDEX IF NOT EXISTS idx_record_values_date_end ON record_values(type_id, field_id, value_date_end);
+CREATE INDEX IF NOT EXISTS idx_record_values_text ON record_values(type_id, field_id, value_text);

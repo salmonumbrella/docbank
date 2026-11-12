@@ -2504,3 +2504,42 @@ CREATE TABLE {{schema}}.storage_operation_stores (
     PRIMARY KEY (operation_id,store_id)
 );
 CREATE INDEX storage_operation_stores_store ON {{schema}}.storage_operation_stores(store_id,operation_id);
+
+CREATE TABLE {{schema}}.record_types (
+    type_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    source TEXT COLLATE "C" NOT NULL,
+    version BIGINT NOT NULL,
+    definition BYTEA,
+    fingerprint TEXT COLLATE "C" NOT NULL,
+    active BIGINT NOT NULL,
+    revision BIGINT NOT NULL,
+    created_at TEXT COLLATE "C" NOT NULL,
+    updated_at TEXT COLLATE "C" NOT NULL
+);
+CREATE TABLE {{schema}}.records (
+    record_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    type_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.record_types(type_id),
+    title TEXT COLLATE "C" NOT NULL,
+    note TEXT COLLATE "C" NOT NULL,
+    status TEXT COLLATE "C" NOT NULL,
+    revision BIGINT NOT NULL,
+    created_at TEXT COLLATE "C" NOT NULL,
+    updated_at TEXT COLLATE "C" NOT NULL,
+    retired_at TEXT COLLATE "C"
+);
+CREATE INDEX idx_records_type_title ON {{schema}}.records(type_id, retired_at, title, record_id);
+CREATE INDEX idx_records_type_status ON {{schema}}.records(type_id, status);
+CREATE TABLE {{schema}}.record_values (
+    record_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.records(record_id),
+    type_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.record_types(type_id),
+    field_id TEXT COLLATE "C" NOT NULL,
+    value_text TEXT COLLATE "C",
+    value_int BIGINT,
+    value_date TEXT COLLATE "C",
+    value_date_end TEXT COLLATE "C",
+    value_currency TEXT COLLATE "C",
+    PRIMARY KEY(record_id, field_id)
+);
+CREATE INDEX idx_record_values_date ON {{schema}}.record_values(type_id, field_id, value_date);
+CREATE INDEX idx_record_values_date_end ON {{schema}}.record_values(type_id, field_id, value_date_end);
+CREATE INDEX idx_record_values_text ON {{schema}}.record_values(type_id, field_id, value_text);

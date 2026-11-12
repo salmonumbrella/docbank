@@ -625,6 +625,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= recordsStorageSchemaVersion {
+		if err := exportMetadataTables(ctx, tx, write, recordMetadataTables); err != nil {
+			return err
+		}
+	}
 	if layout.schemaVersion >= 21 {
 		if err := exportTermReportHistory(ctx, tx, write); err != nil {
 			return err
@@ -1633,6 +1638,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if err := validateSavedQueryRunMetadataState(ctx, tx, layout); err != nil {
 			return err
+		}
+		if layout.schemaVersion >= recordsStorageSchemaVersion {
+			if err := validateRecordMetadataState(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if layout.schemaVersion >= 21 {
 			if err := exportTermReportHistory(ctx, tx, func(any) error { return nil }); err != nil {

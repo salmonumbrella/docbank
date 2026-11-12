@@ -42,6 +42,10 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		require.NoError(t, err)
 	})
 	schema := pgx.Identifier{cfg.Schema}.Sanitize()
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(active,revision,updated_at) ON "+schema+".record_types TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(title,note,status,revision,updated_at,retired_at) ON "+schema+".records TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".record_values TO "+quotedRole)
+	require.NoError(t, err)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(lifecycle) ON "+schema+".blob_stores TO "+quotedRole+
 		"; GRANT INSERT ON "+schema+".storage_operation_stores TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".storage_operation_cleanup TO "+quotedRole)

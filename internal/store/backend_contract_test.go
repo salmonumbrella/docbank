@@ -22,6 +22,9 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "records", postgres: "native operations", scope: "Built-in record type activation and record lifecycle.", scenarios: []backendScenario{
+		{"RecordLifecycle", func(t *testing.T) { checkRecordLifecycle(t, newTestStore) }, func(t *testing.T) { checkRecordLifecycle(t, newPostgresQueryStore) }},
+	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{
 		{"StorageRepairRollback", nil, checkStorageRepairRollbackPostgres},
 		{"MultiStorePhysicalRoundTrip", nil, checkMultiStorePhysicalRoundTripPostgres},
