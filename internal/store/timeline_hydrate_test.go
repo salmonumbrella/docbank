@@ -136,7 +136,7 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.NoError(t, err)
 	survivor, err := s.CreatePerson(ctx, "Merged survivor", "operator")
 	require.NoError(t, err)
-	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: survivor.PersonID, Role: "author", Action: "assert", Revision: 1})
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: survivor.PersonID, Role: "recipient", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	person, _, err = s.PersonByID(ctx, personID)
 	require.NoError(t, err)
@@ -150,7 +150,7 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.Len(t, page.DateOnly[0].People, 1)
 	require.Equal(t, survivor.PersonID, page.DateOnly[0].People[0].PersonID)
 	require.Equal(t, "Merged survivor", page.DateOnly[0].People[0].DisplayName)
-	require.ElementsMatch(t, []string{"author", "speaker"}, page.DateOnly[0].People[0].Roles)
+	require.ElementsMatch(t, []string{"recipient", "speaker"}, page.DateOnly[0].People[0].Roles)
 }
 
 // Candidate evidence must match a current, visible actor on each placement.
