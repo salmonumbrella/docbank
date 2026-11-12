@@ -42,6 +42,8 @@ func TestTimelineDayRequestValidation(t *testing.T) {
 	}
 	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{},"from":"2026-01-01","to":"2026-04-02","timezone":"UTC"}`)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{},"from":"2011-12-29","to":"2011-12-31","timezone":"Pacific/Apia"}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
 }
 
 func TestTimelineHTTPBoundariesAndEcho(t *testing.T) {
@@ -164,6 +166,19 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	require.NotEqual(t, first.Items[0].NodeID, second.Items[0].NodeID)
 	require.Equal(t, "UTC", second.Timezone)
 	require.True(t, second.TimezoneDefaulted)
+	explicitRequest := strings.TrimSuffix(request, "}") + `,"timezone":"UTC"}`
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, explicitRequest)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var explicit api.TimelineDayResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &explicit))
+	require.False(t, explicit.TimezoneDefaulted)
+	omitted := fmt.Sprintf(`{"query":{},"date":"2026-03-10","limit":1,"date_kinds":["created"],"cursor":%q}`, explicit.NextCursor)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, omitted)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var pinned api.TimelineDayResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &pinned))
+	require.Equal(t, "UTC", pinned.Timezone)
+	require.False(t, pinned.TimezoneDefaulted)
 	mismatch := strings.Replace(continuation, `"date":"2026-03-10"`, `"date":"2026-03-11"`, 1)
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, mismatch)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
