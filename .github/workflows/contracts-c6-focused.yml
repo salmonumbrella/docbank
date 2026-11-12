@@ -1,0 +1,132 @@
+name: Contracts C6 focused checkpoint
+on:
+  push:
+    branches: [ci/contracts-c6-review2-final]
+permissions:
+  contents: read
+jobs:
+  focused:
+    name: Focused MCP and CLI (CGO ${{ matrix.cgo }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOFLAGS: -trimpath
+      GOPROXY: https://proxy.golang.org|direct
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: MCP contract and catalog tests
+        run: go test -v -tags fts5 ./internal/mcp -count=1
+      - name: CLI flags and configuration tests
+        if: always()
+        run: go test -v -tags fts5 ./cmd/docbank -run 'TestMCPCommandWriteFlagsSelectTools|TestMCPConfig|TestHelpTreeLint|TestRootHelpGolden|TestDaemonMCPHTTPReadsSameVaultAndShutsDown|TestContractCreateReportsConfirmedOutputFailure|TestContractShowIncludesDocumentEvidence|TestContractDocumentCLI'
+      - name: Contract API date and route tests
+        if: always()
+        run: go test -v -tags fts5 ./internal/api -run '^TestContract' -count=1
+      - name: Contract client date tests
+        if: always()
+        run: go test -v -tags fts5 ./internal/daemonconn -run '^TestContract' -count=1
+      - name: SQLite schema contracts
+        if: always()
+        run: go test -v -tags fts5 ./internal/store -run '^TestStorageSchema' -count=1
+      - name: SQLite revision exhaustion
+        if: always()
+        run: go test -v -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$/^organization$/^(PartyRevisionExhaustion|ContractRevisionExhaustion|ContractDocumentRevisionExhaustion)$' -count=1
+  postgres:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: PostgreSQL schema lifecycle
+        run: go test -v -tags fts5 ./internal/store/pgschema -count=1
+      - name: PostgreSQL revision exhaustion
+        if: always()
+        run: go test -v -tags fts5 ./internal/store -run '^TestBackendContractsPostgres$/^organization$/^(PartyRevisionExhaustion|ContractRevisionExhaustion|ContractDocumentRevisionExhaustion)$' -count=1
+  lint:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Restore lint cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-lint
+          extra-path: ~/.cache/golangci-lint
+      - name: Reject timing suppressions
+        run: make check-timing-suppressions
+      - name: Run repository lint
+        uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93
+        with:
+          version: v2.15.0
+          skip-cache: true
+      - name: Run golangci-lint for Windows
+        env:
+          GOOS: windows
+        run: ./custom-gcl run ./...
+      - name: Run golangci-lint for macOS
+        env:
+          GOOS: darwin
+        run: ./custom-gcl run ./...
+      - name: Check workflow retry rules
+        run: make lint-workflow-retries
+  docs:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '26.13.0'
+      - name: Install documentation tools
+        run: |
+          ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+      - name: Build documentation
+        run: make docs-build
