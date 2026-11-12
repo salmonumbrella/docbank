@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	stdjson "encoding/json"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -968,13 +969,13 @@ func documentResourceLinks(vaultID string, documents []api.DocumentSummary) []*s
 	return links
 }
 
-func toolResult(encoded []byte, normalized any, links []*sdkmcp.ResourceLink) *sdkmcp.CallToolResult {
+func toolResult(encoded []byte, links []*sdkmcp.ResourceLink) *sdkmcp.CallToolResult {
 	content := make([]sdkmcp.Content, 0, 1+len(links))
 	content = append(content, &sdkmcp.TextContent{Text: string(encoded)})
 	for _, link := range links {
 		content = append(content, link)
 	}
-	return &sdkmcp.CallToolResult{Content: content, StructuredContent: normalized}
+	return &sdkmcp.CallToolResult{Content: content, StructuredContent: stdjson.RawMessage(encoded)}
 }
 
 func boundedToolSuccess(
@@ -991,7 +992,7 @@ func boundedToolSuccess(
 	if validator == nil || validator.Validate(&normalized) != nil {
 		return nil, errors.New("daemon result does not conform to the published tool schema")
 	}
-	result := toolResult(encoded, normalized, links)
+	result := toolResult(encoded, links)
 	complete, err := json.Marshal(result)
 	if err != nil {
 		return nil, err

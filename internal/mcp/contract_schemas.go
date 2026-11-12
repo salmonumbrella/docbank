@@ -25,7 +25,7 @@ func contractEditableProperties() schema {
 	return p
 }
 func contractListItemProperties() schema {
-	return schema{"contract_id": uuidSchema(), "title": stringSchema(300), "contract_type": stringSchema(64), "status": stringSchema(32), "effective_status": stringSchema(32), "starts_on": contractDateSchema(true), "expires_on": contractDateSchema(true), "signed_on": contractDateSchema(true), "revision": integerSchema(1, contractSafeInteger)}
+	return schema{"contract_id": uuidSchema(), "title": stringSchema(300), "contract_type": stringSchema(64), "status": stringSchema(32), "effective_status": stringSchema(32), "starts_on": contractDateSchema(true), "expires_on": contractDateSchema(true), "signed_on": contractDateSchema(true), "revision": integerSchema(1, 0)}
 }
 
 var contractItemRequired = []string{"contract_id", "title", "contract_type", "status", "effective_status", "starts_on", "expires_on", "signed_on", "revision"}
@@ -51,7 +51,7 @@ func getContractSchemas() (schema, schema) {
 	return rootObjectSchema(schema{"contract_id": uuidSchema(), "as_of": contractDateSchema(false)}, "contract_id"), rootObjectSchema(withPrivateCache(contractDetailProperties()), cacheRequired(required...)...)
 }
 func contractWriteReceiptSchema() schema {
-	return rootObjectSchema(withPrivateCache(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, contractSafeInteger)}), cacheRequired("contract_id", "revision")...)
+	return rootObjectSchema(withPrivateCache(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0)}), cacheRequired("contract_id", "revision")...)
 }
 func createContractSchemas() (schema, schema) {
 	p := contractEditableProperties()
@@ -63,8 +63,8 @@ func createContractSchemas() (schema, schema) {
 func updateContractSchemas() (schema, schema) {
 	patch := objectSchema(contractEditableProperties())
 	patch["minProperties"] = 1
-	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, contractSafeInteger), "patch": patch}, "contract_id", "revision", "patch"), contractWriteReceiptSchema()
+	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0), "patch": patch}, "contract_id", "revision", "patch"), contractWriteReceiptSchema()
 }
 func linkContractDocumentSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, contractSafeInteger), nodeField: integerSchema(1, contractSafeInteger), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", nodeField, versionField, roleField), contractWriteReceiptSchema()
+	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0), nodeField: integerSchema(1, contractSafeInteger), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", nodeField, versionField, roleField), contractWriteReceiptSchema()
 }

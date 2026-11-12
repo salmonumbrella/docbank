@@ -731,7 +731,9 @@ With contract writes enabled, a synthetic workflow is:
    `node_id`, `content_version_id`, and role (for example `signed`). Linking a
    signed copy does not change the contract status.
 
-Use the latest revision from a read or receipt. A stale revision is rejected;
+Use the latest revision from a read or receipt. Revisions are positive 64-bit
+integers; clients must preserve their exact value, including above 2^53.
+A stale revision is rejected;
 read again before deciding whether to retry. If a write returns
 `contract_outcome_unknown`, inspect the contract before retrying. For a create,
 list and inspect possible matches first; titles are not unique. Never retry
