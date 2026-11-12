@@ -247,12 +247,12 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
-func personVisibleAssertionSQL(alias, hideLocked string) string {
-	return alias + `.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
+func personVisibleAssertionSQL(hideLocked string) string {
+	return `a.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)`
 }
 
 func personVisibleActorSQL(alias, hideLocked string) string {
-	return alias + `.sensitive=0 AND ` + alias + `.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
+	return alias + `.sensitive=0 AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
 }
 
 func personDerivedExactIdentitySQL(alias string) string {
@@ -263,14 +263,15 @@ func personDerivedExactIdentitySQL(alias string) string {
 // people. It binds visibleOnly, then hideLocked. Its correlated
 // subqueries use the person index. visiblePersonByIDSQL applies the same rule
 // to one person.
-func personVisibleSQL(person string, first int) string {
+func personVisibleSQL(first int) string {
+	const person = "persons.person_id"
 	visible, locked := fmt.Sprintf("$%d", first), fmt.Sprintf("$%d", first+1)
 	return `(` + visible + `=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
 			AND ` + personDerivedExactIdentitySQL("i") + `)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a
-		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", locked) + `) OR EXISTS(
+		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL(locked) + `) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
 		AND ` + personVisibleActorSQL("p", locked) + `))`
 }
@@ -286,7 +287,7 @@ SELECT person_id,display_name,display_name_folded,origin,state,revision,created_
 		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
 		AND ($%[4]d=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
-			AND ` + personVisibleActorSQL("dp", "$%[5]d") + `))
+			AND dp.sensitive=0 AND ($%[5]d=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
  FROM matches persons ORDER BY display_name_folded,person_id`
 
@@ -392,7 +393,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
-			candidates += personVisibleSQL("persons.person_id", len(args)+1) + " AND "
+			candidates += personVisibleSQL(len(args)+1) + " AND "
 			args = append(args, 1, boolInt(hideLocked))
 		}
 		if options.RecentFirst {
@@ -444,7 +445,7 @@ func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates strin
 	joins, where := s.personPhotoSource(!hideLocked)
 	walkCandidates, walkArgs := s.peopleCandidatesSQL(prefix, false, !hideLocked)
 	if visibleOnly && !photosOnly {
-		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id", len(walkArgs)+1) + ") AND "
+		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL(len(walkArgs)+1) + ") AND "
 		walkArgs = append(walkArgs, 1, boolInt(hideLocked))
 	}
 	if photosOnly {
@@ -481,7 +482,7 @@ func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates strin
 		if photosOnly {
 			eligible += "own IS NOT NULL AND "
 		} else if visibleOnly {
-			eligible += personVisibleSQL("persons.person_id", len(matchArgs)+1) + " AND "
+			eligible += personVisibleSQL(len(matchArgs)+1) + " AND "
 			matchArgs = append(slices.Clone(matchArgs), 1, boolInt(hideLocked))
 		}
 		first := len(matchArgs) + 1
@@ -632,7 +633,7 @@ var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=
 	AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=$1
 		AND ` + personDerivedExactIdentitySQL("i") + `))
  OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1
-	AND ` + personVisibleAssertionSQL("a", "$2") + `)
+	AND ` + personVisibleAssertionSQL("$2") + `)
  OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1
 	AND ` + personVisibleActorSQL("p", "$2") + `)))`
 

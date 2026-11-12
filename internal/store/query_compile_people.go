@@ -1,7 +1,7 @@
 package store
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -15,7 +15,7 @@ func currentPhotoSourcePredicate(file, node, version string) string {
 func currentPersonAssertionFence(safe bool, hideLocked string) string {
 	fence := `a.action='assert'`
 	if safe {
-		fence += ` AND ` + personVisibleAssertionSQL("a", hideLocked)
+		fence += ` AND ` + personVisibleAssertionSQL(hideLocked)
 	}
 	return fence
 }
@@ -36,30 +36,11 @@ func currentDocumentPersonEdgesSQL(version string, safe bool, hideLocked string)
 }
 
 func (c queryCompiler) compilePersonPredicate(id string, roles []string) compiledQueryFragment {
-	if len(roles) > 1 && !c.photoDisplayMetadata {
-		parts := make([]compiledQueryFragment, 0, len(roles))
-		for _, role := range roles {
-			parts = append(parts, c.compilePersonPredicate(id, []string{role}))
-		}
-		return joinCompiledFragments(parts, ` OR `)
-	}
-	key := fmt.Sprintf("%s|%t|%s|%t|%s", id, c.safePeople, c.hideLocked, c.photoDisplayMetadata, strings.Join(roles, ","))
-	if cached, ok := c.personPredicates[key]; ok {
-		return cached
-	}
-	result := c.buildPersonPredicate(id, roles)
-	if c.personPredicates != nil {
-		c.personPredicates[key] = result
-	}
-	return result
-}
-
-func (c queryCompiler) buildPersonPredicate(id string, roles []string) compiledQueryFragment {
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
 	if c.photoDisplayMetadata {
 		predicate := `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON ` + currentPhotoSourcePredicate("pf", "pn", "a.content_version_id") + ` WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person
 		if c.safePeople {
-			predicate += ` AND ` + personVisibleAssertionSQL("a", c.hideLocked)
+			predicate += ` AND ` + personVisibleAssertionSQL(c.hideLocked)
 		}
 		return compiledQueryFragment{sql: predicate + `)`, args: []any{id, id}}
 	}
@@ -72,13 +53,18 @@ func (c queryCompiler) buildPersonPredicate(id string, roles []string) compiledQ
 			args = append(args, role)
 		}
 	}
-	return compiledQueryFragment{sql: predicate + `)`, args: args}
+	return compiledQueryFragment{sql: predicate + `)`, args: args, personEdges: true}
 }
 
-func (c queryCompiler) compilePersonExceptCustodian(id string) compiledQueryFragment {
-	edges := currentDocumentPersonEdgesSQL("cv.version_id", c.safePeople, c.hideLocked)
-	return compiledQueryFragment{sql: `EXISTS(SELECT 1 FROM ` + edges + ` edge WHERE edge.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND edge.role<>'custodian')`, args: []any{document.PersonResolverFingerprint(), id, id}}
-}
+var betweenPersonRoles = func() []string {
+	var roles []string
+	for _, role := range document.AllEventRoles() {
+		if role != "custodian" {
+			roles = append(roles, string(role))
+		}
+	}
+	return append(roles, "speaker", "depicted")
+}()
 
 func rolesForOperand(field string, safe bool) ([]string, error) {
 	switch field {
@@ -96,11 +82,11 @@ func rolesForOperand(field string, safe bool) ([]string, error) {
 		return []string{"copied"}, nil
 	case "bcc":
 		if safe {
-			return nil, fmt.Errorf("bcc: is not available in browser sessions")
+			return nil, errors.New("bcc: is not available in browser sessions")
 		}
 		return []string{"blind_copy"}, nil
 	default:
-		return nil, fmt.Errorf("unknown role operand")
+		return nil, errors.New("unknown role operand")
 	}
 }
 

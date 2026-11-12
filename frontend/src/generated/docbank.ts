@@ -6280,7 +6280,7 @@ export interface WorkspaceFacetValue {
   count: number;
   key: string;
   label: string;
-  /** @maxItems 10 */
+  /** @maxItems 11 */
   roles?: string[];
   selected: boolean;
 }

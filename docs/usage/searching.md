@@ -237,7 +237,7 @@ Document queries include current published person links and direct assertions. S
 
 ## Find documents by person and role
 
-Advanced QueryV1 expressions can select what a person did on a current document version. Use a quoted exact name or person ID. Combine the operands with `AND`, `OR`, `NOT`, and other filters.
+Advanced QueryV1 expressions can select what a person did on a current document version. Use a quoted exact name or person ID. Combine the operands with `AND`, `OR`, `NOT`, and other filters. Photo queries reject role operands and `filters.people`; use `person:` or `filters.person_ids` for depicted people.
 
 | Operand | Document roles |
 | --- | --- |
@@ -251,17 +251,6 @@ Advanced QueryV1 expressions can select what a person did on a current document 
 | `mentions:` | Text contains the person's display name or a name alias |
 
 For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches at most 16 distinct names as literal phrases and labels a matched result `Mentioned`.
-
-When document-date search is available, these expressions can be combined with it:
-
-```text
-author:"Jory Pellham" date:2026-03-01..2026-03-31
-from:"Mara Okonkwo-Fell" date:2026-03-01..2026-03-31
-to:"Teodor Vask" date:2026-03-01..2026-03-31
-between:("Mara Okonkwo-Fell", "Ines Albarrán") date:2026-03-01..2026-03-31
-custodian:"Mara Okonkwo-Fell"
-mentions:"Jory Pellham" date:2026-03-01..2026-03-31
-```
 
 Browser sessions see only authorized people evidence. A person known solely through concealed evidence resolves as unknown; a visible person's hidden Bcc edge does not match. Browsers refuse `bcc:` and structured `blind_copy` role filters. API-key queries retain full disclosure. `person:` still means any role within the caller's visibility.
 

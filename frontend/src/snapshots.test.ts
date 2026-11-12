@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { parseQuery, queryFingerprint, type Query } from "./query.js";
+import { parseQuery, personRoles, queryFingerprint, type Query } from "./query.js";
 import {
   captureSnapshotTargets,
   createSnapshot,
@@ -109,6 +109,41 @@ describe("snapshot transport and receipt validation", () => {
         new AbortController().signal,
       ),
     ).rejects.toThrow("rows[0].flag is invalid");
+  });
+
+  it("rejects a receipt that changes more than resolved people identities", async () => {
+    const requested = parseQuery(
+      JSON.stringify({
+        filters: {
+          people: [{ person_id: "00000000-0000-4000-8000-0000000000aa", roles: ["recipient"] }],
+        },
+      }),
+    );
+    const changedRoles = parseQuery(
+      JSON.stringify({
+        filters: {
+          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["sender"] }],
+        },
+      }),
+    );
+    const changedText = parseQuery(
+      JSON.stringify({
+        text: "other",
+        filters: {
+          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["recipient"] }],
+        },
+      }),
+    );
+    for (const returned of [changedRoles, changedText, query]) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        jsonResponse(
+          await page({ query: returned, query_fingerprint: await queryFingerprint(returned) }),
+        ),
+      );
+      await expect(
+        createSnapshot("session", requested, { page_size: 50 }, new AbortController().signal),
+      ).rejects.toThrow("query does not match the request");
+    }
   });
 
   it("accepts a person dependency", async () => {
@@ -625,7 +660,8 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
 });
 
 it("validates frozen person roles and the People facet", async () => {
-  const person = { key: tagID, label: "Synthetic", count: 1, selected: false, roles: ["sender"] };
+  const safeRoles = personRoles.filter((role) => role !== "blind_copy");
+  const person = { key: tagID, label: "Synthetic", count: 1, selected: false, roles: safeRoles };
   const good = { ...row(2, version2, blob2, 20), matched_roles: ["sender"] };
   const facet = {
     dimension: "person_role",
@@ -640,15 +676,20 @@ it("validates frozen person roles and the People facet", async () => {
   const receipt = await createSnapshot(
     "session",
     query,
-    { page_size: 50 },
+    { page_size: 50, facets: ["person_role"] },
     new AbortController().signal,
   );
   expect(receipt.rows[0]!.matched_roles).toEqual(["sender"]);
-  expect(receipt.facets[0]!.values[0]!.roles).toEqual(["sender"]);
+  expect(receipt.facets[0]!.values[0]!.roles).toEqual(safeRoles);
   fetcher.mockResolvedValueOnce(
     jsonResponse(await page({ rows: [{ ...good, matched_roles: ["bogus"] }], facets: [facet] })),
   );
   await expect(
-    createSnapshot("session", query, { page_size: 50 }, new AbortController().signal),
-  ).rejects.toThrow();
+    createSnapshot(
+      "session",
+      query,
+      { page_size: 50, facets: ["person_role"] },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("rows[0].matched_roles contains an invalid role");
 });

@@ -63,7 +63,7 @@ func (r queryResolver) Resolve(
 			sql := `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND state<>'retired'`
 			args := []any{value, value}
 			if safe {
-				sql += ` AND ` + personVisibleSQL("persons.person_id", 3)
+				sql += ` AND ` + personVisibleSQL(3)
 				args = append(args, 1, boolInt(queryPeopleHideLocked(ctx)))
 			}
 			err = r.q.QueryRowContext(ctx, sql, args...).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
@@ -72,7 +72,7 @@ func (r queryResolver) Resolve(
 			sql := `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=$1 AND state<>'retired'`
 			args := []any{value}
 			if safe {
-				sql += ` AND ` + personVisibleSQL("persons.person_id", 2)
+				sql += ` AND ` + personVisibleSQL(2)
 				args = append(args, 1, boolInt(queryPeopleHideLocked(ctx)))
 			}
 			err = r.q.QueryRowContext(ctx, sql, args...).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
@@ -157,7 +157,8 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 	if !ok {
 		return nil, errors.New("person aliases require a rows querier")
 	}
-	rows, err := q.QueryContext(ctx, `SELECT value_display FROM person_identities WHERE person_id=? AND kind='name_alias' ORDER BY value_normalized,identity_id`, id)
+	rows, err := q.QueryContext(ctx, `SELECT i.value_display FROM person_identities i WHERE i.person_id=? AND i.kind='name_alias'
+		ORDER BY i.value_normalized,i.identity_id`, id)
 	if err != nil {
 		return nil, err
 	}

@@ -41,10 +41,29 @@ type lexicalOperand struct {
 }
 
 type compiledQueryFragment struct {
-	lexical   []lexicalOperand
-	sql       string
-	args      []any
-	relations compiledQueryRelations
+	lexical     []lexicalOperand
+	sql         string
+	args        []any
+	relations   compiledQueryRelations
+	personEdges bool
+	leaves      []compiledLeaf
+}
+
+// compiledLeaf records one complete CTE-bearing operand inside a fragment:
+// its SQL byte and argument intervals [start,end) and the shared relations it
+// reads. Occurrences are disjoint and stay in SQL order through wrap and join.
+type compiledLeaf struct {
+	sqlStart, sqlEnd int
+	argStart, argEnd int
+	relations        compiledQueryRelations
+}
+
+// atomicCompiledLeaf marks a whole operand fragment as one leaf occurrence.
+func atomicCompiledLeaf(fragment compiledQueryFragment) compiledQueryFragment {
+	fragment.leaves = []compiledLeaf{{
+		sqlEnd: len(fragment.sql), argEnd: len(fragment.args), relations: fragment.relations,
+	}}
+	return fragment
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
@@ -84,15 +103,11 @@ type queryCompiler struct {
 	safePeople           bool
 	hideLocked           string
 	personNames          func(string) ([]string, error)
-	personPredicates     map[string]compiledQueryFragment
-	mentionPredicates    map[string]compiledQueryFragment
 }
 
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
-	c.personPredicates = make(map[string]compiledQueryFragment)
-	c.mentionPredicates = make(map[string]compiledQueryFragment)
 	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
 	c.hideLocked = "0"
 	if c.safePeople && queryPeopleHideLocked(ctx) {
@@ -365,22 +380,15 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if expression.Dependency == nil || c.personNames == nil {
 			return compiledQueryFragment{}, errors.New("resolved mention lacks names")
 		}
-		if cached, ok := c.mentionPredicates[expression.Dependency.ID]; ok {
-			return cached, nil
-		}
 		names, err := c.personNames(expression.Dependency.ID)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
 		parts := make([]compiledQueryFragment, 0, len(names))
 		for _, name := range names {
-			parts = append(parts, c.compileLexicalPredicate(quoteFTSOperand(name, false), true))
+			parts = append(parts, compileDocumentContentPredicate(quoteFTSOperand(name, false)))
 		}
-		result := joinCompiledFragments(parts, ` OR `)
-		if c.mentionPredicates != nil {
-			c.mentionPredicates[expression.Dependency.ID] = result
-		}
-		return result, nil
+		return joinCompiledFragments(parts, ` OR `), nil
 	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
@@ -440,12 +448,9 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 		}, ` AND `)
 	}
 	population := selectCompiledPopulation(nested, true)
-	return compiledQueryFragment{
-		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
+	return wrapCompiledFragment(population, `EXISTS (SELECT 1 FROM (`, `) saved_population
 			WHERE saved_population.node_id=n.id
-			  AND saved_population.content_version_id=cv.version_id)`,
-		args: population.args, relations: population.relations, lexical: nested.lexical,
-	}, nil
+			  AND saved_population.content_version_id=cv.version_id)`), nil
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
@@ -577,11 +582,11 @@ func compileSizePredicate(field string, bound int64) compiledQueryFragment {
 func compileTextCoveragePredicate(value string, start, end int) (compiledQueryFragment, error) {
 	switch value {
 	case "complete", "partial", "failed", "unprocessed", "none", "unavailable":
-		return compiledQueryFragment{
+		return atomicCompiledLeaf(compiledQueryFragment{
 			sql: `EXISTS (SELECT 1 FROM processing_coverage pc
 				WHERE pc.node_id=n.id AND pc.version_id=cv.version_id AND pc.state=?)`,
 			args: []any{value}, relations: compiledRelationProcessingCoverage,
-		}, nil
+		}), nil
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "invalid text_coverage operand")
 	}
@@ -596,13 +601,13 @@ func compileHasDuplicatesPredicate(value string, start, end int) (compiledQueryF
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "has_duplicates operand must be true or false")
 	}
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: negate + `EXISTS (SELECT 1 FROM current_content_members duplicate_member
 			WHERE duplicate_member.blob_hash=cv.blob_hash
 			  AND duplicate_member.size=cv.size
 			  AND duplicate_member.node_id<>n.id)`,
 		relations: compiledRelationCurrentContent,
-	}, nil
+	}), nil
 }
 
 func compileValuePredicates(
@@ -619,7 +624,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 	if path == "/" {
 		return trueCompiledFragment()
 	}
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: `EXISTS (
 			WITH RECURSIVE query_ancestry(id,parent_id,path) AS (
 				SELECT n.id,n.parent_id,n.name
@@ -635,7 +640,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 			  AND (path=? OR substr(path,1,length(?)+1)=? || '/')
 		)`,
 		args: []any{path, path, path},
-	}
+	})
 }
 
 func compileTagPredicate(id string) compiledQueryFragment {
@@ -646,11 +651,11 @@ func compileTagPredicate(id string) compiledQueryFragment {
 }
 
 func compileCollectionPredicate(id string) compiledQueryFragment {
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: `EXISTS (WITH ` + CollectionMembershipCTE + `
 			SELECT 1 FROM collection_members cm WHERE cm.node_id=n.id AND cm.ingest_id=?)`,
 		args: []any{id},
-	}
+	})
 }
 
 func compileMIMEPredicate(value string) compiledQueryFragment {
@@ -685,8 +690,18 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	if !includeContent {
 		return name
 	}
+	content := compileDocumentContentPredicate(fts)
+	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
+	parts := []compiledQueryFragment{name, content}
+	if c.photoDisplayMetadata {
+		parts = append(parts, metadata, photoAssetTextPredicate(fts))
+	}
+	return joinCompiledFragments(parts, ` OR `)
+}
+
+func compileDocumentContentPredicate(fts string) compiledQueryFragment {
 	marker := compiledGenerationArgument{}
-	content := compiledQueryFragment{
+	return compiledQueryFragment{
 		sql: `(
 			(?='' AND cv.blob_hash IN (
 				SELECT content_fts.blob_hash FROM content_fts WHERE content_fts MATCH ?
@@ -708,12 +723,6 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 		)`,
 		args: []any{marker, fts, marker, compiledProfileArgument{}, compiledProfileArgument{}, fts, marker},
 	}
-	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
-	parts := []compiledQueryFragment{name, content}
-	if c.photoDisplayMetadata {
-		parts = append(parts, metadata, photoAssetTextPredicate(fts))
-	}
-	return joinCompiledFragments(parts, ` OR `)
 }
 
 // photoAssetTextPredicate matches a photo when any live, non-sidecar file of
@@ -743,9 +752,9 @@ func negateCompiledFragment(fragment compiledQueryFragment) compiledQueryFragmen
 	for i := range lexical {
 		lexical[i].negated = !lexical[i].negated
 	}
-	return compiledQueryFragment{
-		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations, lexical: lexical,
-	}
+	fragment = wrapCompiledFragment(fragment, `NOT (`, `)`)
+	fragment.lexical = lexical
+	return fragment
 }
 
 func compiledLiveCurrentPredicate() compiledQueryFragment {
@@ -758,21 +767,43 @@ func trueCompiledFragment() compiledQueryFragment {
 	return compiledQueryFragment{sql: `1`}
 }
 
+// wrapCompiledFragment preserves fragment metadata while wrapping its SQL.
+func wrapCompiledFragment(fragment compiledQueryFragment, prefix, suffix string) compiledQueryFragment {
+	fragment.sql = prefix + fragment.sql + suffix
+	fragment.leaves = appendShiftedLeaves(nil, fragment.leaves, len(prefix), 0)
+	return fragment
+}
+
+// appendShiftedLeaves copies leaf occurrences to their offsets in a composed
+// fragment; source descriptors are never modified.
+func appendShiftedLeaves(dst, leaves []compiledLeaf, sqlOffset, argOffset int) []compiledLeaf {
+	for _, leaf := range leaves {
+		leaf.sqlStart += sqlOffset
+		leaf.sqlEnd += sqlOffset
+		leaf.argStart += argOffset
+		leaf.argEnd += argOffset
+		dst = append(dst, leaf)
+	}
+	return dst
+}
+
 func joinCompiledFragments(parts []compiledQueryFragment, operator string) compiledQueryFragment {
-	var sqlParts []string
-	var args []any
-	var relations compiledQueryRelations
-	var lexical []lexicalOperand
+	var result compiledQueryFragment
 	for _, part := range parts {
 		if part.sql == "" {
 			continue
 		}
-		sqlParts = append(sqlParts, `(`+part.sql+`)`)
-		args = append(args, part.args...)
-		relations |= part.relations
-		lexical = append(lexical, part.lexical...)
+		if result.sql != "" {
+			result.sql += operator
+		}
+		result.leaves = appendShiftedLeaves(result.leaves, part.leaves, len(result.sql)+1, len(result.args))
+		result.sql += `(` + part.sql + `)`
+		result.args = append(result.args, part.args...)
+		result.relations |= part.relations
+		result.personEdges = result.personEdges || part.personEdges
+		result.lexical = append(result.lexical, part.lexical...)
 	}
-	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical}
+	return result
 }
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {
@@ -791,5 +822,5 @@ func (c queryCompiler) compileBetween(expression *query.ResolvedExpression) (com
 	if children[0].Dependency == nil || children[1].Dependency == nil || children[0].Dependency.ID == children[1].Dependency.ID {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
 	}
-	return joinCompiledFragments([]compiledQueryFragment{c.compilePersonExceptCustodian(children[0].Dependency.ID), c.compilePersonExceptCustodian(children[1].Dependency.ID)}, ` AND `), nil
+	return joinCompiledFragments([]compiledQueryFragment{c.compilePersonPredicate(children[0].Dependency.ID, betweenPersonRoles), c.compilePersonPredicate(children[1].Dependency.ID, betweenPersonRoles)}, ` AND `), nil
 }

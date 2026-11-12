@@ -283,6 +283,9 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 		}
 		resultQuery := compiled.Query
 		resultQuery.Mode = value.Mode
+		if options.SavedQuery != nil {
+			resultQuery.Filters.People = value.Filters.People
+		}
 		projection = SnapshotProjection{
 			FullDisclosure: request.FullDisclosure, Timezone: compiled.Timezone, TimezoneDefaulted: compiled.TimezoneDefaulted,
 			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: resultQuery, Dependencies: slices.Clone(compiled.Dependencies),
@@ -423,7 +426,7 @@ func materializeSnapshotRows(
 			}
 		}
 	} else {
-		population, err = matchedPopulation(compiled, generationID, nil)
+		population, err = documentSnapshotPopulation(ctx, q, compiled, generationID, coverage)
 	}
 	if err != nil {
 		return err
@@ -434,6 +437,7 @@ func materializeSnapshotRows(
 	}
 	var photos []PhotoBrowseRow
 	var photoRowBytes []int64
+	var roleRowBytes []int64
 	annotatePhotos := options.Photos && options.PhotoRanking != nil &&
 		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
 	dateSortColumn := `''`
@@ -556,6 +560,9 @@ func materializeSnapshotRows(
 		}
 		projection.TotalBytes += row.Size
 		projection.Rows = append(projection.Rows, row)
+		if !options.Photos && len(compiled.roleMatches) > 0 {
+			roleRowBytes = append(roleRowBytes, int64(len(encoded)))
+		}
 		if annotatePhotos {
 			photos = append(photos, PhotoBrowseRow{AssetID: row.AssetID})
 			photoRowBytes = append(photoRowBytes, int64(len(encoded)))
@@ -591,14 +598,6 @@ func materializeSnapshotRows(
 		}
 	}
 	if !options.Photos && len(compiled.roleMatches) > 0 {
-		before := make([]int64, len(projection.Rows))
-		for i, row := range projection.Rows {
-			encoded, err := json.Marshal(row)
-			if err != nil {
-				return err
-			}
-			before[i] = int64(len(encoded))
-		}
 		if err := annotateMatchedRoles(ctx, q, compiled, generationID, coverage, projection.Rows); err != nil {
 			return err
 		}
@@ -611,7 +610,7 @@ func materializeSnapshotRows(
 			if size > options.MaxRowBytes {
 				return ErrQuerySnapshotTooLarge
 			}
-			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, size-before[i]); err != nil {
+			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, size-roleRowBytes[i]); err != nil {
 				return err
 			}
 		}

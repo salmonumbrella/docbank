@@ -498,7 +498,7 @@ func TestQuerySnapshotFacetTopFiftyAppendsSelectedValues(t *testing.T) {
 		labels[key] = key
 	}
 	selected := map[string]bool{"t": true}
-	values, other := finalizeSnapshotFacetValues(counts, labels, selected, false)
+	values, other := finalizeSnapshotFacetValues(counts, labels, selected, false, 50)
 	require.Len(t, values, 51)
 	assert.Equal(t, int64(1), other)
 	assert.True(t, values[len(values)-1].Selected)
@@ -551,4 +551,96 @@ func TestYearFacetCountsFileModifiedTimeYears(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Facets, 1)
 	require.Equal(t, map[string]int64{"2023": 2, "2025": 1}, facetCounts(page.Facets[0]))
+}
+
+// The collection facet must execute its own self-excluded population, even
+// when a large saved role expression precedes a relation-bearing predicate.
+func TestPreparedRolePopulationCollectionFacetSelfExclusion(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	ctx := t.Context()
+	person, err := fixture.store.CreatePerson(ctx, "Facet Sender", "operator")
+	require.NoError(t, err)
+	_, err = fixture.store.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: fixture.nodes["a"].CurrentVersionID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = fixture.store.CreateSavedQuery(ctx, "Facet sender", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Facet Sender\""}`))
+	require.NoError(t, err)
+	prefix := "(" + strings.TrimSuffix(strings.Repeat(`saved:"Facet sender" OR `, 40), " OR ") + ")"
+	text := prefix + ` AND has_duplicates:true AND NOT path:/missing`
+	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collection_ids":[%q]}}`, text, fixture.collections[0].ID()))
+	projection, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{"collections", "person_role"}})
+	require.NoError(t, err)
+	require.Len(t, projection.Rows, 1)
+	require.Equal(t, fixture.nodes["a"].ID, projection.Rows[0].NodeID)
+	require.Equal(t, []string{"sender"}, projection.Rows[0].MatchedRoles)
+	require.Equal(t, map[string]int64{fixture.collections[0].ID(): 1, fixture.collections[1].ID(): 1}, facetCounts(facetByDimension(t, projection, "collections")))
+	require.Equal(t, map[string]int64{person.PersonID: 1}, facetCounts(facetByDimension(t, projection, "person_role")))
+	limited, err := fixture.store.materializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{"collections"}}, snapshotMaterializeOptions{FacetMemberLimit: 1})
+	require.NoError(t, err)
+	require.False(t, limited.Facets[0].Available)
+	require.Equal(t, "member_budget_exceeded", limited.Facets[0].Reason)
+}
+
+func TestPreparedSavedRolePredicatesAcrossRelations(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	ctx := t.Context()
+	person, err := fixture.store.CreatePerson(ctx, "Prepared Sender", "operator")
+	require.NoError(t, err)
+	_, err = fixture.store.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: fixture.nodes["a"].CurrentVersionID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared inner", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Prepared Sender\"","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	_, err = fixture.store.CreateSavedQuery(ctx, "Prepared outer", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Prepared inner\""}`))
+	require.NoError(t, err)
+	prefix := "(" + strings.TrimSuffix(strings.Repeat(`saved:"Prepared outer" OR `, 40), " OR ") + ")"
+	for _, relation := range []string{`path:/missing`, `collection:Second`, `text_coverage:complete`, `has_duplicates:true`} {
+		for _, tc := range []struct {
+			text    string
+			matched bool
+		}{
+			{prefix + " AND (" + relation + " OR name:a.PDF)", true},
+			{prefix + " AND NOT (" + relation + " AND name:missing)", true},
+			{"(" + prefix + " AND name:missing) OR (" + relation + " AND name:a.PDF)", relation != `path:/missing`},
+		} {
+			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":true}}`, tc.text))
+			result, err := fixture.store.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: fixture.selection})
+			require.NoError(t, err, tc.text)
+			if !tc.matched {
+				require.Empty(t, result.Rows, tc.text)
+				continue
+			}
+			require.Len(t, result.Rows, 1, tc.text)
+			require.Equal(t, fixture.nodes["a"].ID, result.Rows[0].NodeID, tc.text)
+			if strings.HasPrefix(tc.text, "((") {
+				require.Empty(t, result.Rows[0].MatchedRoles, tc.text)
+			} else {
+				require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, tc.text)
+			}
+		}
+	}
+}
+
+// Both facets must recompute the population after removing their own root
+// filter. The remaining expression selects one duplicate and one unique node.
+func TestInlineFacetSelfExclusionBeyondRowLimit(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	for _, tc := range []struct {
+		filter, dimension string
+		counts            map[string]int64
+	}{
+		{`"text_coverage":["complete"]`, "text_coverage", map[string]int64{"complete": 1, "partial": 0, "failed": 0, "unprocessed": 1, "none": 0, "unavailable": 0}},
+		{`"has_duplicates":true`, "duplicates", map[string]int64{"duplicate": 1, "unique": 1}},
+	} {
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:a.PDF OR name:b","filters":{%s}}`, tc.filter))
+		projection, err := fixture.store.materializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{tc.dimension}}, snapshotMaterializeOptions{MaxRows: 1})
+		require.NoError(t, err, tc.dimension)
+		require.Len(t, projection.Rows, 1, tc.dimension)
+		require.Equal(t, fixture.nodes["a"].ID, projection.Rows[0].NodeID, tc.dimension)
+		facet := facetByDimension(t, projection, tc.dimension)
+		require.True(t, facet.Available, tc.dimension)
+		require.EqualValues(t, 2, *facet.Total, tc.dimension)
+		require.Equal(t, tc.counts, facetCounts(facet), tc.dimension)
+	}
 }

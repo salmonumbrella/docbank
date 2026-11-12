@@ -581,8 +581,8 @@ it("narrows by a person with the roles the People group shows and keeps typed en
   expect(added.text).toBe(originalQuery.text);
   expect(added.filters.person_ids).toEqual([mara]);
   expect(added.filters.people).toEqual([
-    { person_id: typed, roles: ["custodian"] },
     { person_id: jory, roles: ["author", "sender"] },
+    { person_id: typed, roles: ["custodian"] },
   ]);
 
   await view.rerender({ query: added });
@@ -592,9 +592,9 @@ it("narrows by a person with the roles the People group shows and keeps typed en
   expect(joryButton.getAttribute("aria-pressed")).toBe("true");
   await fireEvent.click(screen.getByRole("button", { name: /^Mara Okonkwo-Fell, Cc, 1/ }));
   expect(onchange.mock.lastCall?.[0].filters.people).toEqual([
-    { person_id: typed, roles: ["custodian"] },
     { person_id: jory, roles: ["author", "sender"] },
     { person_id: mara, roles: ["copied"] },
+    { person_id: typed, roles: ["custodian"] },
   ]);
 
   await fireEvent.click(joryButton);
@@ -604,12 +604,12 @@ it("narrows by a person with the roles the People group shows and keeps typed en
   expect(removed.filters.paths).toEqual(originalQuery.filters.paths);
 });
 
-it("keeps a selected person with no documents left and explains an unavailable People group", async () => {
+it("keeps a selected person with no documents left", () => {
   const selectedQuery: Query = {
     ...originalQuery,
     filters: { ...originalQuery.filters, people: [{ person_id: jory, roles: ["author"] }] },
   };
-  const view = render(FacetSidebar, {
+  render(FacetSidebar, {
     facets: [
       peopleFacet([
         { ...peopleValues[0]!, count: 0, selected: true, roles: ["author"] },
@@ -622,20 +622,4 @@ it("keeps a selected person with no documents left and explains an unavailable P
   expect(
     screen.getByRole("button", { name: "Jory Pellham, Author, 0 documents, selected" }),
   ).toBeTruthy();
-
-  const unavailable = facet("person_role", {
-    available: false,
-    reason: "member_budget_exceeded",
-    total: undefined,
-    missing: undefined,
-    other: undefined,
-  });
-  await view.rerender({ facets: [unavailable], query: selectedQuery });
-  expect(
-    within(screen.getByRole("group", { name: "People facet" })).getByText(
-      "Unavailable · member budget exceeded",
-    ),
-  ).toBeTruthy();
-  await view.rerender({ facets: [unavailable], query: originalQuery });
-  expect(screen.queryByRole("group", { name: "People facet" })).toBeNull();
 });

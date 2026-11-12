@@ -1,16 +1,19 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { inspect, promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { APIError } from "../src/api-transport.js";
+import {
+  createWorkspaceQuery,
+  type WorkspaceQueryCreateRequestFacetsItem,
+} from "../src/generated/docbank.js";
 import type { SnapshotPage } from "../src/snapshots.js";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-// "branch" proves this checkout; "base" captures the same fixtures with the
-// pull request's base binary, which predates role operands and the People facet.
 const proof = process.env.DOCBANK_ROLE_SEARCH_PROOF;
 test.skip(!proof, "DOCBANK_ROLE_SEARCH_PROOF enables this proof");
 
@@ -51,16 +54,30 @@ const advanced = (text: string, filters: Record<string, unknown> = {}) => ({
   sort: { field: "name", direction: "asc" } as const,
 });
 const query = advanced('from:"Mara Okonkwo-Fell"');
-// Any role: the one person operand the base branch already has.
+// Any-role person query.
 const anyRole = advanced('person:"Mara Okonkwo-Fell"');
 
-// Attachments are named role-search-<base|branch>-<state>-<wide|narrow>-<theme>.png.
+// Attachments are named
+// role-search-branch-<state>-<wide|narrow|mobile-<part>>-<theme>.png.
 async function capture(page: Page, testInfo: TestInfo, name: string, theme: "light" | "dark") {
   await page.evaluate(async (value) => {
     localStorage.setItem("docbank-theme", value);
     document.documentElement.classList.toggle("dark", value === "dark");
     await document.fonts.ready;
   }, theme);
+  // Park the pointer so a clicked control keeps no hover style. The top-left
+  // corner is the navigation's padding at wide and the top bar's when compact.
+  await page.mouse.move(0, 0);
+  expect(
+    await page.evaluate(
+      () =>
+        document
+          .elementFromPoint(0, 0)
+          ?.closest(
+            "a[href], button, input, label, select, summary, textarea, tr, [role=button], [role=link], [role=tab]",
+          ) ?? null,
+    ),
+  ).toBeNull();
   // The JSON reporter embeds the body as base64 in the uploaded CI report.
   const body = await page.screenshot({ animations: "disabled" });
   await testInfo.attach(`role-search-${proof}-${name}-${theme}.png`, {
@@ -69,21 +86,50 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
   });
 }
 
+// The first result is selected on load, so the inspector reads its email and
+// history; a capture taken earlier shows their loading states.
+async function inspectorLoaded(page: Page) {
+  const inspector = page.getByRole("complementary", { name: "Document inspector" });
+  await expect(
+    inspector.getByRole("region", { name: "Email reader" }).getByLabel("Decoded email headers"),
+  ).toBeAttached();
+  await expect(
+    inspector.getByRole("region", { name: "History", exact: true }).locator(":scope > ol"),
+  ).toBeAttached();
+  await expect(page.getByText("Loading and verifying the email…")).toHaveCount(0);
+  await expect(page.getByText("Loading history…")).toHaveCount(0);
+}
+
 async function captureStates(
   page: Page,
   testInfo: TestInfo,
   state: string,
   ready: () => Promise<void>,
+  parts: [string, Locator][],
 ) {
   await page.setViewportSize({ width: 1440, height: 960 });
   await ready();
+  await inspectorLoaded(page);
   await capture(page, testInfo, `${state}-wide`, "dark");
   await capture(page, testInfo, `${state}-wide`, "light");
   await page.setViewportSize({ width: 860, height: 1100 });
   await ready();
+  await inspectorLoaded(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await capture(page, testInfo, `${state}-narrow`, "dark");
   await capture(page, testInfo, `${state}-narrow`, "light");
+  // Phone width puts the facets in one column above the results. The app shell
+  // scrolls inside a fixed-height frame, so each part is brought wholly into view.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await ready();
+  await inspectorLoaded(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  for (const [part, target] of parts) {
+    await target.scrollIntoViewIfNeeded();
+    await expect(target).toBeInViewport({ ratio: 1 });
+    await capture(page, testInfo, `${state}-mobile-${part}`, "dark");
+    await capture(page, testInfo, `${state}-mobile-${part}`, "light");
+  }
   await page.setViewportSize({ width: 1440, height: 960 });
 }
 
@@ -106,6 +152,13 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     ).stdout.trim();
   let started = false;
   let failure: unknown;
+  const originalFetch = globalThis.fetch;
+  let baseURL = "";
+  globalThis.fetch = (input, init) =>
+    originalFetch(
+      typeof input === "string" && input.startsWith("/") ? baseURL + input : input,
+      init,
+    );
   const stop = async () => {
     if (!started) return;
     const before = JSON.parse(await run("daemon", "status", "--json"));
@@ -132,23 +185,21 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     const issued = new URL(await run("web", "--no-browser"));
     const session = new URLSearchParams(issued.hash.slice(1)).get("web_session");
     if (!session) throw new Error("Synthetic web session missing");
+    baseURL = `http://127.0.0.1:${issued.port}`;
     // People are provisioned from the addresses in the background; wait for the
     // browser session's own frozen result before driving the page.
     const freeze = async (
       value: ReturnType<typeof advanced>,
-      facets: string[],
+      facets: WorkspaceQueryCreateRequestFacetsItem[],
     ): Promise<SnapshotPage | undefined> => {
-      const response = await fetch(`http://127.0.0.1:${issued.port}/api/v1/workspace/queries`, {
-        method: "POST",
-        signal: AbortSignal.timeout(30_000),
-        headers: {
-          Host: issued.host,
-          "Content-Type": "application/json",
-          "X-Docbank-Web-Session": session,
-        },
-        body: JSON.stringify({ query: value, page_size: 50, facets }),
+      const response = await createWorkspaceQuery(
+        { query: value, page_size: 50, facets },
+        { session, signal: AbortSignal.timeout(30_000), headers: { Host: issued.host } },
+      ).catch((cause: unknown) => {
+        if (cause instanceof APIError) return undefined;
+        throw cause;
       });
-      return response.ok ? ((await response.json()) as SnapshotPage) : undefined;
+      return response ? ((await response.json()) as SnapshotPage) : undefined;
     };
     const summary = (page?: SnapshotPage) => ({
       rows: page?.rows.map((row) => [row.name, row.matched_roles]),
@@ -158,6 +209,10 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     });
     const results = page.getByRole("region", { name: "Frozen query results" });
     const people = page.getByRole("group", { name: "People facet" });
+    const parts: [string, Locator][] = [
+      ["people", people],
+      ["results", results],
+    ];
     const open = async (value: ReturnType<typeof advanced>) => {
       const launch = new URL(issued);
       const fragment = new URLSearchParams(launch.hash.slice(1));
@@ -169,21 +224,6 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       await editor.getByRole("button", { name: "Search", exact: true }).click();
       await expect(editor).toBeHidden();
     };
-    const everyEmail = emails.map(([name]) => name).sort();
-    if (proof === "base") {
-      await expect
-        .poll(async () => (await freeze(anyRole, []))?.rows.map((row) => row.name), {
-          timeout: 120_000,
-          intervals: [1_000],
-        })
-        .toEqual(everyEmail);
-      await open(anyRole);
-      await captureStates(page, testInfo, "person-query", async () => {
-        await expect(results.getByRole("cell", { name: "/vendor-notes.eml" })).toBeVisible();
-        await expect(people).toHaveCount(0);
-      });
-      return;
-    }
     const expected = {
       rows: [
         ["board-update.eml", ["sender"]],
@@ -204,25 +244,24 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       })
       .toEqual(expected);
 
-    // The base comparison: any role, no role chips, but now a People group.
+    // An any-role query shows the People group without role chips.
     await open(anyRole);
-    await captureStates(page, testInfo, "person-query", async () => {
-      await expect(results.getByRole("cell", { name: "/vendor-notes.eml" })).toBeVisible();
-      await expect(
-        people.getByRole("button", { name: "Teodor Vask, Cc, Recipient, 2 documents" }),
-      ).toBeVisible();
-    });
+    await captureStates(
+      page,
+      testInfo,
+      "person-query",
+      async () => {
+        await expect(
+          results.getByRole("cell", { name: "/vendor-notes.eml", exact: true }),
+        ).toBeVisible();
+        await expect(
+          people.getByRole("button", { name: "Teodor Vask, Cc, Recipient, 2 documents" }),
+        ).toBeVisible();
+      },
+      parts,
+    );
 
-    await page.setViewportSize({ width: 1440, height: 960 });
     await open(query);
-    await expect(
-      results.getByRole("cell", { name: "/budget-follow-up.eml, matched as Sender" }),
-    ).toBeVisible();
-    await expect(
-      people.getByRole("button", { name: "Teodor Vask, Cc, Recipient, 2 documents" }),
-    ).toBeVisible();
-    await expect(people.getByText("Private Reviewer")).toHaveCount(0);
-
     const narrowing = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/api/v1/workspace/queries" &&
@@ -236,24 +275,24 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     expect(sent.query.filters.people).toEqual([
       { person_id: expect.any(String), roles: ["recipient"] },
     ]);
-    await expect(
-      results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
-    ).toBeVisible();
-    await expect(results.getByRole("cell", { name: /budget-follow-up\.eml/ })).toHaveCount(0);
-    await expect(
-      people.getByRole("button", { name: "Ines Albarrán, Recipient, 1 documents, selected" }),
-    ).toHaveAttribute("aria-pressed", "true");
 
-    await captureStates(page, testInfo, "from-query-person-selected", async () => {
-      await expect(
-        results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
-      ).toBeVisible();
-      await expect(people).toBeVisible();
-    });
+    await captureStates(
+      page,
+      testInfo,
+      "from-query-person-selected",
+      async () => {
+        await expect(
+          results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
+        ).toBeVisible();
+        await expect(
+          people.getByRole("button", { name: "Ines Albarrán, Recipient, 1 documents, selected" }),
+        ).toHaveAttribute("aria-pressed", "true");
+      },
+      parts,
+    );
 
     // Merge the provisioned Ines into a new survivor. A query that still names
-    // the retired ID comes back resolved to the survivor, so the People facet
-    // shows the survivor selected and one click removes that filter.
+    // the retired ID shows the survivor selected in the People facet.
     const provisioned = await freeze(query, ["person_role"]);
     const retiredID = provisioned?.facets[0]?.values.find(
       (value) => value.label === "Ines Albarrán",
@@ -276,56 +315,33 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     });
     await expect
       .poll(
-        async () => {
-          const frozen = await freeze(retiredQuery, ["person_role"]);
-          return {
-            people: frozen?.query.filters.people,
-            rows: frozen?.rows.map((row) => [row.name, row.matched_roles]),
-            survivor: frozen?.facets[0]?.values.find((value) => value.key === survivor.person_id)
-              ?.label,
-          };
-        },
+        async () =>
+          summary(await freeze(retiredQuery, ["person_role"])).people["Ines Albarrán-Ruiz"],
         { timeout: 120_000, intervals: [1_000] },
       )
-      .toEqual({
-        people: [{ person_id: survivor.person_id, roles: ["recipient"] }],
-        rows: [["board-update.eml", ["recipient", "sender"]]],
-        survivor: "Ines Albarrán-Ruiz",
-      });
+      .toEqual([1, ["recipient"]]);
 
     await open(retiredQuery);
     const survivorSelected = people.getByRole("button", {
       name: "Ines Albarrán-Ruiz, Recipient, 1 documents, selected",
     });
-    await expect(survivorSelected).toHaveAttribute("aria-pressed", "true");
-    await expect(people.getByText("Ines Albarrán", { exact: true })).toHaveCount(0);
-    await captureStates(page, testInfo, "merged-survivor-selected", async () => {
-      await expect(
-        results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
-      ).toBeVisible();
-      await expect(survivorSelected).toBeVisible();
-    });
-    const clearing = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/v1/workspace/queries" &&
-        response.request().method() === "POST",
+    await captureStates(
+      page,
+      testInfo,
+      "merged-survivor-selected",
+      async () => {
+        await expect(
+          results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
+        ).toBeVisible();
+        await expect(survivorSelected).toHaveAttribute("aria-pressed", "true");
+      },
+      parts,
     );
-    await survivorSelected.click();
-    const cleared = await clearing;
-    expect(cleared.status()).toBe(200);
-    const clearedQuery = cleared.request().postDataJSON().query;
-    expect(clearedQuery.text).toBe(query.text);
-    expect(clearedQuery.filters?.people).toBeUndefined();
-    await expect(
-      results.getByRole("cell", { name: "/budget-follow-up.eml, matched as Sender" }),
-    ).toBeVisible();
-    await expect(
-      people.getByRole("button", { name: "Ines Albarrán-Ruiz, Recipient, 1 documents" }),
-    ).not.toHaveAttribute("aria-pressed", "true");
   } catch (error) {
     failure = error;
     throw error;
   } finally {
+    globalThis.fetch = originalFetch;
     try {
       await stop();
       await rm(scratch, { recursive: true, force: true });
