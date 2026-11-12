@@ -19,23 +19,39 @@ import (
 )
 
 func TestVersionFactsRoutesAndOpenLink(t *testing.T) {
-	for _, origin := range []string{"", "https://docs.example.test"} {
-		t.Run(origin, func(t *testing.T) {
-			ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Web.PublicOrigin = origin })
+	t.Parallel()
+	for _, tc := range []struct {
+		name, origin, basePath, webURL string
+	}{
+		{"no origin", "", "", ""},
+		{"no origin mounted", "", "/archive", ""},
+		{"root", "https://docs.example.test", "", "https://docs.example.test/"},
+		{"mounted", "https://docs.example.test", "/archive", "https://docs.example.test/archive/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts, s := newTestServer(t, func(d *api.Deps) {
+				d.Cfg.Web.PublicOrigin = tc.origin
+				d.Cfg.Web.BasePath = tc.basePath
+			})
 			node := createFileWithContent(t, ts, s, "sample.txt", "synthetic")
 			for _, kind := range []string{"dates", "people"} {
 				path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
-				res, body := get(t, ts, path, nil)
-				require.Equal(t, http.StatusOK, res.StatusCode, body)
-				var result map[string]any
-				require.NoError(t, json.Unmarshal([]byte(body), &result))
-				require.Equal(t, node.CurrentVersionID, result["content_version_id"])
-				if origin == "" {
-					require.NotContains(t, result, "open")
-				} else {
-					require.Equal(t, fmt.Sprintf("%s/#node=%d&version=%s", origin, node.ID, node.CurrentVersionID), result["open"].(map[string]any)["web"])
+				for _, query := range []string{"", "?disclosure=full"} {
+					res, body := get(t, ts, path+query, nil)
+					require.Equal(t, http.StatusOK, res.StatusCode, body)
+					var result map[string]any
+					require.NoError(t, json.Unmarshal([]byte(body), &result))
+					require.Equal(t, node.CurrentVersionID, result["content_version_id"])
+					if tc.webURL == "" {
+						require.NotContains(t, result, "open")
+					} else {
+						open, ok := result["open"].(map[string]any)
+						require.True(t, ok)
+						require.Equal(t, fmt.Sprintf("%s#node=%d&version=%s", tc.webURL, node.ID, node.CurrentVersionID), open["web"])
+					}
 				}
-				res, body = get(t, ts, path+"?timezone=UTC", nil)
+				res, body := get(t, ts, path+"?timezone=UTC", nil)
 				require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
 				require.Equal(t, "unknown_parameter", decodeProblem(t, body).Code)
 				res, body = get(t, ts, "/api/v1/versions/00000000-0000-4000-8000-000000000000/"+kind, nil)
@@ -47,6 +63,7 @@ func TestVersionFactsRoutesAndOpenLink(t *testing.T) {
 }
 
 func TestVersionFactsBrowserFullForbidden(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node := createFileWithContent(t, ts, s, "sample.txt", "synthetic")
 	res, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
@@ -75,10 +92,10 @@ func TestVersionFactsBrowserFullForbidden(t *testing.T) {
 	res, body = get(t, ts, path+"?disclosure=full", nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.Contains(t, body, person.PersonID)
-
 }
 
 func TestVersionFactsPDFMetadata(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", testHash("pdf-facts"), 1, "application/pdf")
 	require.NoError(t, err)
@@ -122,10 +139,24 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.True(t, kinds["modified"])
 	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	require.Contains(t, body, "J. PELLHAM")
+	var people api.VersionPeople
+	require.NoError(t, json.Unmarshal([]byte(body), &people))
+	require.Len(t, people.Unresolved, 1)
+	require.Equal(t, "J. PELLHAM", people.Unresolved[0].RawLabel)
+	require.Equal(t, "author", people.Unresolved[0].Role)
+	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	dates = api.VersionDates{}
+	require.NoError(t, json.Unmarshal([]byte(body), &dates))
+	require.Equal(t, "pending", dates.State)
+	require.Empty(t, dates.Claims)
+	require.Nil(t, dates.Primary)
 }
 
 func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader("synthetic JPEG"))
