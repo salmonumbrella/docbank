@@ -1,0 +1,153 @@
+name: Contracts C4 generation, checks and screenshots
+
+on:
+  push:
+    branches: [bootstrap/contracts-c4-generator-r7-20261112]
+
+permissions:
+  contents: read
+
+jobs:
+  generate-and-check:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "26.13.0"
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - name: Render API without the not-yet-generated client
+        run: |
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+              "os"
+              "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+              out, err := api.OpenAPIYAML()
+              if err != nil { panic(err) }
+              if _, err := os.Stdout.Write(out); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi > internal/api/openapi.yaml
+      - run: make generate-photo-policy
+      - run: go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+      - run: npm --prefix frontend run generate:api
+      - run: git diff --stat
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: contracts-c4-generated-api-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts
+      - name: Generated files match the committed source
+        run: git diff --exit-code -- internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts
+      - name: Record formatter changes
+        if: always()
+        run: |
+          (cd frontend && npx vp fmt)
+          git diff -- frontend > format.patch
+          git diff --stat -- frontend
+      - if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: contracts-c4-format-${{ github.sha }}
+          path: format.patch
+          if-no-files-found: ignore
+      - name: Frontend checks
+        if: always()
+        run: make frontend-test
+      - name: Session and route tests
+        if: always()
+        run: go test -tags fts5 ./internal/api/ -run 'TestWebPages|TestWebSession'
+      - name: Telemetry and protocol tests
+        if: always()
+        run: go test -tags fts5 ./internal/telemetry/ ./internal/daemonconn/
+      - name: Restore pinned uv archive
+        if: always()
+        id: uv_archive
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .vercel-tools/downloads
+          key: release-uv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/vercel-install-docs.sh') }}
+      - name: Install pinned documentation tools
+        if: always()
+        run: |
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+      - name: Strict docs
+        if: always()
+        run: make docs-build
+
+  screenshots:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "26.13.0"
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Install pinned Chromium
+        run: |
+          kit-retry 3 5 npm ci --prefix frontend
+          kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Render API without the not-yet-generated client (screenshot build)
+        run: |
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+              "os"
+              "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+              out, err := api.OpenAPIYAML()
+              if err != nil { panic(err) }
+              if _, err := os.Stdout.Write(out); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi > internal/api/openapi.yaml
+      - run: make generate-photo-policy
+      - run: go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+      - run: npm --prefix frontend run generate:api
+      - run: make build
+      - name: Capture synthetic real-daemon screenshots
+        env:
+          DOCBANK_SCREENSHOT_DIR: ${{ github.workspace }}/.superpowers/contracts-c4-shots
+          DOCBANK_PLAYWRIGHT_SUITE: contracts-c4
+        run: |
+          scratch=$(mktemp -d /tmp/docbank-screenshots-XXXXXX)
+          trap 'rm -rf "$scratch"' EXIT
+          cd frontend
+          TMPDIR="$scratch" node node_modules/@playwright/test/cli.js test contracts-c4.screenshot.ts --config screenshots/playwright.config.ts --project chromium
+      - if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: contracts-c4-screenshots-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            .superpowers/contracts-c4-shots/
+            .superpowers/playwright/
+            frontend/test-results/playwright/contracts-c4.json
