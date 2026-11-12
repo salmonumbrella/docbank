@@ -2,10 +2,12 @@ package contractsign
 
 import (
 	"context"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,16 +20,50 @@ import (
 )
 
 // Cancellation after the invitation starts must still persist its unknown outcome.
-func TestCancellationSettlesAndReopenBlocksSecondInvitation(t *testing.T) {
+func TestSignatureCancellationSettlesAfterCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var posts atomic.Int32
+	var s *store.Store
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{"id":7,"name":"Template","submitters":[{"name":"Signer"}]}`))
+			_, _ = w.Write([]byte(`{"id":7,"name":"Template","submitters":[{"name":"Tenant"},{"name":"Owner"}]}`))
 			return
 		}
 		posts.Add(1)
+		var body map[string]any
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			return
+		}
+		assert.Len(t, body, 3)
+		assert.Equal(t, float64(7), body["template_id"])
+		assert.Equal(t, true, body["send_email"])
+		items, ok := body["submitters"].([]any)
+		if !assert.True(t, ok) || !assert.Len(t, items, 2) {
+			return
+		}
+		for i, role := range []string{"Tenant", "Owner"} {
+			signer, valid := items[i].(map[string]any)
+			if !assert.True(t, valid) {
+				return
+			}
+			assert.Len(t, signer, 4)
+			assert.Equal(t, role, signer["role"])
+			key, valid := signer["external_id"].(string)
+			if !assert.True(t, valid) {
+				return
+			}
+			parts := strings.Split(key, ":")
+			if !assert.Len(t, parts, 3) {
+				return
+			}
+			assert.Equal(t, "docbank", parts[0])
+			assert.Equal(t, []string{"0", "1"}[i], parts[2])
+			request, err := s.GetSignatureRequest(r.Context(), parts[1])
+			assert.NoError(t, err)
+			assert.Equal(t, "creating", request.State)
+			assert.Len(t, request.Signers, 2)
+		}
 		cancel()
 	}))
 	defer provider.Close()
@@ -37,7 +73,8 @@ func TestCancellationSettlesAndReopenBlocksSecondInvitation(t *testing.T) {
 		return connection, client, err
 	}
 	path := filepath.Join(t.TempDir(), "docbank.db")
-	s, err := store.Open(t.Context(), path)
+	var err error
+	s, err = store.Open(t.Context(), path)
 	require.NoError(t, err)
 	contract, err := s.CreateContract(t.Context(), store.ContractInput{Title: "Example"})
 	require.NoError(t, err)
@@ -52,7 +89,7 @@ func TestCancellationSettlesAndReopenBlocksSecondInvitation(t *testing.T) {
 		return f()
 	}
 	svc := Service{Store: s, Connect: connect, Admit: admit, Settle: settle}
-	signers := []store.SignatureSignerInput{{Role: "Signer", Name: "Example", Email: "signer@example.com"}}
+	signers := []store.SignatureSignerInput{{Role: "Owner", Name: "Owner", Email: "owner@example.com"}, {Role: "Tenant", Name: "Tenant", Email: "tenant@example.com"}}
 	_, err = svc.Request(ctx, contract.ContractID, contract.Revision, 7, signers)
 	var creation *CreationError
 	require.ErrorAs(t, err, &creation)

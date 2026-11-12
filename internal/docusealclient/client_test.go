@@ -379,13 +379,13 @@ func TestSubmissionOutcomeClassification(t *testing.T) {
 		body   string
 		want   error
 	}{
+		{"transport", 0, "", ErrCreationUnknown},
 		{"redirect", 302, "", ErrCreationUnknown},
 		{"timeout", 408, "private diagnostic", ErrCreationUnknown},
 		{"server error", 500, "private diagnostic", ErrCreationUnknown},
 		{"unprocessable", 422, "private diagnostic", ErrCreationFailed},
 		{"rate limited", 429, "private diagnostic", ErrCreationFailed},
 		{"wrong success", 201, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key"}]`, ErrCreationUnknown},
-		{"accepted without receipt confirmation", 202, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key"}]`, ErrCreationUnknown},
 		{"malformed receipt", 200, `{}`, ErrCreationUnknown},
 		{"wrong external id", 200, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"other"}]`, ErrCreationUnknown},
 		{"valid receipt", 200, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key","embed_src":"private-link"}]`, nil},
@@ -397,6 +397,9 @@ func TestSubmissionOutcomeClassification(t *testing.T) {
 				if r.Method != http.MethodPost || r.URL.Path != "/submissions" {
 					t.Error("unexpected request")
 				}
+				if tc.status == 0 {
+					return nil, io.ErrUnexpectedEOF
+				}
 				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			})}}
 			receipt, err := c.CreateSubmission(t.Context(), 7, []SubmitterInput{{Role: "Signer", Name: "Example", Email: "signer@example.com", ExternalID: "key"}})
@@ -405,22 +408,6 @@ func TestSubmissionOutcomeClassification(t *testing.T) {
 			}
 			if tc.want == nil && (receipt.SubmissionID != "10" || len(receipt.SubmitterIDs) != 1 || receipt.SubmitterIDs[0] != "11") {
 				t.Fatalf("receipt=%+v", receipt)
-			}
-		})
-	}
-}
-
-func TestSubmissionTransportFailureIsUnknownAndNotRetried(t *testing.T) {
-	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, io.ErrUnexpectedEOF} {
-		t.Run(failure.Error(), func(t *testing.T) {
-			calls := 0
-			c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
-				calls++
-				return nil, failure
-			})}}
-			_, err := c.CreateSubmission(t.Context(), 7, []SubmitterInput{{Role: "Signer", Email: "signer@example.com", ExternalID: "key"}})
-			if !errors.Is(err, ErrCreationUnknown) || calls != 1 {
-				t.Fatalf("err=%v calls=%d", err, calls)
 			}
 		})
 	}

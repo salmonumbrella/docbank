@@ -51,6 +51,8 @@ func checkMetadataExportRecovery(t *testing.T, postgres bool) {
 	require.NoError(t, err)
 	signature, err := s.BeginSignatureRequest(ctx, contract.ContractID, contract.Revision, signatureFixture())
 	require.NoError(t, err)
+	signature, err = s.FinishSignatureCreation(ctx, signature.RequestID, signature.Revision, SignatureCreationResult{SubmissionID: "10", SubmitterIDs: []string{"11"}})
+	require.NoError(t, err)
 	// A wall-clock correction can place an update before creation. Exercise
 	// both native exporters and recovery with the retained contract present.
 	// PostgreSQL setup owns immutable timestamp seeding; operations use the runtime role.

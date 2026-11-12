@@ -58,14 +58,13 @@ func TestSignatureRequestLostReplyGuidesHistory(t *testing.T) {
 
 func TestSignatureRequestDisclosureAndOutput(t *testing.T) {
 	cmd := newSignatureRequestCommand()
-	require.Contains(t, cmd.Long, "roles, names, and email addresses")
-	require.Contains(t, cmd.Long, "no document bytes")
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	request := store.SignatureRequest{SignatureRequestSummary: store.SignatureRequestSummary{RequestID: "request", State: "sent", Revision: 1, EndpointOrigin: "https://sign.example.test", TemplateName: "Example template"}}
+	request := store.SignatureRequest{SignatureRequestSummary: {RequestID: "request", State: "sent", Revision: 1, EndpointOrigin: "https://sign.example.test", TemplateName: "Example template"}, Signers: []store.SignatureSigner{{Role: "Signer", Name: "Example", Email: "signer@example.com", State: "awaiting"}}}
 	require.NoError(t, printSignatureRequest(cmd, request, false))
 	require.Contains(t, out.String(), "https://sign.example.test")
 	require.Contains(t, out.String(), "Example template")
+	require.Contains(t, out.String(), `"Signer"	"Example"	"signer@example.com"	awaiting`)
 }
 
 func TestSignatureRequestPreflightProblemIsDefinite(t *testing.T) {

@@ -670,6 +670,7 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/parties/{party_id}"].Patch,
 		doc.Paths["/api/v1/parties/{party_id}/retire"].Post,
+		doc.Paths["/api/v1/contracts/{contract_id}/signature-requests"].Post,
 		doc.Paths["/api/v1/contracts/{contract_id}"].Patch,
 		doc.Paths["/api/v1/contracts/{contract_id}"].Delete,
 		doc.Paths["/api/v1/contracts/{contract_id}/parties/{party_id}"].Put,
