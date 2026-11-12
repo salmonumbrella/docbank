@@ -1,0 +1,67 @@
+name: Contracts C2 create output regression
+on:
+  push:
+    branches: [ci/contracts-c2-output-red]
+permissions:
+  contents: read
+env:
+  GOPROXY: https://proxy.golang.org|direct
+  GOFLAGS: -trimpath
+jobs:
+  cli:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 go mod download
+      - name: Confirmed create output regression
+        run: go test -tags fts5 ./cmd/docbank -run '^TestContractCreateReportsConfirmedOutputFailure$' -count=1 -v
+      - name: Existing contract CLI coverage
+        if: always()
+        run: go test -tags fts5 ./cmd/docbank -run '^(TestContractPreflight|TestContractShowQuotesTerms|TestContractCLIWalkAndPreflight)$' -count=1 -v
+  docs:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '26.13.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Install pinned documentation tools
+        run: |
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+      - run: make docs-build
