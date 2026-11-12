@@ -16,6 +16,9 @@ type WhenV1 struct {
 	SourceZone          string                  `json:"source_zone,omitempty"`
 	SourceOffsetSeconds *int                    `json:"source_offset_seconds,omitempty"`
 	Date                string                  `json:"date,omitempty"`
+	EndDate             string                  `json:"end_date,omitempty"`
+	Day                 string                  `json:"day,omitempty"`
+	AxisMinute          *int                    `json:"axis_minute,omitempty"`
 	Period              string                  `json:"period,omitempty"`
 	PlacedBy            WhenPlacedBy            `json:"placed_by"`
 }

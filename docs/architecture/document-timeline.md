@@ -228,3 +228,24 @@ unknown names and `-0000` remain floating. The stored instant is validated
 without resolving it again, so changing time-zone data does not invalidate a
 retained generation. The event derivation recipe advances when these rules
 change; `primary-rule/v1` remains unchanged.
+
+## Read documents by day
+
+`POST /api/v1/timeline/days` counts the documents selected by a QueryV1 in
+an inclusive range of at most 92 civil dates. `POST /api/v1/timeline/day`
+returns one day's documents, date-only and coarse claims, elapsed-time bounds,
+and hour ticks. Both return the selected time zone and whether the request
+used the configured default. Exact instants use the zone's civil-day bounds;
+floating and date-only claims retain their written civil dates. A document is
+placed once per day, preferring exact, floating, date-only, then coarse claims.
+
+Both routes use safe disclosure for date claims and person matching, including
+saved searches. A pending date index returns `document_dates_pending`; a failed
+or unavailable current attempt is neither placed nor counted as undated. On a
+successful response `pending_versions` is zero. Undated counts cover only
+successfully indexed current versions without a usable safe claim.
+
+The first day request freezes its result in the query snapshot cache. Its
+owner-bound cursor pages timed items; date-only and coarse strips are capped at
+200 and appear only on the first page. A changed scope or Hidden lock state
+invalidates the cursor. Expired or revoked snapshots return `snapshot_gone`.

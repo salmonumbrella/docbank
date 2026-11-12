@@ -669,3 +669,11 @@ index is rebuilding; check timeline coverage and retry after indexing. An
 API-key caller may request `"disclosure":"full"` when creating a workspace
 query to include sensitive date claims. Browser sessions always use safe
 disclosure.
+
+Use `docbank timeline days --from 2026-03-01 --to 2026-03-31` to count
+matching documents per civil day, or `docbank timeline day 2026-03-10` to
+list a day's placements. Add an advanced query as the final argument,
+`--timezone` to choose an IANA zone, and repeat `--date-kind` to select date
+kinds. The command prints the selected zone to stderr and JSON to stdout.
+Both reads use safe disclosure; see [Document timeline](../architecture/document-timeline.md#read-documents-by-day)
+for paging and indexing behavior.

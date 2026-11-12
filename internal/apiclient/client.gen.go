@@ -15596,6 +15596,100 @@ func (c *Client) ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime
 	return responseParser(ctx, resp)
 }
 
+// ListTimelineDay List documents on one civil day
+func (c *Client) ListTimelineDay(ctx context.Context, options *ListTimelineDayRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTimelineDayResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/timeline/day",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListTimelineDayResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListTimelineDayResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListTimelineDayResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListTimelineDayErrorResponse](resp, "ListTimelineDayErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/day")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CountTimelineDays Count documents per civil day
+func (c *Client) CountTimelineDays(ctx context.Context, options *CountTimelineDaysRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CountTimelineDaysResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/timeline/days",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CountTimelineDaysResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(CountTimelineDaysResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CountTimelineDaysResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CountTimelineDaysErrorResponse](resp, "CountTimelineDaysErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/timeline/days")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateTimelineRebuild Start or replay a timeline rebuild
 func (c *Client) CreateTimelineRebuild(ctx context.Context, options *CreateTimelineRebuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTimelineRebuildResponse, error) {
 	var err error
@@ -26603,6 +26697,62 @@ func (o *ReadTextSectionRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ListTimelineDayRequestOptions is the options needed to make a request to ListTimelineDay.
+type ListTimelineDayRequestOptions struct {
+	Body *ListTimelineDayBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListTimelineDayRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListTimelineDayRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListTimelineDayRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListTimelineDayRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CountTimelineDaysRequestOptions is the options needed to make a request to CountTimelineDays.
+type CountTimelineDaysRequestOptions struct {
+	Body *CountTimelineDaysBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CountTimelineDaysRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CountTimelineDaysRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CountTimelineDaysRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CountTimelineDaysRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateTimelineRebuildRequestOptions is the options needed to make a request to CreateTimelineRebuild.
 type CreateTimelineRebuildRequestOptions struct {
 	Body *CreateTimelineRebuildBody
@@ -28629,6 +28779,10 @@ type ResolveTextCitationBody = TextCitation
 
 type ReadTextSectionBody = TextSectionRequest
 
+type ListTimelineDayBody = TimelineDayRequest
+
+type CountTimelineDaysBody = TimelineDaysRequest
+
 type CreateTimelineRebuildBody = TimelineRebuildRequest
 
 type EmptyTrashBody = EmptyTrashRequest
@@ -30616,6 +30770,14 @@ type ReadTimelineCoverageResponse = api.DocumentEventCoverage
 
 type ReadTimelineCoverageErrorResponse = Error
 
+type ListTimelineDayResponse = api.TimelineDayResponse
+
+type ListTimelineDayErrorResponse = Error
+
+type CountTimelineDaysResponse = api.TimelineDaysResponse
+
+type CountTimelineDaysErrorResponse = Error
+
 type CreateTimelineRebuildResponse = api.TimelineBuild
 
 type CreateTimelineRebuildErrorResponse = Error
@@ -32372,9 +32534,33 @@ type TicketOutputBody struct {
 	URL     string  `json:"url"`
 }
 
+type TimelineBounds = api.TimelineBounds
+
 type TimelineBuild = api.TimelineBuild
 
+type TimelineCitation = api.TimelineCitation
+
+type TimelineDayCount = api.TimelineDayCount
+
+type TimelineDayRequest = api.TimelineDayRequest
+
+type TimelineDayResponse = api.TimelineDayResponse
+
+type TimelineDaysRequest = api.TimelineDaysRequest
+
+type TimelineDaysResponse = api.TimelineDaysResponse
+
+type TimelineItem = api.TimelineItem
+
+type TimelineMonthCount = api.TimelineMonthCount
+
+type TimelinePerson = api.TimelinePerson
+
 type TimelineRebuildRequest = api.TimelineRebuildRequest
+
+type TimelineState = api.TimelineState
+
+type TimelineTick = api.TimelineTick
 
 type TrashEmptyReport = api.TrashEmptyReport
 

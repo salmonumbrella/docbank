@@ -21545,6 +21545,32 @@ components:
         - url
         - receipt
       type: object
+    TimelineBounds:
+      additionalProperties: false
+      properties:
+        end:
+          format: date-time
+          type: string
+        minutes:
+          format: int64
+          type: integer
+        start:
+          format: date-time
+          type: string
+        ticks:
+          items:
+            $ref: "#/components/schemas/TimelineTick"
+          type: array
+      required:
+        - start
+        - end
+        - minutes
+        - ticks
+      type: object
+      x-go-type: api.TimelineBounds
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TimelineBuild:
       additionalProperties: false
       properties:
@@ -21607,6 +21633,309 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TimelineCitation:
+      additionalProperties: false
+      properties:
+        content_sha256:
+          type: string
+        content_version_id:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        vault_uid:
+          type: string
+      required:
+        - vault_uid
+        - node_id
+        - content_version_id
+        - content_sha256
+      type: object
+      x-go-type: api.TimelineCitation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDayCount:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        date:
+          type: string
+        date_only:
+          format: int64
+          type: integer
+        floating:
+          format: int64
+          type: integer
+      required:
+        - date
+        - count
+        - floating
+        - date_only
+      type: object
+      x-go-type: api.TimelineDayCount
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDayRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDayRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        cursor:
+          maxLength: 2048
+          type: string
+        date:
+          type: string
+        date_kinds:
+          items:
+            type: string
+          maxItems: 16
+          type: array
+        limit:
+          format: int64
+          type: integer
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+        timezone:
+          type: string
+      required:
+        - query
+        - date
+      type: object
+      x-go-type: api.TimelineDayRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDayResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDayResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        date:
+          type: string
+        date_only:
+          items:
+            $ref: "#/components/schemas/TimelineItem"
+          type: array
+        date_only_truncated:
+          type: boolean
+        day:
+          $ref: "#/components/schemas/TimelineBounds"
+        items:
+          items:
+            $ref: "#/components/schemas/TimelineItem"
+          type: array
+        month_only:
+          items:
+            $ref: "#/components/schemas/TimelineItem"
+          type: array
+        month_only_truncated:
+          type: boolean
+        next_cursor:
+          type: string
+        timezone:
+          type: string
+        timezone_defaulted:
+          type: boolean
+      required:
+        - date
+        - timezone
+        - timezone_defaulted
+        - day
+        - items
+        - date_only
+        - date_only_truncated
+        - month_only
+        - month_only_truncated
+        - next_cursor
+      type: object
+      x-go-type: api.TimelineDayResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDaysRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDaysRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        date_kinds:
+          items:
+            type: string
+          maxItems: 16
+          type: array
+        from:
+          type: string
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+        timezone:
+          type: string
+        to:
+          type: string
+      required:
+        - query
+        - from
+        - to
+      type: object
+      x-go-type: api.TimelineDaysRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineDaysResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineDaysResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        days:
+          items:
+            $ref: "#/components/schemas/TimelineDayCount"
+          type: array
+        from:
+          type: string
+        months:
+          items:
+            $ref: "#/components/schemas/TimelineMonthCount"
+          type: array
+        state:
+          $ref: "#/components/schemas/TimelineState"
+        timezone:
+          type: string
+        timezone_defaulted:
+          type: boolean
+        to:
+          type: string
+        undated_count:
+          format: int64
+          type: integer
+      required:
+        - timezone
+        - timezone_defaulted
+        - from
+        - to
+        - days
+        - months
+        - undated_count
+        - state
+      type: object
+      x-go-type: api.TimelineDaysResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineItem:
+      additionalProperties: false
+      properties:
+        citation:
+          $ref: "#/components/schemas/TimelineCitation"
+        content_version_id:
+          type: string
+        family_parent_node_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        media_type:
+          type: string
+        name:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        path:
+          type: string
+        people:
+          items:
+            $ref: "#/components/schemas/TimelinePerson"
+          type: array
+        size:
+          format: int64
+          type: integer
+        unresolved_count:
+          format: int64
+          type: integer
+        when:
+          $ref: "#/components/schemas/WhenV1"
+      required:
+        - node_id
+        - content_version_id
+        - name
+        - path
+        - media_type
+        - size
+        - family_parent_node_id
+        - when
+        - people
+        - unresolved_count
+        - citation
+      type: object
+      x-go-type: api.TimelineItem
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineMonthCount:
+      additionalProperties: false
+      properties:
+        coarse:
+          format: int64
+          type: integer
+        month:
+          type: string
+      required:
+        - month
+        - coarse
+      type: object
+      x-go-type: api.TimelineMonthCount
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelinePerson:
+      additionalProperties: false
+      properties:
+        archive_id:
+          type: string
+        display_name:
+          type: string
+        linked_contact:
+          type: boolean
+        person_id:
+          type: string
+        roles:
+          items:
+            type: string
+          type: array
+        uid:
+          type: string
+      required:
+        - person_id
+        - display_name
+        - roles
+        - linked_contact
+      type: object
+      x-go-type: api.TimelinePerson
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TimelineRebuildRequest:
       additionalProperties: false
       properties:
@@ -21625,6 +21954,35 @@ components:
         - operation_id
       type: object
       x-go-type: api.TimelineRebuildRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineState:
+      additionalProperties: false
+      properties:
+        pending_versions:
+          format: int64
+          type: integer
+      required:
+        - pending_versions
+      type: object
+      x-go-type: api.TimelineState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TimelineTick:
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        minute:
+          format: int64
+          type: integer
+      required:
+        - minute
+        - label
+      type: object
+      x-go-type: api.TimelineTick
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -22534,7 +22892,14 @@ components:
       properties:
         at:
           type: string
+        axis_minute:
+          format: int64
+          type: integer
         date:
+          type: string
+        day:
+          type: string
+        end_date:
           type: string
         local:
           type: string
@@ -33592,6 +33957,52 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read current-file timeline coverage
+  /api/v1/timeline/day:
+    post:
+      operationId: listTimelineDay
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TimelineDayRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineDayResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List documents on one civil day
+  /api/v1/timeline/days:
+    post:
+      operationId: countTimelineDays
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TimelineDaysRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineDaysResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Count documents per civil day
   /api/v1/timeline/rebuilds:
     post:
       operationId: createTimelineRebuild

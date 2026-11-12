@@ -9010,6 +9010,18 @@ export interface TicketOutputBody {
   url: string;
 }
 
+export interface TimelineTick {
+  label: string;
+  minute: number;
+}
+
+export interface TimelineBounds {
+  end: string;
+  minutes: number;
+  start: string;
+  ticks: TimelineTick[];
+}
+
 export type TimelineBuildState = typeof TimelineBuildState[keyof typeof TimelineBuildState];
 
 
@@ -9034,6 +9046,129 @@ export interface TimelineBuild {
   target_epoch: number;
   unavailable: number;
   updated_at: string;
+}
+
+export interface TimelineCitation {
+  content_sha256: string;
+  content_version_id: string;
+  node_id: number;
+  vault_uid: string;
+}
+
+export interface TimelineDayCount {
+  count: number;
+  date: string;
+  date_only: number;
+  floating: number;
+}
+
+export interface TimelineDayRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 2048 */
+  cursor?: string;
+  date: string;
+  /** @maxItems 16 */
+  date_kinds?: string[];
+  limit?: number;
+  query: SavedQueryV1Schema;
+  timezone?: string;
+}
+
+export interface TimelinePerson {
+  archive_id?: string;
+  display_name: string;
+  linked_contact: boolean;
+  person_id: string;
+  roles: string[];
+  uid?: string;
+}
+
+export interface WhenPlacedBy {
+  claim_basis: string;
+  event_id: string;
+  fallback: boolean;
+  rule: string;
+  source: string;
+}
+
+export interface WhenV1 {
+  at?: string;
+  axis_minute?: number;
+  date?: string;
+  day?: string;
+  end_date?: string;
+  local?: string;
+  period?: string;
+  placed_by: WhenPlacedBy;
+  precision: string;
+  source_offset_seconds?: number;
+  source_zone?: string;
+  state: string;
+  zone_state?: string;
+}
+
+export interface TimelineItem {
+  citation: TimelineCitation;
+  content_version_id: string;
+  /** @nullable */
+  family_parent_node_id: number | null;
+  media_type: string;
+  name: string;
+  node_id: number;
+  path: string;
+  people: TimelinePerson[];
+  size: number;
+  unresolved_count: number;
+  when: WhenV1;
+}
+
+export interface TimelineDayResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  date: string;
+  date_only: TimelineItem[];
+  date_only_truncated: boolean;
+  day: TimelineBounds;
+  items: TimelineItem[];
+  month_only: TimelineItem[];
+  month_only_truncated: boolean;
+  next_cursor: string;
+  timezone: string;
+  timezone_defaulted: boolean;
+}
+
+export interface TimelineDaysRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 16 */
+  date_kinds?: string[];
+  from: string;
+  query: SavedQueryV1Schema;
+  timezone?: string;
+  to: string;
+}
+
+export interface TimelineMonthCount {
+  coarse: number;
+  month: string;
+}
+
+export interface TimelineState {
+  pending_versions: number;
+}
+
+export interface TimelineDaysResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  days: TimelineDayCount[];
+  from: string;
+  months: TimelineMonthCount[];
+  state: TimelineState;
+  timezone: string;
+  timezone_defaulted: boolean;
+  to: string;
+  undated_count: number;
 }
 
 export interface TimelineRebuildRequest {
@@ -9144,27 +9279,6 @@ export interface VerifyReport {
   metadata_problems?: string[];
   ok: number;
   problems?: VerifyProblem[];
-}
-
-export interface WhenPlacedBy {
-  claim_basis: string;
-  event_id: string;
-  fallback: boolean;
-  rule: string;
-  source: string;
-}
-
-export interface WhenV1 {
-  at?: string;
-  date?: string;
-  local?: string;
-  period?: string;
-  placed_by: WhenPlacedBy;
-  precision: string;
-  source_offset_seconds?: number;
-  source_zone?: string;
-  state: string;
-  zone_state?: string;
 }
 
 export interface VersionDateClaim {
@@ -21998,6 +22112,82 @@ export const readTimelineCoverage = async ( options?: Parameters<typeof sessionJ
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getListTimelineDayUrl = () => {
+
+
+
+
+  return `/api/v1/timeline/day`
+}
+
+/**
+ * @summary List documents on one civil day
+ */
+export const listTimelineDay = async (timelineDayRequest: NonReadonly<TimelineDayRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TimelineDayResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TimelineDayResponse>(getListTimelineDayUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(timelineDayRequest)
+  }
+);}
+
+
+
+export const getCountTimelineDaysUrl = () => {
+
+
+
+
+  return `/api/v1/timeline/days`
+}
+
+/**
+ * @summary Count documents per civil day
+ */
+export const countTimelineDays = async (timelineDaysRequest: NonReadonly<TimelineDaysRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TimelineDaysResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TimelineDaysResponse>(getCountTimelineDaysUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(timelineDaysRequest)
   }
 );}
 

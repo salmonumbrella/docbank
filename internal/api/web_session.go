@@ -270,6 +270,9 @@ func (r *webSessionRegistry) waitRevocations() {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/timeline/day" || r.URL.Path == "/api/v1/timeline/days" {
+		return r.Method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/versions/"); ok {
 		parts := strings.Split(after, "/")
 		if len(parts) == 2 && (parts[1] == "dates" || parts[1] == "people") {
