@@ -1,0 +1,31 @@
+name: Tax T7a reset regression (expected red)
+
+on:
+  push:
+    branches: [build/tax-t7a-red]
+
+permissions:
+  contents: read
+
+jobs:
+  taxes-test:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26.13.0
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Install locked dependencies
+        id: install
+        run: kit-retry 3 5 npm --prefix frontend ci
+      - name: Format and lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm --prefix frontend run check:fmt-lint
+      - name: Taxes page tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm --prefix frontend test -- src/Taxes.test.ts
