@@ -104,6 +104,7 @@ type cachedQuerySnapshot struct {
 	owner           string
 	metadata        []byte
 	rows            [][]byte
+	extraRows       int64 // retained rows in metadata, such as timeline strips
 	created         time.Time
 	lastUsed        time.Time
 	used            uint64
@@ -816,7 +817,7 @@ func (s *QuerySnapshotService) publishBuildLocked(build *querySnapshotBuild, cac
 	delete(s.builds, build.id)
 	s.reservedRows -= build.reservedRows
 	s.reservedBytes -= build.reservedBytes
-	s.cachedRows += int64(len(cached.rows))
+	s.cachedRows += int64(len(cached.rows)) + cached.extraRows
 	s.cachedBytes += cached.bytes
 	s.serial++
 	cached.used = s.serial
@@ -948,7 +949,7 @@ func (s *QuerySnapshotService) removeSnapshotLocked(id string) {
 		return
 	}
 	delete(s.snapshots, id)
-	s.cachedRows -= int64(len(cached.rows))
+	s.cachedRows -= int64(len(cached.rows)) + cached.extraRows
 	s.cachedBytes -= cached.bytes
 	s.releaseOwnerHandleLocked(cached.owner)
 }

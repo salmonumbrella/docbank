@@ -300,6 +300,9 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 	}
 	rows := make([][]byte, len(timed))
 	bytes := int64(len(metadata)) + querySnapshotHandleOverhead + int64(len(owner)+len(build.snapshotID))
+	if bytes > querySnapshotMaxBytes {
+		return TimelineDayPage{}, ErrQuerySnapshotTooLarge
+	}
 	for i, item := range timed {
 		rows[i], err = json.Marshal(item)
 		if err != nil {
@@ -322,7 +325,7 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 		return TimelineDayPage{}, err
 	}
 	now := s.now().UTC()
-	cached := &cachedQuerySnapshot{kind: "timeline_day", id: build.snapshotID, owner: owner, metadata: metadata, rows: rows, created: now, lastUsed: now, bytes: bytes}
+	cached := &cachedQuerySnapshot{kind: "timeline_day", id: build.snapshotID, owner: owner, metadata: metadata, rows: rows, extraRows: int64(len(page.DateOnly) + len(page.MonthOnly)), created: now, lastUsed: now, bytes: bytes}
 	if err := s.publishBuild(build, cached); err != nil {
 		return TimelineDayPage{}, err
 	}
