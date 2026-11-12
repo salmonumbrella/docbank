@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -177,37 +176,33 @@ func TestSignatureRequestHistoryAvailableWithoutConnection(t *testing.T) {
 }
 
 func TestSignatureRequestDefiniteProviderFailureAllowsRetry(t *testing.T) {
-	for _, status := range []int{http.StatusUnprocessableEntity} {
-		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			var posts atomic.Int32
-			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost {
-					posts.Add(1)
-					http.Error(w, "private provider diagnostic", status)
-					return
-				}
-				_, _ = w.Write([]byte(`{"id":7,"name":"Template","submitters":[{"name":"Signer"}]}`))
-			}))
-			defer provider.Close()
-			t.Setenv("DOCUSEAL_RETRY_TEST_KEY", "synthetic-key")
-			ts, _ := newTestServer(t, func(d *api.Deps) {
-				d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_RETRY_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
-			})
-			resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
-			require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-			var c api.Contract
-			require.NoError(t, json.Unmarshal([]byte(body), &c))
-			path := "/api/v1/contracts/" + c.ContractID + "/signature-requests"
-			input := map[string]any{"template_id": 7, "signers": []any{map[string]any{"role": "Signer", "email": "signer@example.com", "name": "Example"}}}
-			for range 2 {
-				resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": `"1"`}, input)
-				require.Equal(t, http.StatusBadGateway, resp.StatusCode, body)
-				require.Contains(t, body, "docuseal_creation_failed")
-				require.NotContains(t, body, "private provider diagnostic")
-			}
-			require.EqualValues(t, 2, posts.Load())
-		})
+	var posts atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+			http.Error(w, "private provider diagnostic", http.StatusUnprocessableEntity)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":7,"name":"Template","submitters":[{"name":"Signer"}]}`))
+	}))
+	defer provider.Close()
+	t.Setenv("DOCUSEAL_RETRY_TEST_KEY", "synthetic-key")
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_RETRY_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
+	})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var c api.Contract
+	require.NoError(t, json.Unmarshal([]byte(body), &c))
+	path := "/api/v1/contracts/" + c.ContractID + "/signature-requests"
+	input := map[string]any{"template_id": 7, "signers": []any{map[string]any{"role": "Signer", "email": "signer@example.com", "name": "Example"}}}
+	for range 2 {
+		resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": `"1"`}, input)
+		require.Equal(t, http.StatusBadGateway, resp.StatusCode, body)
+		require.Contains(t, body, "docuseal_creation_failed")
+		require.NotContains(t, body, "private provider diagnostic")
 	}
+	require.EqualValues(t, 2, posts.Load())
 }
 
 func TestSignatureRequestMalformedBodyIsPrivate(t *testing.T) {

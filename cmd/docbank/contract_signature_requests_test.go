@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -111,8 +112,8 @@ func TestSignatureRequestConfirmedOutputFailure(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("ETag", `"1"`)
 				w.WriteHeader(http.StatusCreated)
-				v := store.SignatureRequest{SignatureRequestSummary: store.SignatureRequestSummary{RequestID: requestID, ContractID: contractID, State: "sent", Revision: 1, EndpointOrigin: "https://sign.example.test", TemplateName: "Example"}, Signers: []store.SignatureSigner{{Position: 0, Role: "Signer", Email: "signer@example.com", State: "awaiting"}}}
-				require.NoError(t, json.MarshalWrite(w, v))
+				v := store.SignatureRequest{RequestID: requestID, ContractID: contractID, State: "sent", Revision: 1, EndpointOrigin: "https://sign.example.test", TemplateName: "Example", Signers: []store.SignatureSigner{{Position: 0, Role: "Signer", Email: "signer@example.com", State: "awaiting"}}}
+				assert.NoError(t, json.MarshalWrite(w, v))
 			})
 			writeErr := errors.New("synthetic output failure")
 			cmd := newSignatureRequestCommand()
@@ -150,8 +151,8 @@ func TestSignatureHistoryContinuation(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
-				require.Equal(t, strconv.Itoa(tc.limit), r.URL.Query().Get("limit"))
-				require.Equal(t, strconv.Itoa(tc.offset), r.URL.Query().Get("offset"))
+				assert.Equal(t, strconv.Itoa(tc.limit), r.URL.Query().Get("limit"))
+				assert.Equal(t, strconv.Itoa(tc.offset), r.URL.Query().Get("offset"))
 				items := make([]store.SignatureRequestSummary, tc.count)
 				for i := range items {
 					items[i] = store.SignatureRequestSummary{RequestID: requestID, ContractID: contractID, Revision: 1, State: "failed", TemplateName: "Example"}
