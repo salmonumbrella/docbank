@@ -138,3 +138,29 @@ func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
 	require.Equal(t, "pending_signature", c.Status)
 	require.Equal(t, "Private terms", c.Summary)
 }
+
+// Role mismatch must be rejected before the irreversible invitation POST.
+func TestSignatureRequestRejectsMismatchedRolesBeforePost(t *testing.T) {
+	var posts atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":7,"name":"Template","submitters":[{"name":"Tenant"}]}`))
+	}))
+	defer provider.Close()
+	t.Setenv("DOCUSEAL_ROLE_TEST_KEY", "synthetic-key")
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_ROLE_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
+	})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var c api.Contract
+	require.NoError(t, json.Unmarshal([]byte(body), &c))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/contracts/"+c.ContractID+"/signature-requests", map[string]string{"If-Match": `"1"`}, map[string]any{"template_id": 7, "signers": []any{map[string]any{"role": "tenant", "email": "signer@example.com", "name": "Signer"}}})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Contains(t, body, "invalid_signature_request")
+	require.Zero(t, posts.Load())
+}
