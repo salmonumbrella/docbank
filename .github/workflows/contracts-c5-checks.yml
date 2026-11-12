@@ -2,14 +2,14 @@ name: Contracts C5 combined checks and media
 
 on:
   push:
-    branches: [ci/contracts-c5-combined-r2]
+    branches: [ci/contracts-c5-final]
 
 permissions:
   contents: read
 
 env:
-  C5_SOURCE: 79fb83c6d43887b30dd7d7a369801ef1fe6650b1
-  C5_BASE: 93c3f0b5e347de899822d9d3ad82693d32df4072
+  C5_SOURCE: dec4a15624443b4dc45d09188135ad0f9b879e69
+  C5_BASE: 3f9b41f373af8ff9f7852de4f65fe41bc74107cc
 
 jobs:
   frontend-docs:
@@ -151,7 +151,7 @@ jobs:
           kit-retry 3 5 sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Build the branch
         run: make build
-      - name: Build the C4 base for Before captures
+      - name: Build the qualified C4 parent for Before captures
         run: |
           git worktree add --detach .superpowers/base "$C5_BASE"
           make -C .superpowers/base build
@@ -182,6 +182,7 @@ jobs:
         run: |
           mkdir -p .superpowers/contracts-c5-shots
           printf 'workflow %s\nsource %s\nbase %s\nrunner_scale %s\n' "${{ github.sha }}" "$C5_SOURCE" "$C5_BASE" "${DOCBANK_SCREENSHOT_SCALE:-1}" > .superpowers/contracts-c5-shots/pin.txt
+          (cd .superpowers/contracts-c5-shots && find . -maxdepth 1 -type f \( -name '*.mp4' -o -name '*.webm' -o -name '*.json' -o -name '*.png' \) -print0 | sort -z | xargs -0 -r sha256sum) >> .superpowers/contracts-c5-shots/pin.txt
       - if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
