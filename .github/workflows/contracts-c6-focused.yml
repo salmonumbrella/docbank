@@ -1,0 +1,77 @@
+name: Contracts C6 focused checkpoint
+on:
+  push:
+    branches: [ci/contracts-c6-fixture-lint]
+permissions:
+  contents: read
+jobs:
+  focused:
+    name: Focused MCP and CLI (CGO ${{ matrix.cgo }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOFLAGS: -trimpath
+      GOPROXY: https://proxy.golang.org|direct
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: MCP contract and catalog tests
+        run: go test -v -tags fts5 ./internal/mcp -run 'TestContractMCP|TestToolCatalog|TestDefaultToolCatalog|TestWriteTools|TestToolsList|TestRegisteredTools'
+      - name: CLI flags and configuration tests
+        run: go test -v -tags fts5 ./cmd/docbank -run 'TestMCPCommandWriteFlagsSelectTools|TestMCPContractWriteFlagHelp|TestMCPConfig|TestHelpTreeLint|TestRootHelpGolden|TestDaemonMCPHTTPReadsSameVaultAndShutsDown'
+  lint:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Restore lint cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-lint
+          extra-path: ~/.cache/golangci-lint
+      - name: Reject timing suppressions
+        run: make check-timing-suppressions
+      - name: Run repository lint
+        uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93
+        with:
+          version: v2.15.0
+          skip-cache: true
+      - name: Check workflow retry rules
+        run: make lint-workflow-retries
+  docs:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '26.13.0'
+      - name: Install documentation tools
+        run: |
+          ./scripts/vercel-install-docs.sh
+          echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
+      - name: Build documentation
+        run: make docs-build
