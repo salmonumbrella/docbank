@@ -17,7 +17,6 @@ const edge = (role: string, person_id: string, uid = ""): VersionPersonEdge => (
 it("groups safe roles, assertions, and distinct pending names", () => {
   const data: VersionPeople = {
     content_version_id: "v",
-    node_id: 1,
     state: "published",
     edges: [
       edge("author", "A", "uid"),
