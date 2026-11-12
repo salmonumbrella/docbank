@@ -1,0 +1,69 @@
+name: Contracts C1 revision exhaustion
+on:
+  push:
+    branches: [ci/contracts-c1-overflow-red]
+permissions:
+  contents: read
+env:
+  GOPROXY: https://proxy.golang.org|direct
+  GOFLAGS: -trimpath
+jobs:
+  sqlite:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 go mod download
+      - name: Revision exhaustion
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite/organization/PartyRevisionExhaustion' -count=1 -v
+  postgres:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports: ['5432:5432']
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 go mod download
+      - name: Revision exhaustion
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/organization/PartyRevisionExhaustion' -count=1 -v
