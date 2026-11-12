@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 	_ "time/tzdata"
 
@@ -76,7 +77,7 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 		})
 	}
 	id := "90000000-0000-4000-8000-000000000001"
-	for name, filters := range map[string]query.Filters{
+	filterCases := map[string]query.Filters{
 		"document date":       {DocumentDate: &query.DocumentDateFilter{From: "2026-03-10", To: "2026-03-10"}},
 		"path":                {Paths: []string{"/synthetic"}},
 		"excluded path":       {ExcludePaths: []string{"/synthetic"}},
@@ -92,7 +93,35 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 		"mime":                {MIMETypes: []string{"text/plain"}},
 		"extension":           {Extensions: []string{"txt"}},
 		"duplicates":          {HasDuplicates: true},
-	} {
+		"unevaluated":         {Unevaluated: true},
+		"rating min":          {RatingMin: new(int64(1))},
+		"rating max":          {RatingMax: new(int64(1))},
+		"flags":               {Flags: []string{"pick"}},
+		"labels":              {Labels: []string{"red"}},
+		"kinds":               {Kinds: []string{"photo"}},
+		"cameras":             {Cameras: []string{"camera"}},
+		"lenses":              {Lenses: []string{"lens"}},
+		"locations":           {Locations: []string{"place"}},
+		"iso min":             {ISOMin: new(int64(1))},
+		"iso max":             {ISOMax: new(int64(1))},
+		"capture after":       {CaptureAfter: "2026-03-10"},
+		"capture before":      {CaptureBefore: "2026-03-10"},
+		"gps":                 {GPSBounds: &query.GPSBounds{South: "0", West: "0", North: "1", East: "1"}},
+		"asset":               {AssetIDs: []string{id}},
+		"set":                 {SetIDs: []string{id}},
+		"media family":        {MediaFamilies: []string{"document"}},
+		"modified after":      {ModifiedAfter: "2026-03-10T00:00:00Z"},
+		"modified before":     {ModifiedBefore: "2026-03-10T00:00:00Z"},
+		"text coverage":       {TextCoverage: []string{"complete"}},
+	}
+	// Exercise each quality bound independently so canonicalization cannot hide
+	// a facet behind a second nonzero field.
+	for _, name := range []string{"FocusMin", "FocusMax", "BlurMin", "BlurMax", "BrightnessMin", "BrightnessMax", "FramingMin", "FramingMax", "AestheticsMin", "AestheticsMax", "ColorRedMin", "ColorRedMax", "ColorGreenMin", "ColorGreenMax", "ColorBlueMin", "ColorBlueMax"} {
+		var filters query.Filters
+		reflect.ValueOf(&filters).Elem().FieldByName(name).Set(reflect.ValueOf(new("0.5")))
+		filterCases[name] = filters
+	}
+	for name, filters := range filterCases {
 		t.Run(name, func(t *testing.T) {
 			q := base
 			q.Filters = filters
@@ -248,4 +277,81 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, ids["exact"], page.Items[0].NodeID)
+}
+
+func checkTimelinePairedCalendarDates(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "meeting.ics", fakeHash("ca1"), 1, "text/calendar")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "ca2")
+	record.DocumentKind = "calendar"
+	start := record.Events[0]
+	start.DateKind = "started"
+	start.DateValue, start.RawValue, start.AxisKey = "2019-03-04", "2019-03-04", "2019-03-04T00:00:00.000000000"
+	start.SourceKey = "metadata/ca2/calendar.event.e000001.start/0"
+	start.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, start.SourceKey, start.DateKind, start.DateValue, start.Precision, start.TimezoneKind, start.EvidenceSHA256)
+	end := start
+	end.DateKind = "ended"
+	end.DateValue, end.RawValue, end.AxisKey = "2019-03-06", "2019-03-06", "2019-03-06T00:00:00.000000000"
+	end.SourceKey = "metadata/ca2/calendar.event.e000001.end/1"
+	end.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, end.SourceKey, end.DateKind, end.DateValue, end.Precision, end.TimezoneKind, end.EvidenceSHA256)
+	record.Events = []document.DocumentEventV1{start, end}
+	record.Primaries = nil
+	for _, disclosure := range []string{"full", "safe"} {
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", disclosure)
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+	}
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civiltime.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
+	for day := range 3 {
+		page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date.AddDays(day), Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, 1)
+		require.Equal(t, start.EventID, page.DateOnly[0].EventID)
+	}
+	// The end claim itself belongs to its own date when selected by kind.
+	scope.DateKinds = []string{"ended"}
+	page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date.AddDays(2), Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.DateOnly, 1)
+	require.Equal(t, end.EventID, page.DateOnly[0].EventID)
+	page, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date.AddDays(1), Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, page.DateOnly)
+}
+
+func checkTimelineUndatedSafeOnly(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "private-date.txt", fakeHash("bc1"), 1, "text/plain")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "bc2")
+	record.Events[0].Sensitive = true
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civiltime.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
+	days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
+	require.NoError(t, err)
+	require.Empty(t, days.Days)
+	require.EqualValues(t, 1, days.Undated)
+	page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	require.Empty(t, page.DateOnly)
+	require.Empty(t, page.MonthOnly)
 }
