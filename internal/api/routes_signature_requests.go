@@ -88,10 +88,16 @@ func signatureError(err error) error {
 		e.RequestID = created.RequestID
 		return e
 	}
+	if errors.Is(err, contractsign.ErrEndpointMismatch) {
+		return NewError(409, "docuseal_endpoint_mismatch", "The configured DocuSeal destination changed")
+	}
+	if errors.Is(err, docusealclient.ErrCancellationUnknown) || errors.Is(err, docusealclient.ErrCancellationFailed) {
+		return NewError(502, err.Error(), "Read the request before retrying")
+	}
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
 	}
-	if errors.Is(err, store.ErrInvalidSignatureRequest) || errors.Is(err, store.ErrSignatureRequestOpen) || errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrStaleRevision) || errors.Is(err, store.ErrAuditMutationUnsupported) {
+	if errors.Is(err, store.ErrInvalidSignatureRequest) || errors.Is(err, store.ErrSignatureRequestOpen) || errors.Is(err, store.ErrSignatureRequestUnconfirmed) || errors.Is(err, store.ErrSignatureRequestNotCancellable) || errors.Is(err, store.ErrSignatureRevisionExhausted) || errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrStaleRevision) || errors.Is(err, store.ErrAuditMutationUnsupported) {
 		return FromStoreError(err)
 	}
 	return docuSealProblem(err)
@@ -185,6 +191,20 @@ func registerSignatureRequestRoutes(api huma.API, d Deps, g *gate) {
 		out.Body.Limit = in.Limit
 		out.Body.Offset = in.Offset
 		return out, nil
+	})
+	huma.Register(api, huma.Operation{OperationID: "cancelSignatureRequest", Method: http.MethodPost, Path: "/api/v1/signature-requests/{request_id}/cancel", Summary: "Cancel a signature request"}, func(ctx context.Context, in *struct {
+		RequestID string `path:"request_id"`
+		IfMatch   string `header:"If-Match"`
+	}) (*signatureOutput, error) {
+		rev, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		v, err := service.Cancel(ctx, in.RequestID, rev)
+		if err != nil {
+			return nil, signatureError(err)
+		}
+		return signatureResult(v), nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "getSignatureRequest", Method: http.MethodGet, Path: "/api/v1/signature-requests/{request_id}", Summary: "Inspect a local signature request"}, func(ctx context.Context, in *struct {
 		RequestID string `path:"request_id"`

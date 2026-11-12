@@ -148,3 +148,38 @@ func newSignatureStatusCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
 }
+
+func newSignatureCancelCommand() *cobra.Command {
+	var revision int64
+	var asJSON bool
+	cmd := &cobra.Command{Use: "cancel <request-id>", Short: "Cancel a confirmed signature request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("revision") && revision <= 0 {
+			return errors.New("revision must be positive")
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		if !cmd.Flags().Changed("revision") {
+			v, e := c.SignatureRequest(cmd.Context(), args[0])
+			if e != nil {
+				return e
+			}
+			revision = v.Revision
+		}
+		v, err := c.CancelSignatureRequest(cmd.Context(), args[0], revision)
+		if err != nil {
+			if daemonconn.IsRetryableMutationError(err) {
+				return fmt.Errorf("cancellation outcome unknown; inspect request %s before retrying: %w", args[0], err)
+			}
+			return contractMutationError("signature cancellation", err)
+		}
+		if err = printSignatureRequest(cmd, v, asJSON); err != nil {
+			return fmt.Errorf("signature request %s confirmed cancelled, but writing output failed: %w", v.RequestID, err)
+		}
+		return nil
+	}}
+	cmd.Flags().Int64Var(&revision, "revision", 0, "expected request revision")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	return cmd
+}

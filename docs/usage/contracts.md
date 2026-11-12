@@ -152,11 +152,19 @@ Only one request may be open for a contract. A confirmed send moves a draft to
 unchanged. If the provider outcome is unknown, the request stays `creating`;
 run `docbank contract sign status <contract-id>` before retrying and do not send
 another invitation blindly.
-Archive requests in DocuSeal manually when needed. Archiving there does not clear
-the local open request. A successful or uncertain request blocks another request
-and contract deletion until cancellation or reconciliation is available in a
-later release. Terminal request history is removed with the contract, while
-stored documents remain. Signature mutations are refused in audited vaults.
+Cancel a confirmed sent or partially signed request with:
+
+```text
+docbank contract sign cancel <request-id>
+```
+
+Docbank archives it at the same DocuSeal origin and API
+path used for the invitation; it refuses a changed destination. An uncertain
+creation cannot be cancelled here and remains open until reconciliation is
+available. If an archive outcome is unknown, inspect the request before retrying.
+A cancelled request no longer blocks another request or contract deletion.
+Terminal request history is removed with the contract, while stored documents
+remain. Signature mutations are refused in audited vaults.
 If audit is enabled between admission and settlement, even a confirmed provider
 send can remain `creating` with an unknown outcome.
 
@@ -169,3 +177,12 @@ is recorded, a provider refusal returns 502 `docuseal_creation_failed` and an
 uncertain outcome returns 502 `docuseal_creation_unknown`. When either problem
 includes an opaque `request_id`, use it to inspect the local request. Other
 provider preflight failures can also return 502 before an intent is recorded.
+
+The cancellation API is `POST /api/v1/signature-requests/{request_id}/cancel`
+with the request revision in `If-Match`. A missing or stale revision returns
+428 or 412. A request still being created returns 409
+`signature_request_unconfirmed`; other non-cancellable states return 409
+`signature_request_not_cancellable`. A changed destination returns 409
+`docuseal_endpoint_mismatch`. A provider refusal or uncertain archive returns
+502; a 404 does not confirm an archive. An already cancelled request can be
+checked again while the integration is disabled.

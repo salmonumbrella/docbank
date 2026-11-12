@@ -111,3 +111,31 @@ func (c *Connection) SignatureRequests(ctx context.Context, id string, limit, of
 	}
 	return out.SignatureRequestPage, nil
 }
+
+// CancelSignatureRequest archives a confirmed request with its revision fence.
+func (c *Connection) CancelSignatureRequest(ctx context.Context, id string, rev int64) (store.SignatureRequest, error) {
+	if !validUUIDv4(id) || rev < 1 {
+		return store.SignatureRequest{}, errors.New("invalid signature request ID or revision")
+	}
+	var r *http.Response
+	_, err := c.apiWithResponseLimit(&r, 3<<20).CancelSignatureRequest(runtime.WithStreamingResponse(ctx), &apiclient.CancelSignatureRequestRequestOptions{PathParams: &apiclient.CancelSignatureRequestPath{RequestID: id}, Header: &apiclient.CancelSignatureRequestHeaders{IfMatch: revisionIfMatch(rev)}})
+	if err != nil {
+		return store.SignatureRequest{}, mutationRequestError(r, err)
+	}
+	defer func() { _ = r.Body.Close() }()
+	var out struct {
+		store.SignatureRequest
+		Schema string `json:"$schema,omitzero"`
+	}
+	err = decodeBoundedResponse(r, &out, 3<<20)
+	if err == nil {
+		err = validateSignatureResponse(out.SignatureRequest, r, id)
+	}
+	if err == nil && (r.StatusCode != http.StatusOK || out.State != "cancelled") {
+		err = errors.New("invalid cancellation receipt")
+	}
+	if err != nil {
+		return store.SignatureRequest{}, &responseDecodeError{err: err}
+	}
+	return out.SignatureRequest, nil
+}

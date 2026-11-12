@@ -423,6 +423,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/parties/{party_id}", http.MethodPatch},
 		{"/api/v1/parties/{party_id}/retire", http.MethodPost},
 		{"/api/v1/contracts/{contract_id}/signature-requests", http.MethodPost},
+		{"/api/v1/signature-requests/{request_id}/cancel", http.MethodPost},
 		{"/api/v1/contracts/{contract_id}", http.MethodPatch},
 		{"/api/v1/contracts/{contract_id}", http.MethodDelete},
 		{"/api/v1/contracts/{contract_id}/parties/{party_id}", http.MethodPut},

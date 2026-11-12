@@ -188,3 +188,30 @@ func TestSignatureHistoryContinuation(t *testing.T) {
 		})
 	}
 }
+
+func TestSignatureCancellationLostReplyGuidesHistory(t *testing.T) {
+	const requestID = "11111111-1111-4111-8111-111111111111"
+	var posts atomic.Int32
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/signature-requests/"+requestID+"/cancel" {
+			http.NotFound(w, r)
+			return
+		}
+		posts.Add(1)
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("response cannot be disconnected")
+			return
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_ = conn.Close()
+	})
+	_, err := runCLI(t, "contract", "sign", "cancel", requestID, "--revision", "2")
+	require.ErrorContains(t, err, "cancellation outcome unknown")
+	require.ErrorContains(t, err, requestID)
+	require.EqualValues(t, 1, posts.Load())
+}

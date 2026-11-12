@@ -18,6 +18,9 @@ import (
 
 var ErrInvalidSignatureRequest = errors.New("invalid signature request")
 var ErrSignatureRequestOpen = errors.New("signature request is open")
+var ErrSignatureRequestUnconfirmed = errors.New("signature request is unconfirmed")
+var ErrSignatureRequestNotCancellable = errors.New("signature request is not cancellable")
+var ErrSignatureRevisionExhausted = errors.New("signature request revision cannot advance")
 
 type SignatureSignerInput struct {
 	Role  string `json:"role"`
@@ -198,6 +201,74 @@ func (s *Store) FinishSignatureCreation(ctx context.Context, id string, rev int6
 		}
 		out, e = getSignatureTx(ctx, tx, id)
 		return e
+	})
+	return out, err
+}
+
+func checkSignatureCancellation(v SignatureRequest, rev int64) error {
+	if v.Revision != rev {
+		return ErrStaleRevision
+	}
+	if v.State == "cancelled" {
+		return nil
+	}
+	if v.State == "creating" {
+		return ErrSignatureRequestUnconfirmed
+	}
+	if v.State != "sent" && v.State != "partially_signed" {
+		return ErrSignatureRequestNotCancellable
+	}
+	if v.Revision == math.MaxInt64 {
+		return ErrSignatureRevisionExhausted
+	}
+	return nil
+}
+
+// AdmitSignatureCancellation checks audit and revision before provider I/O.
+func (s *Store) AdmitSignatureCancellation(ctx context.Context, id string, rev int64) (SignatureRequest, error) {
+	var out SignatureRequest
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		out, err = getSignatureTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		return checkSignatureCancellation(out, rev)
+	})
+	return out, err
+}
+
+// FinishSignatureCancellation records an archive receipt or a fixed failure code.
+// The request revision fences the provider call from concurrent changes.
+func (s *Store) FinishSignatureCancellation(ctx context.Context, id string, rev int64, code string) (SignatureRequest, error) {
+	var out SignatureRequest
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		v, err := getSignatureTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if e := checkSignatureCancellation(v, rev); e != nil {
+			return e
+		}
+		if v.State == "cancelled" && code == "" {
+			out = v
+			return nil
+		}
+		if v.State == "cancelled" {
+			return ErrSignatureRequestNotCancellable
+		}
+		if code != "" && code != "docuseal_cancellation_failed" && code != "docuseal_cancellation_unknown" {
+			return ErrInvalidSignatureRequest
+		}
+		state := v.State
+		if code == "" {
+			state = "cancelled"
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE contract_signature_requests SET state=$1,last_error_code=$2,revision=revision+1,updated_at=$3 WHERE request_id=$4`, state, code, nowRFC3339(), id); err != nil {
+			return err
+		}
+		out, err = getSignatureTx(ctx, tx, id)
+		return err
 	})
 	return out, err
 }

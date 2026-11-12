@@ -62,7 +62,7 @@ func newContractSignCommand() *cobra.Command {
 	}}
 	templates.Flags().Int64Var(&after, "after", 0, "continue after this template ID")
 	templates.Flags().BoolVar(&templatesJSON, "json", false, "print JSON")
-	sign.AddCommand(check, templates, newSignatureRequestCommand(), newSignatureStatusCommand())
+	sign.AddCommand(check, templates, newSignatureRequestCommand(), newSignatureStatusCommand(), newSignatureCancelCommand())
 	return sign
 }
 func init() { contractCmd.AddCommand(newContractSignCommand()) }

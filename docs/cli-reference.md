@@ -109,9 +109,10 @@ docbank contract sign templates [--after ID] [--json]
 docbank contract sign request <contract-id> --template ID --signer ROLE=EMAIL[:NAME] [--revision N] [--json]
 docbank contract sign status <contract-id> [--limit N] [--offset N] [--json]
 docbank contract sign status <request-id> --request [--json]
+docbank contract sign cancel <request-id> [--revision N] [--json]
 ```
 
-Check the configured DocuSeal connection, send a template, and inspect local request history. See [DocuSeal connection](usage/contracts.md) for configuration and pagination.
+Check the configured DocuSeal connection, send a template, cancel a confirmed request, and inspect local request history. See [DocuSeal connection](usage/contracts.md) for configuration and pagination.
 
 ## docbank kata
 

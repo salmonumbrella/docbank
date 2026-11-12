@@ -367,3 +367,46 @@ func (c *Client) CreateSubmission(ctx context.Context, id int64, signers []Submi
 	result.SubmissionID = strconv.FormatInt(submission, 10)
 	return result, nil
 }
+
+var ErrCancellationUnknown = errors.New("docuseal_cancellation_unknown")
+var ErrCancellationFailed = errors.New("docuseal_cancellation_failed")
+
+// ArchiveSubmission sends one archive request and accepts only a matching receipt.
+func (c *Client) ArchiveSubmission(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrCancellationUnknown
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.connection.Endpoint+c.connection.APIPath+fmt.Sprintf("/submissions/%d", id), nil)
+	if err != nil {
+		return ErrCancellationUnknown
+	}
+	req.Header.Set("X-Auth-Token", c.connection.APIKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return ErrCancellationUnknown
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
+			return ErrCancellationFailed
+		}
+		return ErrCancellationUnknown
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
+	if err != nil || len(data) > maxResponse {
+		return ErrCancellationUnknown
+	}
+	var receipt struct {
+		ID         *int64  `json:"id"`
+		ArchivedAt *string `json:"archived_at"`
+	}
+	if json.Unmarshal(data, &receipt) != nil || receipt.ID == nil || *receipt.ID != id || receipt.ArchivedAt == nil {
+		return ErrCancellationUnknown
+	}
+	if _, err = time.Parse(time.RFC3339Nano, *receipt.ArchivedAt); err != nil {
+		return ErrCancellationUnknown
+	}
+	return nil
+}

@@ -130,3 +130,61 @@ func (s Service) Request(ctx context.Context, contractID string, revision, templ
 	}
 	return settled, nil
 }
+
+var ErrEndpointMismatch = errors.New("docuseal_endpoint_mismatch")
+
+// Cancel fences a confirmed request before and after the single provider call.
+func (s Service) Cancel(ctx context.Context, id string, revision int64) (store.SignatureRequest, error) {
+	var request store.SignatureRequest
+	err := s.Admit(ctx, func() error {
+		var e error
+		request, e = s.Store.AdmitSignatureCancellation(ctx, id, revision)
+		return e
+	})
+	if err != nil {
+		return store.SignatureRequest{}, err
+	}
+	if request.State == "cancelled" {
+		return request, nil
+	}
+	if request.ProviderSubmissionID == nil {
+		return store.SignatureRequest{}, store.ErrInvalidSignatureRequest
+	}
+	submissionID, err := strconv.ParseInt(*request.ProviderSubmissionID, 10, 64)
+	if err != nil || submissionID <= 0 || strconv.FormatInt(submissionID, 10) != *request.ProviderSubmissionID {
+		return store.SignatureRequest{}, store.ErrInvalidSignatureRequest
+	}
+	connection, client, err := s.Connect(ctx)
+	if err != nil {
+		return store.SignatureRequest{}, err
+	}
+	defer client.CloseIdleConnections()
+	storedOrigin, storedErr := config.CanonicalWebOrigin(request.EndpointOrigin)
+	currentOrigin, currentErr := config.CanonicalWebOrigin(connection.Endpoint)
+	if storedErr != nil || currentErr != nil || storedOrigin != currentOrigin || request.APIPath != connection.APIPath {
+		return store.SignatureRequest{}, ErrEndpointMismatch
+	}
+	providerErr := client.ArchiveSubmission(ctx, submissionID)
+	code := ""
+	if errors.Is(providerErr, docusealclient.ErrCancellationFailed) {
+		code = "docuseal_cancellation_failed"
+	} else if providerErr != nil {
+		code = "docuseal_cancellation_unknown"
+	}
+	// The local receipt must settle even if the caller cancels the network call.
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	var settled store.SignatureRequest
+	err = s.Settle(settleCtx, func() error {
+		var e error
+		settled, e = s.Store.FinishSignatureCancellation(settleCtx, id, revision, code)
+		return e
+	})
+	if err != nil {
+		return store.SignatureRequest{}, docusealclient.ErrCancellationUnknown
+	}
+	if providerErr != nil {
+		return store.SignatureRequest{}, providerErr
+	}
+	return settled, nil
+}

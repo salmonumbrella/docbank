@@ -53,7 +53,7 @@ func validateSignatureRequestMetadata(v metadataSignatureRequest) error {
 	if v.Type != "contract_signature_request" || validateUUIDv4(v.RequestID) != nil || validateUUIDv4(v.ContractID) != nil || v.Provider != "docuseal" || !validSignatureDestination(v.EndpointOrigin, v.APIPath) || !signaturePositiveID(v.TemplateID) || !validSignatureText(v.TemplateName, 512, false) || !validSignatureState(v.State) || v.Revision < 1 {
 		return errors.New("invalid signature request metadata")
 	}
-	if v.LastErrorCode != "" && v.LastErrorCode != "docuseal_creation_unknown" && v.LastErrorCode != "docuseal_creation_failed" {
+	if v.LastErrorCode != "" && v.LastErrorCode != "docuseal_creation_unknown" && v.LastErrorCode != "docuseal_creation_failed" && v.LastErrorCode != "docuseal_cancellation_unknown" && v.LastErrorCode != "docuseal_cancellation_failed" {
 		return errors.New("invalid signature error code")
 	}
 	if v.ProviderSubmissionID != nil && !signaturePositiveID(*v.ProviderSubmissionID) {
