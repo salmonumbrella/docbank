@@ -10,7 +10,14 @@ import (
 )
 
 func TestTimelineDaysUndatedAndPending(t *testing.T) {
-	s := newTestStore(t)
+	checkTimelineDaysUndatedAndPending(t, newTestStore)
+}
+func TestTimelineDaysPostgres(t *testing.T) {
+	checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore)
+}
+func checkTimelineDaysUndatedAndPending(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.txt", fakeHash("a1"), 10, "text/plain")
 	require.NoError(t, err)
@@ -23,6 +30,9 @@ func TestTimelineDaysUndatedAndPending(t *testing.T) {
 	require.ErrorIs(t, err, ErrDocumentDatesPending)
 	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "d1")
+	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+	require.True(t, ok)
+	record.Primaries = append(record.Primaries, primary)
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
 	days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
@@ -31,4 +41,19 @@ func TestTimelineDaysUndatedAndPending(t *testing.T) {
 	require.EqualValues(t, 1, days.Days[0].Count)
 	require.Zero(t, days.PendingVersions)
 	require.Zero(t, days.Undated)
+	page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	require.Len(t, page.DateOnly, 1)
+	require.Equal(t, node.ID, page.DateOnly[0].NodeID)
+	require.Equal(t, "2019-03-04", page.DateOnly[0].Event.DateValue)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	days, err = svc.TimelineDays(ctx, "owner", scope, date, date)
+	require.NoError(t, err)
+	require.Empty(t, days.Days)
+	require.Zero(t, days.Undated)
+	page, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, page.DateOnly)
 }

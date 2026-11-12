@@ -22,6 +22,9 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "timeline-day-query", postgres: "native operations", scope: "Safe current document placements and day counts.", scenarios: []backendScenario{
+		{"TimelineDaysUndatedAndPending", func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newTestStore) }, func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore) }},
+	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{
 		{"StorageRepairRollback", nil, checkStorageRepairRollbackPostgres},
 		{"MultiStorePhysicalRoundTrip", nil, checkMultiStorePhysicalRoundTripPostgres},

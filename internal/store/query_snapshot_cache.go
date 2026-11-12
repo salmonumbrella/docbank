@@ -99,6 +99,7 @@ type querySnapshotServiceOptions struct {
 }
 
 type cachedQuerySnapshot struct {
+	kind            string
 	id              string
 	owner           string
 	metadata        []byte
@@ -486,6 +487,9 @@ func (s *QuerySnapshotService) page(
 }
 
 func (s *QuerySnapshotService) cachedPage(owner, cursor string, cached *cachedQuerySnapshot) (SnapshotPage, error) {
+	if cached.kind != "" {
+		return SnapshotPage{}, ErrSnapshotCursor
+	}
 	payload, err := s.decodeCursor(owner, cursor)
 	if err != nil {
 		return SnapshotPage{}, err
@@ -494,7 +498,7 @@ func (s *QuerySnapshotService) cachedPage(owner, cursor string, cached *cachedQu
 	if err := json.Unmarshal(cached.metadata, &metadata); err != nil {
 		return SnapshotPage{}, fmt.Errorf("decoding cached query snapshot metadata: %w", err)
 	}
-	if payload.SnapshotID != cached.id || payload.QueryFingerprint != metadata.QueryFingerprint ||
+	if payload.Projection != "" || payload.Scope != "" || payload.SnapshotID != cached.id || payload.QueryFingerprint != metadata.QueryFingerprint ||
 		payload.SortField != metadata.Query.Sort.Field || payload.SortDirection != metadata.Query.Sort.Direction ||
 		payload.PageSize != metadata.PageSize || payload.Offset < 0 || payload.Offset >= int64(len(cached.rows)) ||
 		payload.Offset%int64(metadata.PageSize) != 0 {
@@ -574,6 +578,9 @@ func (s *QuerySnapshotService) copyMembersBounded(ctx context.Context, owner, sn
 	cached, err := s.lookup(owner, snapshotID)
 	if err != nil {
 		return nil, err
+	}
+	if cached.kind != "" {
+		return nil, ErrSnapshotCursor
 	}
 	if limit < 1 || len(cached.rows) > limit {
 		return nil, ErrQuerySnapshotTooLarge
@@ -1001,6 +1008,9 @@ func (s *QuerySnapshotService) PhotoPage(ctx context.Context, owner, id, cursor 
 	cached, err := s.lookup(owner, id)
 	if err != nil {
 		return SnapshotPage{}, err
+	}
+	if cached.kind != "" {
+		return SnapshotPage{}, ErrSnapshotCursor
 	}
 	var first SnapshotProjection
 	if err := json.Unmarshal(cached.metadata, &first); err != nil {
