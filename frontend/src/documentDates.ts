@@ -2,11 +2,18 @@ import type { VersionDateClaim, WhenV1 } from "./generated/docbank.js";
 import type { TimelineZone } from "./timelineConfig.js";
 
 const precisionLabels: Record<string, string> = {
-  second: "to the second", fraction: "to the second", minute: "to the minute",
-  hour: "to the hour", date: "date only", month: "month only", year: "year only",
+  second: "to the second",
+  fraction: "to the second",
+  minute: "to the minute",
+  hour: "to the hour",
+  date: "date only",
+  month: "month only",
+  year: "year only",
 };
 const kindLabels: Record<string, string> = {
-  authored: "Authored", document_date: "Document date", vault_recorded: "Recorded in vault",
+  authored: "Authored",
+  document_date: "Document date",
+  vault_recorded: "Recorded in vault",
 };
 export const precisionLabel = (p: string) => precisionLabels[p] ?? p;
 export const dateKindLabel = (k: string) => kindLabels[k] ?? k;
@@ -24,26 +31,61 @@ function civilDate(value: string): Date {
   return result;
 }
 
-export function formatWhen(when: WhenV1 & { end_date?: string }, zone: TimelineZone, locale = "en-US") {
+export function formatWhen(
+  when: WhenV1 & { end_date?: string },
+  zone: TimelineZone,
+  locale = "en-US",
+) {
   const floating = when.state === "floating";
-  const zoneNote = floating ? "floating (no zone)" : when.source_zone || "source zone not recorded";
+  const zoneNote = floating
+    ? "floating (no zone)"
+    : when.zone_state === "unknown"
+      ? "source zone not recorded"
+      : when.source_zone || "source zone not recorded";
   if (when.state === "exact") {
-    if (!zone?.supported) return { value: `Timeline zone unavailable${zone?.name ? ` (${zone.name})` : ""}`, zoneNote, floating };
-    const value = new Intl.DateTimeFormat(locale, { timeZone: zone.name, year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(when.at!));
+    if (!zone?.supported)
+      return {
+        value: `Timeline zone unavailable${zone?.name ? ` (${zone.name})` : ""}`,
+        zoneNote,
+        floating,
+      };
+    const value = new Intl.DateTimeFormat(locale, {
+      timeZone: zone.name,
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(new Date(when.at!));
     return { value, zoneNote, floating };
   }
   const civil = when.local || when.date || when.period;
   if (!civil) return { value: "—", zoneNote, floating };
-  const options: Intl.DateTimeFormatOptions = { timeZone: "UTC", year: "numeric", month: when.precision === "month" ? "long" : "short" };
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: "UTC",
+    year: "numeric",
+    month: when.precision === "month" ? "long" : "short",
+  };
   if (when.precision === "year") delete options.month;
   else if (when.precision !== "month") options.day = "numeric";
-  if (floating) { options.hour = "numeric"; options.minute = "2-digit"; }
+  if (floating) {
+    options.hour = "numeric";
+    options.minute = "2-digit";
+  }
   const formatter = new Intl.DateTimeFormat(locale, options);
-  const value = when.end_date ? formatter.formatRange(civilDate(civil), civilDate(when.end_date)) : formatter.format(civilDate(civil));
+  const value = when.end_date
+    ? formatter.formatRange(civilDate(civil), civilDate(when.end_date))
+    : formatter.format(civilDate(civil));
   return { value: floating ? `${value} (no zone)` : value, zoneNote, floating };
 }
 
 export function claimMeta(claim: VersionDateClaim, zone: TimelineZone): string {
   const { zoneNote } = formatWhen(claim.when, zone);
-  return [claimBasisLabel(claim), precisionLabel(claim.when.precision), claim.claim_basis.replaceAll("_", " "), zoneNote].join(" · ");
+  return [
+    claimBasisLabel(claim),
+    precisionLabel(claim.when.precision),
+    claim.claim_basis.replaceAll("_", " "),
+    zoneNote,
+  ].join(" · ");
 }

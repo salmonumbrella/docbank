@@ -1390,7 +1390,7 @@
       ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
       : showingResults
         ? resultColumns(browserWidth, { match: activeQuery !== "", actions: similarAvailable })
-        : { modified: browserWidth >= 700, match: false, type: browserWidth >= 540 },
+        : { modified: browserWidth >= 700, match: false, type: browserWidth >= 540, facts: browserWidth >= 900 },
   );
   // Previous and Next walk the files of a live results list.
   const resultFiles = $derived(
