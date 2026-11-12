@@ -755,3 +755,57 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
 	require.Zero(t, scratch)
 }
+
+func TestTimelinePeopleScopeRespectsHiddenLock(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Scoped Reader", "operator")
+	require.NoError(t, err)
+	var nodes []Node
+	for i, name := range []string{"open.txt", "hidden.jpg"} {
+		mime := "text/plain"
+		if i == 1 {
+			mime = "image/jpeg"
+		}
+		node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash(fmt.Sprintf("%x", 0xd80+i)), 1, mime)
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, fmt.Sprintf("%x", 0xd90+i))
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "speaker", Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	asset, err := s.PhotoAssetForNode(ctx, nodes[1].ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	scope := TimelineScope{Query: snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"person_ids":[%q]}}`, person.PersonID)), Zone: "UTC"}
+	for _, tc := range []struct {
+		ctx    context.Context
+		hidden bool
+		want   int
+	}{
+		{WithVisiblePeopleOnly(ctx), true, 1},
+		{WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), false, 2},
+	} {
+		days, err := svc.TimelineDays(tc.ctx, "owner", scope, date, date)
+		require.NoError(t, err)
+		require.EqualValues(t, tc.want, days.Days[0].Count)
+		page, err := svc.TimelineDay(tc.ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10, HiddenLocked: tc.hidden})
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, tc.want)
+		require.Equal(t, nodes[0].ID, page.DateOnly[0].NodeID)
+	}
+}

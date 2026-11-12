@@ -38,6 +38,19 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	input, err := s.PrepareDocumentPeopleInputs(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	personID := input.Bindings["email:ada@example.test"][0].PersonID
+	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+	require.NoError(t, err)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10}
+	provisional, err := svc.TimelineDay(ctx, "owner", req)
+	require.NoError(t, err)
+	require.Len(t, provisional.DateOnly, 1)
+	require.Len(t, provisional.DateOnly[0].People, 1)
+	require.Equal(t, personID, provisional.DateOnly[0].People[0].PersonID)
+	require.Equal(t, "Ada", provisional.DateOnly[0].People[0].DisplayName)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: personID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	person, _, err := s.PersonByID(ctx, personID)
@@ -52,11 +65,6 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.NoError(t, err)
 	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civil.ParseDate("2019-03-04")
-	require.NoError(t, err)
-	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10}
 	page, err := svc.TimelineDay(ctx, "owner", req)
 	require.NoError(t, err)
 	require.Len(t, page.DateOnly, 1)
@@ -68,6 +76,23 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.Equal(t, "synthetic", got.ArchiveID)
 	require.Equal(t, "person-a", got.UID)
 	if s.postgresSchema == "" {
+		savedPayload := fmt.Appendf(nil, `{"syntax":"advanced","text":%q}`, "NOT person:"+blind.PersonID)
+		_, err = s.CreateSavedQuery(ctx, "Safe negative", "", SavedQueryKindQuery, savedPayload)
+		require.NoError(t, err)
+		for _, q := range []string{
+			fmt.Sprintf(`{"filters":{"person_ids":[%q]}}`, personID),
+			`{"syntax":"advanced","text":"saved:\"Safe negative\""}`,
+		} {
+			scoped := req
+			scoped.Scope.Query = snapshotTestQuery(t, q)
+			days, err := svc.TimelineDays(ctx, "owner", scoped.Scope, date, date)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, days.Days[0].Count)
+			page, err := svc.TimelineDay(ctx, "owner", scoped)
+			require.NoError(t, err)
+			require.Len(t, page.DateOnly, 1)
+			require.Equal(t, node.ID, page.DateOnly[0].NodeID)
+		}
 		for _, tc := range []struct {
 			text string
 			want int
@@ -106,6 +131,26 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.NoError(t, err)
 	require.Len(t, page.DateOnly, 1)
 	require.Empty(t, page.DateOnly[0].People)
+
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: personID, Role: "speaker", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	survivor, err := s.CreatePerson(ctx, "Merged survivor", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: survivor.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	person, _, err = s.PersonByID(ctx, personID)
+	require.NoError(t, err)
+	survivor, _, err = s.PersonByID(ctx, survivor.PersonID)
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, personID, "90000000-0000-4000-8000-000000000045", survivor.Revision, person.Revision)
+	require.NoError(t, err)
+	page, err = svc.TimelineDay(ctx, "owner", req)
+	require.NoError(t, err)
+	require.Len(t, page.DateOnly, 1)
+	require.Len(t, page.DateOnly[0].People, 1)
+	require.Equal(t, survivor.PersonID, page.DateOnly[0].People[0].PersonID)
+	require.Equal(t, "Merged survivor", page.DateOnly[0].People[0].DisplayName)
+	require.ElementsMatch(t, []string{"author", "speaker"}, page.DateOnly[0].People[0].Roles)
 }
 
 // Candidate evidence must match a current, visible actor on each placement.
@@ -120,6 +165,18 @@ func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T)
 		versions = append(versions, node.CurrentVersionID)
 		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "dc2")
+		for j, privacy := range []string{"actor", "event"} {
+			event := record.Events[0]
+			event.Actors = append([]document.DocumentEventActorV1(nil), event.Actors...)
+			address := privacy + "@example.test"
+			event.Actors[0].Address, event.Actors[0].ActorKey = address, "email:"+address
+			event.Actors[0].Claim, event.Actors[0].DisplayName = address, privacy
+			event.Actors[0].Sensitive = privacy == "actor"
+			event.Sensitive = privacy == "event"
+			event.SourceKey = fmt.Sprintf("metadata/dc2/private-%d", j)
+			event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
+			record.Events = append(record.Events, event)
+		}
 		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
 		require.True(t, ok)
 		record.Primaries = append(record.Primaries, primary)
@@ -133,6 +190,12 @@ func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T)
 	openCandidateForTest(t, s, candidateForTest(t, "email:ada@example.test", "Ada", "", []PersonCandidateOccurrence{
 		{ContentVersionID: versions[0], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/other"},
 	}))
+	for _, privacy := range []string{"actor", "event"} {
+		openCandidateForTest(t, s, candidateForTest(t, "email:"+privacy+"@example.test", privacy, "", []PersonCandidateOccurrence{
+			{ContentVersionID: versions[0], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/dc2"},
+			{ContentVersionID: versions[1], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/dc2"},
+		}))
+	}
 	svc := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	date, err := civil.ParseDate("2019-03-04")
@@ -272,4 +335,58 @@ func checkTimelineHydrationEmailFamily(t *testing.T, open func(*testing.T) *Stor
 	_, _, err = s.ReplaceContent(ctx, view.Version.NodeID, UnconditionalRev, fakeHash("dc7"), 1, "message/rfc822")
 	require.NoError(t, err)
 	require.Nil(t, parentOf(true), "historical and trashed parents do not supply grouping")
+}
+
+func checkTimelineHydrationStalePeopleHeads(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "stale-people.txt", fakeHash("df1"), 1, "text/plain")
+	require.NoError(t, err)
+	publishEvent := func(seed string) {
+		t.Helper()
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+	}
+	publishPeople := func() {
+		t.Helper()
+		input, err := s.PrepareDocumentPeopleInputs(ctx, node.CurrentVersionID)
+		require.NoError(t, err)
+		_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
+		require.NoError(t, err)
+	}
+	publishEvent("df2")
+	publishPeople()
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10}
+	check := func(want int) {
+		t.Helper()
+		page, err := svc.TimelineDay(ctx, "owner", req)
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, 1)
+		require.Len(t, page.DateOnly[0].People, want)
+	}
+	check(1)
+	_, _, err = s.Move(ctx, node.ID, s.RootID(), "renamed-people.txt", node.Revision)
+	require.NoError(t, err)
+	check(0) // The node revision no longer matches the people head.
+	publishPeople()
+	check(1)
+	publishEvent("df3")
+	check(0) // A new event generation invalidates the old people head.
+	publishPeople()
+	check(1)
+	_, err = s.RebuildDocumentPeople(ctx, "90000000-0000-4000-8000-000000000046")
+	require.NoError(t, err)
+	check(0) // Resolver rebuild advances the production binding fence.
+	publishPeople()
+	check(1)
 }

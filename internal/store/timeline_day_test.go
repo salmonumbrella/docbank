@@ -280,6 +280,21 @@ func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store
 			require.Len(t, page.Bounds.Ticks, tc.ticks)
 		})
 	}
+	// Populate the day before Apia's skipped date so the interior-range
+	// assertion proves placement as well as endpoint admission.
+	node, err := s.CreateFile(t.Context(), s.RootID(), "apia.txt", fakeHash("af1"), 1, "text/plain")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "af2")
+	event := &record.Events[0]
+	event.DateValue, event.RawValue, event.AxisKey = "2011-12-29", "2011-12-29", "2011-12-29T00:00:00.000000000"
+	event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
+	record.Primaries[0].EventID = event.EventID
+	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+	require.True(t, ok)
+	record.Primaries = append(record.Primaries, primary)
+	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "Pacific/Apia"}
 	skipped, err := civil.ParseDate("2011-12-30")
 	require.NoError(t, err)
@@ -287,8 +302,13 @@ func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store
 	require.ErrorIs(t, err, ErrTimelineDateNotInZone)
 	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped, skipped)
 	require.ErrorIs(t, err, ErrTimelineDateNotInZone)
-	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped.AddDays(-1), skipped.AddDays(1))
+	counts, err := svc.TimelineDays(t.Context(), "owner", scope, skipped.AddDays(-1), skipped.AddDays(1))
 	require.NoError(t, err)
+	require.Equal(t, []TimelineDayCount{{Date: "2011-12-29", Count: 1, DateOnly: 1}}, counts.Days)
+	page, err := svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: skipped.AddDays(-1), Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.DateOnly, 1)
+	require.Equal(t, node.ID, page.DateOnly[0].NodeID)
 }
 
 // This is deliberately an upstream Linux CI measurement, never a local benchmark.
