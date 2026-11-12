@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"sort"
@@ -44,15 +45,10 @@ type RecordListOptions struct {
 	IncludeInactive             bool
 }
 
-type recordQueryer interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}
-
 func (s *Store) GetRecordType(ctx context.Context, id string) (RecordTypeState, error) {
 	return recordTypeState(ctx, s.db, id, false)
 }
-func recordTypeState(ctx context.Context, q recordQueryer, id string, lock bool) (RecordTypeState, error) {
+func recordTypeState(ctx context.Context, q metadataQuerier, id string, lock bool) (RecordTypeState, error) {
 	def, ok := recordtype.Builtin(id)
 	if !ok {
 		return RecordTypeState{}, ErrNotFound
@@ -188,7 +184,7 @@ func recordValueColumn(fieldType string) string {
 	}
 	return "value_text"
 }
-func readRecord(ctx context.Context, q recordQueryer, id string, lock bool) (Record, error) {
+func readRecord(ctx context.Context, q metadataQuerier, id string, lock bool) (Record, error) {
 	var r Record
 	query := `SELECT record_id,type_id,title,note,status,revision,created_at,updated_at,retired_at FROM records WHERE record_id=$1`
 	if lock {
@@ -310,9 +306,7 @@ func (s *Store) UpdateRecord(ctx context.Context, id string, revision int64, pat
 			return ErrRecordTypeInactive
 		}
 		candidate := recordtype.Record{Title: current.Title, Note: current.Note, Status: current.Status, Fields: map[string]any{}}
-		for k, v := range current.Fields {
-			candidate.Fields[k] = v
-		}
+		maps.Copy(candidate.Fields, current.Fields)
 		if patch.Title != nil {
 			candidate.Title = *patch.Title
 		}
@@ -499,6 +493,7 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 		if err != nil {
 			return err
 		}
+		defer func() { _ = rows.Close() }()
 		var ids []string
 		for rows.Next() {
 			var id string

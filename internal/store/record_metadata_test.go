@@ -10,6 +10,7 @@ import (
 )
 
 func TestRecordMetadataRejectsUnsupportedAndMalformedValues(t *testing.T) {
+	t.Parallel()
 	text, date, badDate, currency := "service", "2026-01-02", "2026-02-30", "USD"
 	integer := int64(1)
 	for _, tc := range []struct {
@@ -25,6 +26,7 @@ func TestRecordMetadataRejectsUnsupportedAndMalformedValues(t *testing.T) {
 		{"unknown field", metadataRecordValue{RecordID: "record", TypeID: "contract", FieldID: "unknown", Text: &text}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			err := validateRecordValueMetadata(tc.value)
 			if tc.valid {
 				require.NoError(t, err)
@@ -36,6 +38,7 @@ func TestRecordMetadataRejectsUnsupportedAndMalformedValues(t *testing.T) {
 }
 
 func TestRecordMetadataRoundTripAndRejectCorruption(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	source := newTestStore(t)
 	_, err := source.ActivateRecordType(ctx, "contract", 0)
@@ -66,6 +69,7 @@ func TestRecordMetadataRoundTripAndRejectCorruption(t *testing.T) {
 }
 
 func TestRecordWritesRefuseAuditedVault(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	state, err := s.ActivateRecordType(ctx, "contract", 0)

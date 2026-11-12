@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -39,9 +41,7 @@ func recordAssignments(def recordtype.Definition, sets, clears []string, current
 		if !ok {
 			m = map[string]any{}
 			if previous, ok := current[id].(map[string]any); ok {
-				for k, v := range previous {
-					m[k] = v
-				}
+				maps.Copy(m, previous)
 			}
 			fields[id] = m
 		}
@@ -51,7 +51,7 @@ func recordAssignments(def recordtype.Definition, sets, clears []string, current
 	for _, entry := range sets {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok {
-			return nil, fmt.Errorf("expected field=value")
+			return nil, errors.New("expected field=value")
 		}
 		if err := apply(key, value); err != nil {
 			return nil, err
@@ -93,7 +93,7 @@ func init() {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", r.RecordID, r.Title, r.EffectiveStatus, r.Revision)
 		}
 		if err = w.Flush(); err != nil {
-			return err
+			return fmt.Errorf("flush record list: %w", err)
 		}
 		if page.Offset+len(page.Records) < page.Total {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "More records: --offset %d\n", page.Offset+len(page.Records))
@@ -180,7 +180,7 @@ func init() {
 	var editJSON bool
 	edit := &cobra.Command{Use: "edit <id>", Short: "Edit a record", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("expect-revision") && editRevision < 1 {
-			return fmt.Errorf("expected revision must be positive")
+			return errors.New("expected revision must be positive")
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -212,7 +212,7 @@ func init() {
 			body.Note = &editNote
 		}
 		if body.Fields == nil && body.Title == nil && body.Status == nil && body.Note == nil {
-			return fmt.Errorf("no changes specified")
+			return errors.New("no changes specified")
 		}
 		revision := old.Revision
 		if cmd.Flags().Changed("expect-revision") {
@@ -239,7 +239,7 @@ func init() {
 	var retireJSON bool
 	retire := &cobra.Command{Use: "retire <id>", Short: "Retire a record", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("expect-revision") && retireRevision < 1 {
-			return fmt.Errorf("expected revision must be positive")
+			return errors.New("expected revision must be positive")
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {

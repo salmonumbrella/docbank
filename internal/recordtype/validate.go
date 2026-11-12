@@ -3,6 +3,7 @@ package recordtype
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -141,18 +142,11 @@ func ValidDate(s string) bool {
 }
 func EffectiveStatus(def Definition, status string, fields map[string]any, asOf string) string {
 	for _, d := range def.Status.Derived {
-		allowed := false
-		for _, s := range d.OnlyFrom {
-			if s == status {
-				allowed = true
-				break
-			}
-		}
-		if !allowed || d.Retired {
+		if !slices.Contains(d.OnlyFrom, status) || d.Retired {
 			continue
 		}
 		parts := strings.Split(d.WhenPast, ".")
-		var value any = fields[parts[0]]
+		value := fields[parts[0]]
 		if len(parts) == 2 {
 			if m, ok := value.(map[string]any); ok {
 				value = m[parts[1]]

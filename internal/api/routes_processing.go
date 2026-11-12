@@ -151,7 +151,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		}
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			hctx.SetHeader("Content-Type", "application/x-ndjson")
-			hctx.SetHeader("Cache-Control", "no-store")
+			hctx.SetHeader("Cache-Control", cacheControlNoStore)
 			stream := newEventStreamWriter[ProcessingJobEvent](hctx.BodyWriter(), func() {})
 			wireJob := fromProcessingJob(first)
 			stream.send(ProcessingJobEvent{Sequence: 1, Type: "job", Job: &wireJob})
@@ -279,7 +279,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			ImmutableBackupCopiesUntouched:   receipt.ImmutableBackupCopiesUntouched}
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			hctx.SetHeader("Content-Type", "application/x-ndjson")
-			hctx.SetHeader("Cache-Control", "no-store")
+			hctx.SetHeader("Cache-Control", cacheControlNoStore)
 			stream := newEventStreamWriter[DerivativePurgeEvent](hctx.BodyWriter(), func() {})
 			stream.send(DerivativePurgeEvent{Sequence: 1, Type: "result", Receipt: &wireReceipt, Error: problem, Terminal: true})
 		}}, nil
@@ -535,7 +535,7 @@ func registerEvidenceWindowRoute(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromEvidenceWindowError(err)
 		}
-		return &evidenceWindowOutput{CacheControl: "no-store", Body: EvidenceWindow{
+		return &evidenceWindowOutput{CacheControl: cacheControlNoStore, Body: EvidenceWindow{
 			VaultUID: window.VaultUID, NodeID: window.NodeID, ContentVersionID: window.ContentVersionID, ContentSHA256: window.ContentSHA256,
 			RenditionAttachmentID: window.AttachmentID, BuildID: window.BuildID, RenditionSHA256: window.Checksum, Text: window.Text,
 			ActualStart: window.ActualStart, ActualEnd: window.ActualEnd, NextOffset: window.NextOffset, EOF: window.EOF, ResponseBytes: window.ResponseBytes, MediaType: window.MediaType,
@@ -560,7 +560,7 @@ func renditionStream(rendition processing.Rendition) *huma.StreamResponse {
 	return &huma.StreamResponse{Body: func(ctx huma.Context) {
 		defer func() { _ = rendition.Reader.Close() }()
 		ctx.SetHeader("Content-Type", "text/markdown; charset=utf-8")
-		ctx.SetHeader("Cache-Control", "no-store")
+		ctx.SetHeader("Cache-Control", cacheControlNoStore)
 		ctx.SetHeader("Accept-Ranges", "bytes")
 		setRenditionHeaders(ctx, rendition)
 		ctx.SetHeader("Trailer", "Content-Digest")
@@ -586,7 +586,7 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 	selected := data[start:end]
 	return &huma.StreamResponse{Body: func(ctx huma.Context) {
 		ctx.SetHeader("Content-Type", "text/markdown; charset=utf-8")
-		ctx.SetHeader("Cache-Control", "no-store")
+		ctx.SetHeader("Cache-Control", cacheControlNoStore)
 		ctx.SetHeader("Accept-Ranges", "bytes")
 		ctx.SetHeader("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, rendition.Size))
 		setRenditionHeaders(ctx, rendition)
