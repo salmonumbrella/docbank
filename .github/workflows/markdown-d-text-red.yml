@@ -1,0 +1,67 @@
+name: Markdown D text route RED
+
+on:
+  push:
+    branches: [build/markdown-d-text-red]
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "0"
+      GOFLAGS: -trimpath
+      SOURCE_SHA: 2165dcef4df0c821e1adef6be9a3fb603fc33ece
+    steps:
+      - name: Initialize receipt
+        run: |
+          mkdir -p "$RUNNER_TEMP/red-receipt"
+          printf 'source_sha=%s\nworkflow_sha=%s\n' "$SOURCE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/red-receipt/metadata.txt"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify source pin
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_SHA"
+          test "$(git diff --name-only "$SOURCE_SHA" HEAD)" = '.github/workflows/markdown-d-text-red.yml'
+          printf 'checkout_sha=%s\nparent_sha=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^)" >> "$RUNNER_TEMP/red-receipt/metadata.txt"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Capture focused test
+        run: |
+          set +e
+          go test -json -count=1 -timeout=90s -tags fts5 ./internal/api/ -run '^TestNoteRoutesReadCurrentOriginalAndCollectionStatus$/^OriginalText$' > "$RUNNER_TEMP/red-receipt/test.json" 2> "$RUNNER_TEMP/red-receipt/stderr.txt"
+          result=$?
+          printf '%s\n' "$result" > "$RUNNER_TEMP/red-receipt/exit-code.txt"
+      - name: Require the expected RED
+        run: |
+          test "$(cat "$RUNNER_TEMP/red-receipt/exit-code.txt")" -ne 0
+          jq -s -e '
+            (map(select(.Action == "skip")) | length == 0) and
+            (map(select(.Test != null) | .Test) | unique == [
+              "TestNoteRoutesReadCurrentOriginalAndCollectionStatus",
+              "TestNoteRoutesReadCurrentOriginalAndCollectionStatus/OriginalText"
+            ]) and
+            (map(select(.Action == "fail" and .Test != null) | .Test) | sort == [
+              "TestNoteRoutesReadCurrentOriginalAndCollectionStatus",
+              "TestNoteRoutesReadCurrentOriginalAndCollectionStatus/OriginalText"
+            ]) and
+            (map(select(.Action == "fail" and .Test == null) | .Package) == ["go.kenn.io/docbank/internal/api"]) and
+            (map(select(.Test == "TestNoteRoutesReadCurrentOriginalAndCollectionStatus/OriginalText" and .Action == "output") | .Output) | join("") |
+              contains("notes_test.go:55") and contains("expected: 200") and contains("actual  : 404"))
+          ' "$RUNNER_TEMP/red-receipt/test.json" > "$RUNNER_TEMP/red-receipt/predicate.txt"
+      - name: Upload receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: markdown-d-text-red-${{ github.sha }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/red-receipt/
