@@ -120,7 +120,9 @@ provider the template ID and each signer's role, name, email and an opaque
 external ID. It does not send contract terms, parties or document bytes. The
 provider emails the signers using the document already in its template. By
 default DocuSeal invites the first signer initially, then invites the next signer
-after the preceding signer completes.
+after the preceding signer completes. A confirmed creation does not prove an
+invitation was delivered. Local signer states stay `awaiting` until progress
+tracking is available.
 
 ```console
 docbank contract sign request <contract-id> --template 7 --signer 'Tenant=tenant@example.com:Example Tenant'
@@ -150,3 +152,9 @@ send can remain `creating` with an unknown outcome.
 The API uses `POST` and `GET /api/v1/contracts/{contract_id}/signature-requests`
 and `GET /api/v1/signature-requests/{request_id}`. The POST requires the
 contract revision in `If-Match`; the individual request returns its own ETag.
+Invalid signer or template-role input returns 422 `invalid_signature_request`;
+an already open request returns 409 `signature_request_open`. After an intent
+is recorded, a provider refusal returns 502 `docuseal_creation_failed` and an
+uncertain outcome returns 502 `docuseal_creation_unknown`. When either problem
+includes an opaque `request_id`, use it to inspect the local request. Other
+provider preflight failures can also return 502 before an intent is recorded.
