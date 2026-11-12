@@ -599,7 +599,14 @@ func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
 		if personScope {
 			_, _, err = s.Trash(ctx, nodes[1].ID, UnconditionalRev)
 			require.NoError(t, err)
-			continuation, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1, Cursor: page.NextCursor})
+			// Hold the only pooled connection and cancel the request context: a
+			// continuation must come entirely from the already frozen snapshot.
+			conn, err := s.db.Conn(ctx)
+			require.NoError(t, err)
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+			continuation, err := svc.TimelineDay(cancelled, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1, Cursor: page.NextCursor})
+			require.NoError(t, conn.Close())
 			require.NoError(t, err)
 			require.Len(t, continuation.Items, 1)
 			require.Equal(t, nodes[1].ID, continuation.Items[0].NodeID)
