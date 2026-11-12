@@ -155,3 +155,27 @@ it("keeps facts correct as the last interest leaves and returns", async () => {
     facts.dispose();
   }
 });
+
+it("cleans inactive scheduling state and retries errors when interest returns", async () => {
+  const facts = new DocumentFacts("session", vi.fn());
+  const internals = facts as unknown as { entries: Map<string, unknown>; values: Record<string, unknown> };
+  const element = document.createElement("div");
+  const detach = facts.observeRow("never-visible")(element);
+  expect(internals.entries.size).toBe(0);
+  expect(Object.keys(internals.values)).toEqual([]);
+  if (typeof detach === "function") detach();
+
+  const release = facts.retain("v");
+  requests[0]!.reject(new Error("offline"));
+  requests[1]!.resolve(people());
+  await flush();
+  release();
+  expect(internals.entries.size).toBe(0);
+  expect(facts.get("v").people.value).toEqual(people());
+  facts.retain("v");
+  expect(requests.map((r) => r.resource)).toEqual(["dates", "people", "dates"]);
+  requests[2]!.resolve(dates([]));
+  await flush();
+  expect(facts.get("v").dates.value).toEqual(dates([]));
+  facts.dispose();
+});

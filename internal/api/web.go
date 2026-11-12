@@ -55,9 +55,6 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin, basePath
 		panic("api: embedded web index is missing")
 	}
 	indexHTML = configureWebBasePath(configureWebMap(indexHTML, tiles), basePath)
-	if timelineTimezone == "" {
-		timelineTimezone = "UTC"
-	}
 	indexHTML = bytes.Replace(indexHTML, []byte("</head>"), []byte(`<meta name="docbank-timeline-timezone" content="`+html.EscapeString(timelineTimezone)+`"></head>`), 1)
 	images := "'self' data: blob:"
 	static := http.FileServer(http.FS(assets))

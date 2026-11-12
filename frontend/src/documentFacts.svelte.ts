@@ -70,7 +70,6 @@ export class DocumentFacts {
       const observer = this.observer;
       if (!versionID || this.stopped || !observer) return;
       const row = { id: versionID, visible: false };
-      untrack(() => this.entry(versionID));
       this.elements.set(element, row);
       observer.observe(element);
       return () => {
@@ -86,7 +85,8 @@ export class DocumentFacts {
 
   retry(versionID: string, resource: Resource): void {
     untrack(() => {
-      const entry = this.entry(versionID);
+      const entry = this.entries.get(versionID);
+      if (!entry) return;
       if (entry.facts[resource].status === "error") entry.facts[resource] = { status: "idle" };
       this.pump();
     });
@@ -104,7 +104,7 @@ export class DocumentFacts {
   private entry(id: string): Entry {
     let entry = this.entries.get(id);
     if (!entry) {
-      this.values[id] = { dates: { status: "idle" }, people: { status: "idle" } };
+      this.values[id] ??= { dates: { status: "idle" }, people: { status: "idle" } };
       entry = { facts: this.values[id]!, rows: 0, retained: 0, controllers: {} };
       this.entries.set(id, entry);
     }
@@ -112,7 +112,9 @@ export class DocumentFacts {
   }
 
   private interest(id: string, kind: "rows" | "retained", delta: number): void {
-    const entry = this.entry(id);
+    if (this.stopped) return;
+    const entry = delta > 0 ? this.entry(id) : this.entries.get(id);
+    if (!entry) return;
     entry[kind] += delta;
     if (!entry.rows && !entry.retained) {
       for (const resource of ["dates", "people"] as const) {
@@ -123,10 +125,14 @@ export class DocumentFacts {
         }
         if (
           entry.facts[resource].status === "loading" ||
+          entry.facts[resource].status === "error" ||
           entry.facts[resource].value?.state === "pending"
         )
           entry.facts[resource] = { status: "idle" };
       }
+      this.entries.delete(id);
+      if (entry.facts.dates.status === "idle" && entry.facts.people.status === "idle")
+        delete this.values[id];
     }
   }
 

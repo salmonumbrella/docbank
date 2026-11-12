@@ -55,7 +55,7 @@ func TestWebMapConfiguration(t *testing.T) {
 	mux.ServeHTTP(invalid, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/photos/map/invalid", nil))
 	require.Equal(t, http.StatusNotFound, invalid.Code)
 	mux = http.NewServeMux()
-	registerWeb(mux, true, "http://localhost:8080", "", "", "", config.MapTilesConfig{}, nil)
+	registerWeb(mux, true, "http://localhost:8080", "", "", config.Default().Web.TimelineTimezone, config.MapTilesConfig{}, nil)
 	for _, path := range paths {
 		disabled := httptest.NewRecorder()
 		mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
@@ -71,7 +71,7 @@ func TestWebMapConfiguration(t *testing.T) {
 func TestWebTimelineTimezoneBootstrap(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ zone, want string }{
-		{"America/Toronto", "America/Toronto"}, {"", "UTC"},
+		{"America/Toronto", "America/Toronto"}, {config.Default().Web.TimelineTimezone, "UTC"},
 	} {
 		mux := http.NewServeMux()
 		registerWeb(mux, true, "http://localhost:8080", "", "", tc.zone, config.MapTilesConfig{}, nil)
