@@ -1,0 +1,40 @@
+name: Tax T4a-1 focused event checks
+
+on:
+  push:
+    branches: [build/tax-t4a1-checks]
+
+permissions:
+  contents: read
+
+jobs:
+  events:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Tax record validation
+        run: go test -tags fts5 ./internal/taxrecord -run '^TestTax' -count=1
+      - name: Event storage and metadata
+        run: go test -tags fts5 ./internal/store -run '^(TestTaxEvent.*|TestTaxMutationsRefuseAuditAuthority|TestTaxMetadataInvalidRowRollsBack|TestTaxFutureTimestampsSurviveMutationsAndRestore|TestTaxRestoredRevisionExhaustion|TestOpenRejectsInvalidTaxEventsLayout)$' -count=1
+      - name: Event backend contracts
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$/^organization$/^TaxEvents(Authority|Lifecycle)$' -count=1
+      - name: Event HTTP and schema
+        run: go test -tags fts5 ./internal/api -run '^(TestTaxEvent.*|TestTaxOpenAPIContract|TestTaxRecordAuditRefusal|TestTaxHTTPRequestLogsOmitValues)$' -count=1
+      - name: Event client receipts
+        run: go test -tags fts5 ./internal/daemonconn -run '^(TestTaxEvent.*|TestTaxClientValidationDetails|TestTaxReceiptIdentifierContexts|TestTaxRecordClientRejectsUntrustedResponses|TestTaxRecordClientRejectsMissingAndNullMembers)$' -count=1
+      - name: Event CLI
+        run: go test -tags fts5 ./cmd/docbank -run '^(TestTaxCLIEvent.*|TestTaxRecordUsageErrors)$' -count=1
