@@ -16,6 +16,7 @@ import (
 	redaction "go.kenn.io/docbank/document/redaction"
 	api "go.kenn.io/docbank/internal/api"
 	backupapp "go.kenn.io/docbank/internal/backupapp"
+	docusealclient "go.kenn.io/docbank/internal/docusealclient"
 	ingest "go.kenn.io/docbank/internal/ingest"
 	kataclient "go.kenn.io/docbank/internal/kataclient"
 	kataevidence "go.kenn.io/docbank/internal/kataevidence"
@@ -3062,6 +3063,105 @@ func (c *Client) AttachContractParty(ctx context.Context, options *AttachContrac
 	return responseParser(ctx, resp)
 }
 
+// ListContractSignatureRequests List local signature requests
+func (c *Client) ListContractSignatureRequests(ctx context.Context, options *ListContractSignatureRequestsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListContractSignatureRequestsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
+		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}/signature-requests",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListContractSignatureRequestsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListContractSignatureRequestsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListContractSignatureRequestsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListContractSignatureRequestsErrorResponse](resp, "ListContractSignatureRequestsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}/signature-requests")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContractSignatureRequest Send a contract for signature
+func (c *Client) CreateContractSignatureRequest(ctx context.Context, options *CreateContractSignatureRequestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContractSignatureRequestResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}/signature-requests",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContractSignatureRequestResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateContractSignatureRequestResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContractSignatureRequestResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContractSignatureRequestErrorResponse](resp, "CreateContractSignatureRequestErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}/signature-requests")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetDocumentProcessingCoverage Report rendition and embedding coverage for exact document versions
 func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResponse, error) {
 	var err error
@@ -4862,6 +4962,102 @@ func (c *Client) StreamIngest(ctx context.Context, options *StreamIngestRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/ingest/stream")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetDocuSealStatus Check the DocuSeal connection
+func (c *Client) GetDocuSealStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetDocuSealStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/integrations/docuseal/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetDocuSealStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetDocuSealStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetDocuSealStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetDocuSealStatusErrorResponse](resp, "GetDocuSealStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/docuseal/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListDocuSealTemplates List DocuSeal templates
+func (c *Client) ListDocuSealTemplates(ctx context.Context, options *ListDocuSealTemplatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocuSealTemplatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/integrations/docuseal/templates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListDocuSealTemplatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListDocuSealTemplatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListDocuSealTemplatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListDocuSealTemplatesErrorResponse](resp, "ListDocuSealTemplatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/docuseal/templates")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -14902,6 +15098,52 @@ func (c *Client) ValidateDocumentSearch(ctx context.Context, options *ValidateDo
 	return responseParser(ctx, resp)
 }
 
+// GetSignatureRequest Inspect a local signature request
+func (c *Client) GetSignatureRequest(ctx context.Context, options *GetSignatureRequestRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetSignatureRequestResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/signature-requests/{request_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetSignatureRequestResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetSignatureRequestResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetSignatureRequestResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetSignatureRequestErrorResponse](resp, "GetSignatureRequestErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/signature-requests/{request_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // StorageStatus Report loose and packed physical storage usage
 func (c *Client) StorageStatus(ctx context.Context, options *StorageStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StorageStatusResponse, error) {
 	var err error
@@ -18919,6 +19161,86 @@ func (o *AttachContractPartyRequestOptions) GetHeader() (map[string]string, erro
 	return headers, err
 }
 
+// ListContractSignatureRequestsRequestOptions is the options needed to make a request to ListContractSignatureRequests.
+type ListContractSignatureRequestsRequestOptions struct {
+	PathParams *ListContractSignatureRequestsPath
+	Query      *ListContractSignatureRequestsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListContractSignatureRequestsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListContractSignatureRequestsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListContractSignatureRequestsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListContractSignatureRequestsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateContractSignatureRequestRequestOptions is the options needed to make a request to CreateContractSignatureRequest.
+type CreateContractSignatureRequestRequestOptions struct {
+	PathParams *CreateContractSignatureRequestPath
+	Body       *CreateContractSignatureRequestBody
+	Header     *CreateContractSignatureRequestHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContractSignatureRequestRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContractSignatureRequestRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContractSignatureRequestRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContractSignatureRequestRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetDocumentProcessingCoverageRequestOptions is the options needed to make a request to GetDocumentProcessingCoverage.
 type GetDocumentProcessingCoverageRequestOptions struct {
 	Query *GetDocumentProcessingCoverageQuery
@@ -20093,6 +20415,37 @@ func (o *StreamIngestRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *StreamIngestRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListDocuSealTemplatesRequestOptions is the options needed to make a request to ListDocuSealTemplates.
+type ListDocuSealTemplatesRequestOptions struct {
+	Query *ListDocuSealTemplatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListDocuSealTemplatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListDocuSealTemplatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListDocuSealTemplatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListDocuSealTemplatesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26741,6 +27094,37 @@ func (o *ValidateDocumentSearchRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// GetSignatureRequestRequestOptions is the options needed to make a request to GetSignatureRequest.
+type GetSignatureRequestRequestOptions struct {
+	PathParams *GetSignatureRequestPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetSignatureRequestRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetSignatureRequestRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetSignatureRequestRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetSignatureRequestRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // StorageStatusRequestOptions is the options needed to make a request to StorageStatus.
 type StorageStatusRequestOptions struct {
 	Query *StorageStatusQuery
@@ -28272,6 +28656,10 @@ type AttachContractPartyHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type CreateContractSignatureRequestHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type SetLaneControlHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -28541,6 +28929,14 @@ type DetachContractPartyPath struct {
 type AttachContractPartyPath struct {
 	ContractID string `json:"contract_id"`
 	PartyID    string `json:"party_id"`
+}
+
+type ListContractSignatureRequestsPath struct {
+	ContractID string `json:"contract_id"`
+}
+
+type CreateContractSignatureRequestPath struct {
+	ContractID string `json:"contract_id"`
 }
 
 type RemoveEmailDocumentPublicationPath struct {
@@ -29092,6 +29488,10 @@ type ReviseTermReportPath struct {
 	ID string `json:"id"`
 }
 
+type GetSignatureRequestPath struct {
+	RequestID string `json:"request_id"`
+}
+
 type UnregisterBlobStorePath struct {
 	StoreID string `json:"store_id"`
 }
@@ -29231,6 +29631,8 @@ type SetCollectionLabelBody = SetCollectionLabelRequest
 type CreateContractBody = CreateContractRequest
 
 type UpdateContractBody = PatchContractRequest
+
+type CreateContractSignatureRequestBody = SignatureRequestBody
 
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
@@ -29664,6 +30066,11 @@ type AttachContractPartyQuery struct {
 	Role AttachContractPartyQueryRole `json:"role"`
 }
 
+type ListContractSignatureRequestsQuery struct {
+	Limit  *int64 `json:"limit,omitempty"`
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type GetDocumentProcessingCoverageQuery struct {
 	Profile          string    `json:"profile"`
 	VaultUID         uuid.UUID `json:"vault_uid"`
@@ -29714,6 +30121,10 @@ type ReadFormatCapabilitiesQuery struct {
 	Family    *string `json:"family,omitempty"`
 	Format    *string `json:"format,omitempty"`
 	Extension *string `json:"extension,omitempty"`
+}
+
+type ListDocuSealTemplatesQuery struct {
+	After *int64 `json:"after,omitempty"`
 }
 
 type ListMailboxJobsQuery struct {
@@ -30228,6 +30639,14 @@ type AttachContractPartyResponse = api.Contract
 
 type AttachContractPartyErrorResponse = Error
 
+type ListContractSignatureRequestsResponse = api.SignatureRequestPage
+
+type ListContractSignatureRequestsErrorResponse = Error
+
+type CreateContractSignatureRequestResponse = store.SignatureRequest
+
+type CreateContractSignatureRequestErrorResponse = Error
+
 type GetDocumentProcessingCoverageResponse = api.CoverageReport
 
 type GetDocumentProcessingCoverageErrorResponse = Error
@@ -30336,6 +30755,7 @@ type GetExportJobEventsErrorResponse struct {
 	PartyID                  *string              `json:"party_id,omitempty"`
 	Position                 *ErrorPosition       `json:"position,omitempty"`
 	Redaction                *PDFRedactionProblem `json:"redaction,omitempty"`
+	RequestID                *string              `json:"request_id,omitempty"`
 	Status                   int64                `json:"status"`
 	Title                    string               `json:"title"`
 }
@@ -30397,6 +30817,32 @@ type PreflightIngestErrorResponse = Error
 type StreamIngestResponse = []byte
 
 type StreamIngestErrorResponse = Error
+
+type GetDocuSealStatusResponse = docusealclient.Status
+
+type GetDocuSealStatusErrorResponse api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON502 api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON504 api.Error
+
+type ListDocuSealTemplatesResponse = docusealclient.TemplatePage
+
+type ListDocuSealTemplatesErrorResponse api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON502 api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON504 api.Error
 
 type ListJobsResponse = api.JobList
 
@@ -31435,6 +31881,10 @@ type SearchTextCoverageErrorResponse = Error
 type ValidateDocumentSearchResponse = api.DocumentSearchValidation
 
 type ValidateDocumentSearchErrorResponse = Error
+
+type GetSignatureRequestResponse = store.SignatureRequest
+
+type GetSignatureRequestErrorResponse = Error
 
 type StorageStatusResponse = api.StorageStatus
 
@@ -33221,6 +33671,18 @@ type SetPhotoExcludedRequest = api.SetPhotoExcludedRequest
 
 type SetPhotoSettingsRequest = api.SetPhotoSettingsRequest
 
+type SignatureRequest = store.SignatureRequest
+
+type SignatureRequestBody = api.SignatureRequestBody
+
+type SignatureRequestPage = api.SignatureRequestPage
+
+type SignatureRequestSummary = store.SignatureRequestSummary
+
+type SignatureSigner = store.SignatureSigner
+
+type SignatureSignerInput = store.SignatureSignerInput
+
 type Sort = query.Sort
 
 type Source = bundle.Source
@@ -33267,6 +33729,8 @@ type StartStorageSalvageRequest struct {
 	PreviewToken string  `json:"preview_token"`
 }
 
+type Status = docusealclient.Status
+
 type StorageOperation = api.StorageOperation
 
 type StoragePackReport = api.StoragePackReport
@@ -33310,6 +33774,10 @@ type TaggedNode = api.TaggedNode
 type TaggedNodePage = api.TaggedNodePage
 
 type TelemetryEventProperties = api.TelemetryEventProperties
+
+type Template = docusealclient.Template
+
+type TemplatePage = docusealclient.TemplatePage
 
 type Term = report.Term
 

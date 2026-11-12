@@ -237,3 +237,24 @@ func TestSignatureRequestDefiniteProviderFailureAllowsRetry(t *testing.T) {
 		})
 	}
 }
+
+func TestSignatureRequestInvalidInputDoesNotDisclosePrivateValues(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var c api.Contract
+	require.NoError(t, json.Unmarshal([]byte(body), &c))
+	path := "/api/v1/contracts/" + c.ContractID + "/signature-requests"
+	for _, input := range []any{
+		map[string]any{"template_id": 7, "signers": []any{map[string]any{"role": "Signer", "name": "private-name", "email": "private@example.com", "extra": "private-link"}}},
+		map[string]any{"template_id": 7, "signers": []any{map[string]any{"role": "Signer", "name": "private-name", "email": nil}}},
+	} {
+		resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": `"1"`}, input)
+		require.GreaterOrEqual(t, resp.StatusCode, 400)
+		for _, secret := range []string{"private-name", "private@example.com", "private-link", "test-api-key"} {
+			require.NotContains(t, body, secret)
+		}
+		require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	}
+}

@@ -102,3 +102,29 @@ func checkSignatureTerminalHistoryDeletion(t *testing.T, open func(*testing.T) *
 	_, err = s.GetSignatureRequest(ctx, req.RequestID)
 	require.ErrorIs(t, err, ErrNotFound)
 }
+
+// An uncertain result stays open and remains visible in paginated local history.
+func checkSignatureUncertainHistory(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Example"})
+	require.NoError(t, err)
+	first, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.NoError(t, err)
+	_, err = s.FinishSignatureCreation(ctx, first.RequestID, first.Revision, SignatureCreationResult{ErrorCode: "docuseal_creation_failed"})
+	require.NoError(t, err)
+	pending, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.NoError(t, err)
+	pending, err = s.FinishSignatureCreation(ctx, pending.RequestID, pending.Revision, SignatureCreationResult{Uncertain: true, ErrorCode: "docuseal_creation_unknown"})
+	require.NoError(t, err)
+	require.Equal(t, "creating", pending.State)
+	_, err = s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
+	require.ErrorIs(t, err, ErrSignatureRequestOpen)
+	all, err := s.ListSignatureRequests(ctx, c.ContractID, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	page, err := s.ListSignatureRequests(ctx, c.ContractID, 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, all[1:], page)
+}

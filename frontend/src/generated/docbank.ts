@@ -653,6 +653,7 @@ export interface Error {
   party_id?: string;
   position?: ErrorPosition;
   redaction?: PDFRedactionProblem;
+  request_id?: string;
   status: number;
   title: string;
 }
@@ -8668,6 +8669,74 @@ export interface SetPhotoSettingsRequest {
   reset_preference?: boolean;
 }
 
+export interface SignatureSigner {
+  email: string;
+  name: string;
+  position: number;
+  /** @nullable */
+  provider_submitter_id: string | null;
+  role: string;
+  state: string;
+}
+
+export interface SignatureRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  api_path: string;
+  contract_id: string;
+  created_at: string;
+  endpoint_origin: string;
+  last_error_code: string;
+  provider: string;
+  /** @nullable */
+  provider_submission_id: string | null;
+  request_id: string;
+  revision: number;
+  signers: SignatureSigner[];
+  state: string;
+  template_id: string;
+  template_name: string;
+  updated_at: string;
+}
+
+export interface SignatureSignerInput {
+  email: string;
+  name: string;
+  role: string;
+}
+
+export interface SignatureRequestBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  signers: SignatureSignerInput[];
+  template_id: number;
+}
+
+export interface SignatureRequestSummary {
+  api_path: string;
+  contract_id: string;
+  created_at: string;
+  endpoint_origin: string;
+  last_error_code: string;
+  provider: string;
+  /** @nullable */
+  provider_submission_id: string | null;
+  request_id: string;
+  revision: number;
+  state: string;
+  template_id: string;
+  template_name: string;
+  updated_at: string;
+}
+
+export interface SignatureRequestPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: SignatureRequestSummary[];
+  limit: number;
+  offset: number;
+}
+
 export interface SourceRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -8747,6 +8816,12 @@ export interface StartStorageSalvageRequest {
      * @maxLength 43
      */
   preview_token: string;
+}
+
+export interface Status {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  endpoint: string;
 }
 
 export interface StoragePackReport {
@@ -8996,6 +9071,19 @@ export interface TelemetryEventProperties {
   search_type?: TelemetryEventPropertiesSearchType;
   /** The interface that sent the event. */
   surface?: TelemetryEventPropertiesSurface;
+}
+
+export interface Template {
+  id: number;
+  name: string;
+  roles: string[];
+}
+
+export interface TemplatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  next: number;
+  templates: Template[];
 }
 
 export interface TermReportHistory {
@@ -9753,6 +9841,22 @@ export type AttachContractPartyHeaders = {
 'If-Match': string;
 };
 
+export type ListContractSignatureRequestsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type CreateContractSignatureRequestHeaders = {
+'If-Match': string;
+};
+
 export type GetDocumentProcessingCoverageParams = {
 /**
  * @minLength 1
@@ -9866,6 +9970,7 @@ export type GetExportJobEventsDefault = {
   party_id?: string;
   position?: ErrorPosition;
   redaction?: PDFRedactionProblem;
+  request_id?: string;
   status: number;
   title: string;
 };
@@ -9899,6 +10004,13 @@ format?: string;
  * @maxLength 16
  */
 extension?: string;
+};
+
+export type ListDocuSealTemplatesParams = {
+/**
+ * @minimum 0
+ */
+after?: number;
 };
 
 export type SetLaneControlHeaders = {
@@ -12934,6 +13046,79 @@ return sessionJSON<Contract>(getAttachContractPartyUrl(contractId,partyId,params
 
 
 
+export const getListContractSignatureRequestsUrl = (contractId: string,
+    params?: ListContractSignatureRequestsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}/signature-requests?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}/signature-requests`
+}
+
+/**
+ * @summary List local signature requests
+ */
+export const listContractSignatureRequests = async (contractId: string,
+    params?: ListContractSignatureRequestsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SignatureRequestPage> => {
+
+  return sessionJSON<SignatureRequestPage>(getListContractSignatureRequestsUrl(contractId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateContractSignatureRequestUrl = (contractId: string,) => {
+
+
+
+
+  return `/api/v1/contracts/${encodeURIComponent(String(contractId))}/signature-requests`
+}
+
+/**
+ * @summary Send a contract for signature
+ */
+export const createContractSignatureRequest = async (contractId: string,
+    signatureRequestBody: NonReadonly<SignatureRequestBody>,
+    headers: CreateContractSignatureRequestHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<SignatureRequest> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<SignatureRequest>(getCreateContractSignatureRequestUrl(contractId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(signatureRequestBody)
+  }
+);}
+
+
+
 export const getGetDocumentProcessingCoverageUrl = (params: GetDocumentProcessingCoverageParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -14236,6 +14421,61 @@ return sessionResponse<Response>(getStreamIngestUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(ingestRequest)
+  }
+);}
+
+
+
+export const getGetDocuSealStatusUrl = () => {
+
+
+
+
+  return `/api/v1/integrations/docuseal/status`
+}
+
+/**
+ * @summary Check the DocuSeal connection
+ */
+export const getDocuSealStatus = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<Status> => {
+
+  return sessionJSON<Status>(getGetDocuSealStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getListDocuSealTemplatesUrl = (params?: ListDocuSealTemplatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/integrations/docuseal/templates?${stringifiedParams}` : `/api/v1/integrations/docuseal/templates`
+}
+
+/**
+ * @summary List DocuSeal templates
+ */
+export const listDocuSealTemplates = async (params?: ListDocuSealTemplatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TemplatePage> => {
+
+  return sessionJSON<TemplatePage>(getListDocuSealTemplatesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -21608,6 +21848,30 @@ return sessionJSON<DocumentSearchValidation>(getValidateDocumentSearchUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSearchValidationRequest)
+  }
+);}
+
+
+
+export const getGetSignatureRequestUrl = (requestId: string,) => {
+
+
+
+
+  return `/api/v1/signature-requests/${encodeURIComponent(String(requestId))}`
+}
+
+/**
+ * @summary Inspect a local signature request
+ */
+export const getSignatureRequest = async (requestId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<SignatureRequest> => {
+
+  return sessionJSON<SignatureRequest>(getGetSignatureRequestUrl(requestId),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
