@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"cloud.google.com/go/civil"
@@ -140,5 +142,52 @@ func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T)
 	require.Len(t, page.DateOnly, 2)
 	for _, item := range page.DateOnly {
 		require.Equal(t, 1, item.UnresolvedCount)
+	}
+}
+
+// Count statements and their real bind arguments at the hydration boundary.
+type timelineCountingQuerier struct {
+	metadataQuerier
+	statements, maxArgs int
+}
+
+func (q *timelineCountingQuerier) QueryContext(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
+	q.statements++
+	q.maxArgs = max(q.maxArgs, len(args))
+	return q.metadataQuerier.QueryContext(ctx, statement, args...)
+}
+
+func checkTimelineHydrationChunking(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	placements := make([]TimelinePlacement, 0, 250)
+	for i := range 250 {
+		seed := fmt.Sprintf("%x", 0x1000+i)
+		node, err := s.CreateFile(ctx, s.RootID(), "chunk-"+seed+".txt", fakeHash(seed), 1, "text/plain")
+		require.NoError(t, err)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+		placements = append(placements, TimelinePlacement{NodeID: node.ID, VersionID: node.CurrentVersionID, EventID: record.Events[0].EventID})
+	}
+	for _, tc := range []struct{ count, statements int }{{1, 3}, {250, 5}} {
+		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+			q := &timelineCountingQuerier{metadataQuerier: tx}
+			items, err := s.hydrateTimelineItems(ctx, q, placements[:tc.count], false)
+			require.NoError(t, err)
+			require.Len(t, items, tc.count)
+			require.Equal(t, tc.statements, q.statements)
+			require.LessOrEqual(t, q.maxArgs, 500)
+			for _, item := range items {
+				require.NotEmpty(t, item.Name)
+			}
+			return nil
+		})
+		require.NoError(t, err)
 	}
 }

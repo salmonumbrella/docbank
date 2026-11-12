@@ -26,6 +26,7 @@ var backendSuites = []backendSuite{
 		{"TimelineDaysUndatedAndPending", func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newTestStore) }, func(t *testing.T) { checkTimelineDaysUndatedAndPending(t, newPostgresQueryStore) }},
 		{"TimelineDuplicateCollapse", func(t *testing.T) { checkTimelineDuplicateCollapse(t, newTestStore) }, func(t *testing.T) { checkTimelineDuplicateCollapse(t, newPostgresQueryStore) }},
 		{"TimelineHydrationCandidateEvidence", func(t *testing.T) { checkTimelineHydrationCandidateEvidence(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationCandidateEvidence(t, newPostgresQueryStore) }},
+		{"TimelineHydrationChunking", func(t *testing.T) { checkTimelineHydrationChunking(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationChunking(t, newPostgresQueryStore) }},
 		{"TimelineHydrationCurrentPeople", func(t *testing.T) { checkTimelineHydrationCurrentPeople(t, newTestStore) }, func(t *testing.T) { checkTimelineHydrationCurrentPeople(t, newPostgresQueryStore) }},
 		{"TimelineUndatedSafeOnly", func(t *testing.T) { checkTimelineUndatedSafeOnly(t, newTestStore) }, func(t *testing.T) { checkTimelineUndatedSafeOnly(t, newPostgresQueryStore) }},
 		{"TimelinePairedCalendarDates", func(t *testing.T) { checkTimelinePairedCalendarDates(t, newTestStore) }, func(t *testing.T) { checkTimelinePairedCalendarDates(t, newPostgresQueryStore) }},
