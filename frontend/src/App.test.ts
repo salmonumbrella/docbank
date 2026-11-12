@@ -6,6 +6,7 @@ import * as appOpened from "./app-opened.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
 import { clearToasts } from "./toast.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
+import { versionFactsResponse } from "./document-facts-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -987,6 +988,8 @@ it("keeps the document listed and shows the reason when trashing fails", async (
     });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({ directory: root, items: [report], total: 1, limit: 1000, offset: 0 });

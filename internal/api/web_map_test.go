@@ -30,7 +30,7 @@ func TestWebMapConfiguration(t *testing.T) {
 	t.Parallel()
 	tiles := config.MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png?key=synthetic-provider-key", Attribution: `<img src=x onerror="alert(1)">`, MaxZoom: 19}
 	mux := http.NewServeMux()
-	registerWeb(mux, true, "http://localhost:8080", "", "", tiles, nil)
+	registerWeb(mux, true, "http://localhost:8080", "", "", "America/Toronto", tiles, nil)
 	paths := []string{"/", "/photos", "/photos/map", "/photos/map/22222222-2222-4222-8222-0000000000aa"}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestWebMapConfiguration(t *testing.T) {
 	mux.ServeHTTP(invalid, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/photos/map/invalid", nil))
 	require.Equal(t, http.StatusNotFound, invalid.Code)
 	mux = http.NewServeMux()
-	registerWeb(mux, true, "http://localhost:8080", "", "", config.MapTilesConfig{}, nil)
+	registerWeb(mux, true, "http://localhost:8080", "", "", config.Default().Web.TimelineTimezone, config.MapTilesConfig{}, nil)
 	for _, path := range paths {
 		disabled := httptest.NewRecorder()
 		mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
@@ -66,6 +66,20 @@ func TestWebMapConfiguration(t *testing.T) {
 	disabled := httptest.NewRecorder()
 	mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, webMapTilePath+"/3/4/5", nil))
 	assert.Equal(t, http.StatusNotFound, disabled.Code)
+}
+
+func TestWebTimelineTimezoneBootstrap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ zone, want string }{
+		{"America/Toronto", "America/Toronto"}, {config.Default().Web.TimelineTimezone, "UTC"},
+	} {
+		mux := http.NewServeMux()
+		registerWeb(mux, true, "http://localhost:8080", "", "", tc.zone, config.MapTilesConfig{}, nil)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+		require.Equal(t, http.StatusOK, response.Code)
+		assert.Contains(t, response.Body.String(), `<meta name="docbank-timeline-timezone" content="`+tc.want+`">`)
+	}
 }
 
 type tileRig struct {

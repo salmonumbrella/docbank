@@ -193,7 +193,15 @@ that drives the actual embedded web application instead of mocked state.
 `make report-export-browser-test` (`frontend/screenshots/report-export.run.mjs`)
 builds separate CGO and `CGO_ENABLED=0` branch binaries, launches each through
 `DOCBANK_SCREENSHOT_BINARY` with no fallback to an installed binary, and
-requires exactly one passing, unskipped Chromium run per mode. The case creates
+requires each registered case to pass without skips or flakes in each mode.
+The lane also runs `document-facts.screenshot.ts` with synthetic fixtures in
+each mode. In CI with a known base, it builds the base frontend and CGO binary
+in a detached worktree and runs the registered proof against it; PR runs use
+their base ref. The Playwright global timeout is 330 seconds per run, with a
+360-second process watchdog; each build has a 600-second timeout and the CI
+job has a 20-minute limit. The main-pinned PR dispatcher runs the existing lane.
+CI uploads `report-export-*.json` reports, including
+embedded proof screenshots when captured. The report-export case creates
 a synthetic vault and four single-document fixtures through the branch CLI,
 waits for search readiness, then uses real UI controls to: get a strict
 `incomplete_coverage` refusal for a missing-text-only selection with no history

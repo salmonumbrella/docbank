@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	_ "time/tzdata"
 )
 
 func TestWebLoginConfig(t *testing.T) {
@@ -46,6 +47,32 @@ func TestWebBasePathConfig(t *testing.T) {
 				err = cfg.Validate()
 			}
 			require.ErrorContains(t, err, "base_path")
+		})
+	}
+}
+
+func TestTimelineTimezoneConfig(t *testing.T) {
+	for _, tc := range []struct {
+		zone  string
+		valid bool
+	}{
+		{"UTC", true}, {"America/Toronto", true}, {"Etc/GMT+5", true}, {"", false}, {"Local", false}, {"EST", false},
+		{"CET", false}, {"EST5EDT", false}, {"+02:00", false}, {"posix/America/Toronto", false}, {"right/America/Toronto", false}, {"Unknown/Zone", false},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[web]\ntimeline_timezone = "+strconv.Quote(tc.zone)+"\n"), 0o600))
+			cfg, err := Load(root)
+			if tc.zone == "" {
+				require.ErrorContains(t, err, "timeline_timezone")
+				return
+			}
+			require.NoError(t, err)
+			if tc.valid {
+				require.NoError(t, cfg.Validate())
+			} else {
+				require.ErrorContains(t, cfg.Validate(), "timeline_timezone")
+			}
 		})
 	}
 }

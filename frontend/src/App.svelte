@@ -112,6 +112,9 @@
   import { readPanelWidth, watchWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
   import { resultColumns } from "./resultColumns.js";
+  import DocumentFactCells from "./DocumentFactCells.svelte";
+  import { DocumentFacts } from "./documentFacts.svelte.js";
+  import { timelineZone } from "./timelineConfig.js";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import TagRunNotice from "./TagRunNotice.svelte";
@@ -125,6 +128,7 @@
   import IconAction from "./IconAction.svelte";
   import Toasts from "./Toasts.svelte";
   import { clearToasts, showToast } from "./toast.svelte.js";
+  import { previewQuery } from "./queryPreview.js";
   import { moveToTrash, parentPath, undoTrash } from "./trashActions.js";
   import PhotoImportDrawer from "./PhotoImportDrawer.svelte";
   import DocumentAddMenu from "./DocumentAddMenu.svelte";
@@ -1390,8 +1394,41 @@
       ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
       : showingResults
         ? resultColumns(browserWidth, { match: activeQuery !== "", actions: similarAvailable })
-        : { modified: browserWidth >= 700, match: false, type: browserWidth >= 540 },
+        : {
+            modified: browserWidth >= 700,
+            match: false,
+            type: browserWidth >= 540,
+            facts: resultColumns(browserWidth, { match: false, actions: similarAvailable }).facts,
+          },
   );
+  // The configured [web] timeline_timezone, served once with the page.
+  const zone = timelineZone();
+  // One dates-and-people owner per session and Documents view: a folder, a
+  // live result list, or one frozen page. Leaving the view disposes it, which
+  // aborts its reads and drops their late results.
+  const factsView = $derived(
+    !webSession || photoMode || docsPage
+      ? ""
+      : snapshotActive
+        ? `frozen:${snapshot.state.firstPage?.snapshot_id ?? ""}:${snapshot.state.offset}`
+        : directory
+          ? `live:${directory.id}:${activeQuery}:${activeTagID}`
+          : "",
+  );
+  let documentFacts = $state<DocumentFacts>();
+  let factsRefresh = $state(0);
+  $effect(() => {
+    const view = factsView;
+    void factsRefresh;
+    const session = webSession;
+    if (!view) {
+      documentFacts = undefined;
+      return;
+    }
+    const owner = new DocumentFacts(session, (cause) => handleFailure(cause));
+    documentFacts = owner;
+    return () => owner.dispose();
+  });
   // Previous and Next walk the files of a live results list.
   const resultFiles = $derived(
     showingResults ? sortedRows.filter((row) => row.node.kind === "file") : [],
@@ -2960,6 +2997,7 @@
   }
 
   function refreshCurrentView(): void {
+    factsRefresh += 1;
     productionsDiscoveryRevision += 1;
     void loadTagCatalog();
     refreshDocumentsView();
@@ -3126,6 +3164,55 @@
       }
       reportSearch(webSession, outcome.type, outcome.empty);
     }
+  }
+
+  // A person chip searches for that person until the People page exists (P08).
+  // The query is checked first, so a historical person the resolver no longer
+  // finds (a retired identity with no alias) leaves the open document in place.
+  function searchPerson(id: string): void {
+    void searchPersonChecked(id);
+  }
+
+  // Each chip click supersedes the previous one, even if the older check
+  // settles first.
+  let personSearchClick = 0;
+
+  async function searchPersonChecked(id: string): Promise<void> {
+    const query = parseQuery(
+      JSON.stringify({ v: 1, syntax: "advanced", mode: "lexical", text: `person:${id}` }),
+    );
+    const session = webSession;
+    const request = generation;
+    // The live or frozen selection the chip belongs to, and the search draft
+    // it would replace: a newer typed search or Advanced edit wins.
+    const selection = selectedSource?.key;
+    const draft = queryDraftRevision;
+    const typed = searchQuery;
+    const click = ++personSearchClick;
+    const current = () =>
+      session === webSession &&
+      request === generation &&
+      selection === selectedSource?.key &&
+      draft === queryDraftRevision &&
+      typed === searchQuery &&
+      click === personSearchClick;
+    try {
+      await previewQuery(session, query, new AbortController().signal);
+    } catch (cause) {
+      if (!current()) return;
+      // The fixed person:<id> query is well formed, so 422 means an unknown
+      // reference. Anything else goes to the existing failToast: 401 resets the
+      // session, and other failures show as a toast, which frozen results also
+      // display (the error banner lives only in the live toolbar).
+      if (cause instanceof APIError && cause.status === 422)
+        showToast(
+          "This historical person is no longer available for search. Their recorded attribution is still shown.",
+        );
+      else failToast(cause, session);
+      return;
+    }
+    if (!current()) return;
+    await submitSnapshot(query, { page_size: 100 });
   }
 
   function runSnapshotAgain(): void {
@@ -4507,6 +4594,7 @@
             class:hide-modified={!columns.modified}
             class:hide-type={!columns.type}
             class:hide-match={!columns.match}
+            class:hide-facts={!columns.facts}
             aria-label="Vault browser"
             {@attach (element) => watchWidth(element, (width) => (browserWidth = width))}
           >
@@ -4574,7 +4662,14 @@
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
                     {:else}
-                      <Table class="snapshot-table" ariaLabel="Snapshot documents" zebra={false}>
+                      <!-- Document date and People have no server sort; the other
+                           columns still sort through sortSnapshot. -->
+                      <Table
+                        class="snapshot-table"
+                        ariaLabel="Snapshot documents"
+                        zebra={false}
+                        unsorted
+                      >
                         {#snippet header()}
                           <th class="selection-column" scope="col">
                             <Checkbox
@@ -4612,6 +4707,8 @@
                               : null}
                             onsort={() => sortSnapshot("size")}
                           />
+                          <TableHeaderCell class="col-facts" label="Document date" />
+                          <TableHeaderCell class="col-facts" label="People" />
                           <TableHeaderCell
                             class="col-modified"
                             label="Modified"
@@ -4629,6 +4726,9 @@
                               tabindex="0"
                               data-snapshot-node={row.node_id}
                               aria-selected={row.node_id === snapshot.selectedID}
+                              {@attach documentFacts?.observeRow(
+                                columns.facts ? row.content_version_id : undefined,
+                              )}
                               onclick={(event) => {
                                 snapshot.selectedID = row.node_id;
                                 if (event.detail < 2) reportAction(webSession, "document_opened");
@@ -4677,6 +4777,11 @@
                                 >{fileTypeLabel("file", row.mime_type)}</td
                               >
                               <td class="numeric">{formatBytes(row.size)}</td>
+                              <DocumentFactCells
+                                versionID={columns.facts ? row.content_version_id : undefined}
+                                facts={documentFacts}
+                                {zone}
+                              />
                               <td class="date-cell col-modified">{formatDate(row.modified_at)}</td>
                             </tr>
                           {/each}
@@ -4904,6 +5009,8 @@
                       sortDirection={sortField === "size" ? sortDirection : null}
                       onsort={() => sortBy("size")}
                     />
+                    <TableHeaderCell class="col-facts" label="Document date" />
+                    <TableHeaderCell class="col-facts" label="People" />
                     <TableHeaderCell
                       class="col-modified"
                       label="Modified"
@@ -4924,6 +5031,11 @@
                         data-node-id={row.node.id}
                         tabindex="0"
                         aria-selected={row.node.id === selectedID}
+                        {@attach documentFacts?.observeRow(
+                          columns.facts && row.node.kind === "file"
+                            ? row.node.current_version_id
+                            : undefined,
+                        )}
                         ondblclick={() => activate(row, true)}
                         onclick={(event) => event.detail < 2 && openDocument(row.node.id)}
                         onkeydown={(event) => {
@@ -4979,6 +5091,13 @@
                         <td class="numeric"
                           >{row.node.kind === "dir" ? "—" : formatBytes(row.node.size)}</td
                         >
+                        <DocumentFactCells
+                          versionID={columns.facts && row.node.kind === "file"
+                            ? row.node.current_version_id
+                            : undefined}
+                          facts={documentFacts}
+                          {zone}
+                        />
                         <td class="date-cell col-modified">{formatDate(row.node.modified_at)}</td>
                         {#if activeQuery}
                           <td class="col-match">
@@ -5051,6 +5170,9 @@
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
                 onauthfailure={handleFailure}
+                facts={documentFacts}
+                timelineZone={zone}
+                onperson={searchPerson}
                 node={currentInspectorNode ?? undefined}
                 path={selectedSnapshot.path}
                 snapshot={selectedSnapshot}
@@ -5133,6 +5255,9 @@
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
                 onauthfailure={handleFailure}
+                facts={documentFacts}
+                timelineZone={zone}
+                onperson={searchPerson}
                 node={selected.node}
                 path={selected.path}
                 protected={membership?.protected}
