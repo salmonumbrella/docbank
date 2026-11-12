@@ -371,7 +371,7 @@ func TestTemplatesEmptyNameUsesPlaceholder(t *testing.T) {
 	}
 }
 
-// An invitation POST is never replayed, and only a complete 201 receipt confirms it.
+// An invitation POST is never replayed, and only a complete 200 receipt confirms it.
 func TestSubmissionOutcomeClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -384,10 +384,10 @@ func TestSubmissionOutcomeClassification(t *testing.T) {
 		{"server error", 500, "private diagnostic", ErrCreationUnknown},
 		{"unprocessable", 422, "private diagnostic", ErrCreationFailed},
 		{"rate limited", 429, "private diagnostic", ErrCreationFailed},
-		{"wrong success", 200, `[]`, ErrCreationUnknown},
-		{"malformed receipt", 201, `{}`, ErrCreationUnknown},
-		{"wrong external id", 201, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"other"}]`, ErrCreationUnknown},
-		{"valid receipt", 201, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key","embed_src":"private-link"}]`, nil},
+		{"wrong success", 201, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key"}]`, ErrCreationUnknown},
+		{"malformed receipt", 200, `{}`, ErrCreationUnknown},
+		{"wrong external id", 200, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"other"}]`, ErrCreationUnknown},
+		{"valid receipt", 200, `[{"id":11,"submission_id":10,"role":"Signer","external_id":"key","embed_src":"private-link"}]`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0

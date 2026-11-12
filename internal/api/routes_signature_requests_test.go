@@ -73,12 +73,14 @@ func TestSignatureRequestUncertainCreationKeepsLocalHistory(t *testing.T) {
 
 // The provider receives only the template and signers, in template role order.
 func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
+	var posts atomic.Int32
 	var live *testStore
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/templates/7":
 			_, _ = w.Write([]byte(`{"id":7,"name":"Template","submitters":[{"name":"Tenant"},{"name":"Owner"}]}`))
 		case "/submissions":
+			posts.Add(1)
 			var got struct {
 				TemplateID int              `json:"template_id"`
 				SendEmail  bool             `json:"send_email"`
@@ -129,7 +131,7 @@ func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
+			w.WriteHeader(http.StatusOK)
 			_, _ = fmt.Fprintf(w, `[{"id":11,"submission_id":10,"role":"Tenant","external_id":%q,"embed_src":"https://example.com/private-link"},{"id":12,"submission_id":10,"role":"Owner","external_id":%q}]`, got.Submitters[0]["external_id"], got.Submitters[1]["external_id"])
 		default:
 			http.NotFound(w, r)
@@ -145,10 +147,30 @@ func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var c api.Contract
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
+	require.Equal(t, "draft", c.Status)
 	path := "/api/v1/contracts/" + c.ContractID + "/signature-requests"
 	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": `"1"`}, map[string]any{"template_id": 7, "signers": []any{map[string]any{"role": "Owner", "email": "owner@example.com", "name": "Owner"}, map[string]any{"role": "Tenant", "email": "tenant@example.com", "name": "Tenant"}}})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	require.Contains(t, body, `"state":"sent"`)
+	var result struct {
+		State                string  `json:"state"`
+		ProviderSubmissionID *string `json:"provider_submission_id"`
+		Signers              []struct {
+			Role                string  `json:"role"`
+			ProviderSubmitterID *string `json:"provider_submitter_id"`
+		} `json:"signers"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Equal(t, "sent", result.State)
+	require.NotNil(t, result.ProviderSubmissionID)
+	require.Equal(t, "10", *result.ProviderSubmissionID)
+	require.Len(t, result.Signers, 2)
+	require.Equal(t, "Tenant", result.Signers[0].Role)
+	require.Equal(t, "Owner", result.Signers[1].Role)
+	require.NotNil(t, result.Signers[0].ProviderSubmitterID)
+	require.NotNil(t, result.Signers[1].ProviderSubmitterID)
+	require.Equal(t, "11", *result.Signers[0].ProviderSubmitterID)
+	require.Equal(t, "12", *result.Signers[1].ProviderSubmitterID)
+	require.EqualValues(t, 1, posts.Load())
 	require.NotContains(t, body, "private-link")
 	resp, body = do(t, ts, http.MethodGet, "/api/v1/contracts/"+c.ContractID, nil, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
