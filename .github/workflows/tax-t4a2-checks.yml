@@ -37,7 +37,7 @@ jobs:
       - name: Client receipts and protocol
         run: go test -tags fts5 ./internal/daemonconn -run '^(TestTax(Event|Cash|ClientValidationDetails|ReceiptIdentifierContexts|RecordClientRejects).*)$|^TestEnsureDiscoveryRejectsProtocolMismatch$' -count=1
       - name: CLI
-        run: go test -tags fts5 ./cmd/docbank -run '^(TestTaxCLI(Event|Cash).*|TestTaxRecordUsageErrors)$' -count=1
+        run: go test -tags fts5 ./cmd/docbank -run '^(TestTaxCLI(Event|Cash).*|TestTaxRecordUsageErrors|TestHelpTreeLint)$' -count=1
 
   postgres:
     if: github.repository == 'salmonumbrella/docbank'
