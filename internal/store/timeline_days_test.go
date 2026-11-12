@@ -374,3 +374,43 @@ func checkTimelineUndatedSafeOnly(t *testing.T, open func(*testing.T) *Store) {
 	require.Empty(t, page.DateOnly)
 	require.Empty(t, page.MonthOnly)
 }
+
+func checkTimelineDuplicateCollapse(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	var ids []int64
+	for i, seed := range []string{"dd1", "dd2"} {
+		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("duplicate-%d.txt", i), fakeHash("dd0"), 1, "text/plain")
+		require.NoError(t, err)
+		ids = append(ids, node.ID)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+	}
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civiltime.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
+	for _, tc := range []struct {
+		collapse bool
+		count    int
+	}{{false, 2}, {true, 1}} {
+		scope.Query.Filters.CollapseDuplicates = tc.collapse
+		days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
+		require.NoError(t, err)
+		require.Len(t, days.Days, 1)
+		require.EqualValues(t, tc.count, days.Days[0].Count)
+		page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, page.DateOnly, tc.count)
+		for _, item := range page.DateOnly {
+			require.Contains(t, ids, item.NodeID)
+		}
+	}
+}

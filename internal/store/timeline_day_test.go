@@ -80,10 +80,22 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	date, err := civiltime.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
+	var saved SavedQuery
+	if s.postgresSchema == "" {
+		saved, err = s.CreateSavedQuery(ctx, "Frozen scope", "", SavedQueryKindQuery, []byte(`{}`))
+		require.NoError(t, err)
+		req.Scope.Query.Syntax = "advanced"
+		req.Scope.Query.Text = `saved:"Frozen scope"`
+	}
 	first, err := svc.TimelineDay(ctx, "owner", req)
 	require.NoError(t, err)
 	require.Len(t, first.Items, 1)
 	require.NotEmpty(t, first.NextCursor)
+	if s.postgresSchema == "" {
+		payload := []byte(`{"filters":{"size_min":100}}`)
+		_, err = s.UpdateSavedQuery(ctx, saved.ID, saved.Revision, SavedQueryPatch{Payload: &payload})
+		require.NoError(t, err)
+	}
 	_, _, err = s.Trash(ctx, first.Items[0].NodeID, UnconditionalRev)
 	require.NoError(t, err)
 	_, _, err = s.Move(ctx, nodes[1].ID, s.RootID(), "renamed.txt", nodes[1].Revision)
