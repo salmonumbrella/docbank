@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	_ "time/tzdata"
 
@@ -81,6 +82,29 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	_, _, err = s.Trash(ctx, first.Items[0].NodeID, UnconditionalRev)
 	require.NoError(t, err)
 	req.Cursor = first.NextCursor
+	for name, change := range map[string]func(*TimelineDayRequest){
+		"limit":    func(r *TimelineDayRequest) { r.Limit = 2 },
+		"date":     func(r *TimelineDayRequest) { r.Date = r.Date.AddDays(1) },
+		"kinds":    func(r *TimelineDayRequest) { r.Scope.DateKinds = []string{"created"} },
+		"hidden":   func(r *TimelineDayRequest) { r.HiddenLocked = true },
+		"tampered": func(r *TimelineDayRequest) { r.Cursor += "x" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			altered := req
+			change(&altered)
+			_, err := svc.TimelineDay(t.Context(), "owner", altered)
+			require.ErrorIs(t, err, ErrTimelineCursorMismatch)
+		})
+	}
+	// A newly configured default cannot move a continuation to another zone.
+	defaulted := req
+	defaulted.Scope.Zone = "America/Toronto"
+	defaulted.Scope.Defaulted = true
+	frozen, err := svc.TimelineDay(ctx, "owner", defaulted)
+	require.NoError(t, err)
+	require.Equal(t, "UTC", frozen.Zone)
+	require.Equal(t, int64(2), svc.stats().CachedRows)
+	require.Positive(t, svc.stats().CachedBytes)
 	second, err := svc.TimelineDay(ctx, "owner", req)
 	require.NoError(t, err)
 	require.Len(t, second.Items, 1)
@@ -93,6 +117,7 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	require.ErrorIs(t, err, ErrTimelineCursorMismatch)
 	req.Scope.Zone = "UTC"
 	svc.Revoke("owner")
+	require.Equal(t, snapshotCacheStats{}, svc.stats())
 	_, err = svc.TimelineDay(ctx, "owner", req)
 	require.ErrorIs(t, err, ErrSnapshotGone)
 }
@@ -111,4 +136,53 @@ func TestTimelineDayFrozenOwnerAndScope(t *testing.T) {
 	req.Cursor = "not-a-cursor"
 	_, err = svc.TimelineDay(t.Context(), "owner", req)
 	require.ErrorIs(t, err, ErrTimelineCursorMismatch)
+}
+
+// The 201st strip row signals truncation; it is not retained or repeated on
+// continuation pages. Cache accounting includes the retained strip rows.
+func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	for i := range 203 {
+		seed := fmt.Sprintf("%064x", i+1)
+		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("item-%03d.txt", i), seed, 1, "text/plain")
+		require.NoError(t, err)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		if i < 2 {
+			event := &record.Events[0]
+			event.DateValue, event.RawValue = "2019-03-04T09:30:00", "2019-03-04T09:30:00"
+			event.Precision = "second"
+			event.AxisKey = "2019-03-04T09:30:00.000000000"
+			event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
+			record.Primaries[0].EventID = event.EventID
+		}
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+	}
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civiltime.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
+	first, err := svc.TimelineDay(ctx, "owner", req)
+	require.NoError(t, err)
+	require.Len(t, first.Items, 1)
+	require.Len(t, first.DateOnly, 200)
+	require.True(t, first.DateOnlyTruncated)
+	require.EqualValues(t, 202, svc.stats().CachedRows)
+	require.Positive(t, svc.stats().CachedBytes)
+	req.Cursor = first.NextCursor
+	require.NotEmpty(t, req.Cursor)
+	second, err := svc.TimelineDay(ctx, "owner", req)
+	require.NoError(t, err)
+	require.Len(t, second.Items, 1)
+	require.Empty(t, second.DateOnly)
+	require.False(t, second.DateOnlyTruncated)
+	svc.Revoke("owner")
+	require.Equal(t, snapshotCacheStats{}, svc.stats())
 }
