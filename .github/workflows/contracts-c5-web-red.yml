@@ -1,0 +1,38 @@
+name: Contracts C5 browser boundary RED
+
+on:
+  push:
+    branches: [ci/contracts-c5-web-red]
+
+permissions:
+  contents: read
+
+env:
+  GOTRACEBACK: all
+  GOPROXY: https://proxy.golang.org|direct
+  GOFLAGS: -trimpath
+
+jobs:
+  browser-boundary:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo${{ matrix.cgo }}
+      - name: Exercise browser session boundaries
+        run: go test -count=1 -tags fts5 ./internal/api/ -run 'TestWebSession'
