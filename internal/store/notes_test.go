@@ -208,6 +208,39 @@ func checkNoteList(t *testing.T, newStore func(*testing.T) *Store) {
 	require.False(t, page.HasNext)
 }
 
+func checkNoteListPaging(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	for i := range 251 {
+		createNoteFixture(t, s, s.RootID(), fmt.Sprintf("%03d.md", i), "body", "text/markdown")
+	}
+	for _, direction := range []string{"asc", "desc"} {
+		q := NoteListQuery{UnderPath: "/", Recursive: true, Sort: "path", Direction: direction, PageSize: 100}
+		var position *NoteListPosition
+		var paths []string
+		for {
+			page, err := s.ListNotes(t.Context(), q, position)
+			require.NoError(t, err)
+			for _, item := range page.Items {
+				paths = append(paths, item.Path)
+			}
+			if !page.HasNext {
+				break
+			}
+			position = &page.Last
+		}
+		require.Len(t, paths, 251)
+		for i, p := range paths {
+			index := i
+			if direction == "desc" {
+				index = 250 - i
+			}
+			require.Equal(t, fmt.Sprintf("/%03d.md", index), p)
+		}
+	}
+}
+
 func checkNoteVersion(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()

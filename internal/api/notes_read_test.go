@@ -191,3 +191,41 @@ func TestNoteOutlineCursorPinsVersion(t *testing.T) {
 	resp, body = get(t, ts, base+"?cursor="+url.QueryEscape(first.Next+"x"), nil)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
+
+func TestNoteTextUnparsedCurrentAndStrictByteLimit(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	const original = "🙂tail"
+	hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader(original))
+	require.NoError(t, err)
+	n, err := s.CreateFile(ctx, s.RootID(), "fresh.md", hash, size, "text/markdown")
+	require.NoError(t, err)
+	base := "/api/v1/notes/" + strconv.FormatInt(n.ID, 10) + "/text"
+	resp, body := get(t, ts, base+"?max_bytes=1", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Contains(t, body, "range_invalid")
+	resp, body = get(t, ts, base+"?max_bytes=4", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var first struct {
+		Text       string `json:"text"`
+		Truncated  bool   `json:"truncated"`
+		NextOffset *int   `json:"next_offset"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.Equal(t, "🙂", first.Text)
+	require.True(t, first.Truncated)
+	require.Equal(t, new(4), first.NextOffset)
+	resp, body = get(t, ts, base+"?offset=4", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var last struct {
+		Text      string `json:"text"`
+		Truncated bool   `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &last))
+	require.Equal(t, original, first.Text+last.Text)
+	require.False(t, last.Truncated)
+	page, err := s.ScanNoteTargetsAfter(ctx, notemarkdown.Recipe, "", 25)
+	require.NoError(t, err)
+	require.Len(t, page.Targets, 1, "reading must not publish a projection")
+}

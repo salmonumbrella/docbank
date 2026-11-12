@@ -25,6 +25,7 @@ var backendSuites = []backendSuite{
 	{name: "notes", postgres: "native operations", scope: "Current-version note publication, recipe invalidation, path freshness, source presence, bounded cleanup and read summaries; original-byte worker and released upgrades are SQLite vault lifecycle checks.", scenarios: []backendScenario{
 		{"NoteLifecycle", func(t *testing.T) { t.Helper(); checkNoteLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteLifecycle(t, newPostgresQueryStore) }},
 		{"NoteList", func(t *testing.T) { t.Helper(); checkNoteList(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteList(t, newPostgresQueryStore) }},
+		{"NoteListPaging", func(t *testing.T) { t.Helper(); checkNoteListPaging(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteListPaging(t, newPostgresQueryStore) }},
 		{"NoteVersion", func(t *testing.T) { t.Helper(); checkNoteVersion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteVersion(t, newPostgresQueryStore) }},
 		{"NoteLinks", func(t *testing.T) { t.Helper(); checkNoteLinks(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteLinks(t, newPostgresQueryStore) }},
 		{"NoteMoveAndPresence", func(t *testing.T) { t.Helper(); checkNoteMoveAndPresence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkNoteMoveAndPresence(t, newPostgresQueryStore) }},
