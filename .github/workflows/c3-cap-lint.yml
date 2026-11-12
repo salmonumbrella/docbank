@@ -1,0 +1,82 @@
+name: C3 capped lint verification
+on:
+  push:
+    branches: [bootstrap/contracts-c3-cap-lint-20261112]
+permissions:
+  contents: read
+jobs:
+  sqlite:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Store high-water, history and lifecycle
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$/^organization$/^ContractDocument(NodeHighWater|History|Lifecycle)$' -count=1
+      - name: Document routes
+        if: always()
+        run: go test -tags fts5 ./internal/api -run '^TestContract' -count=1
+  postgres:
+    runs-on: ubuntu-26.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Store high-water, history and lifecycle
+        env:
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres$/^organization$/^ContractDocument(NodeHighWater|History|Lifecycle)$' -count=1
+  lint:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run golangci-lint
+        uses: step-security/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          skip-cache: true
+      - name: Run golangci-lint for Windows
+        env:
+          GOOS: windows
+        run: ./custom-gcl run ./...
+      - name: Run golangci-lint for macOS
+        env:
+          GOOS: darwin
+        run: ./custom-gcl run ./...
