@@ -106,7 +106,7 @@ it("marks floating values, empty cells, and pending and failed reads beside asse
   }
 });
 
-it("uses the short zone-unavailable form for exact values", () => {
+it("shows the formatter's zone-unavailable message for exact values", () => {
   const { facts } = owner({
     v: {
       dates: { status: "ready", value: threeClaims },
@@ -115,9 +115,9 @@ it("uses the short zone-unavailable form for exact values", () => {
   });
   render(DocumentFactCells, {
     target: row(),
-    props: { versionID: "v", facts, zone: undefined },
+    props: { versionID: "v", facts, zone: { name: "Mars/Olympus", supported: false } },
   });
-  expect(screen.getByText("Zone unavailable")).toBeTruthy();
+  expect(screen.getByText("Timeline zone unavailable (Mars/Olympus)")).toBeTruthy();
 });
 
 it("reads nothing without a version, as for folders and hidden columns", () => {

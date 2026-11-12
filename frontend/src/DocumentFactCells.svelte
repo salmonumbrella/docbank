@@ -17,13 +17,8 @@
   const dates = $derived(read?.dates.status === "ready" ? read.dates.value : undefined);
   const people = $derived(read?.people.status === "ready" ? read.people.value : undefined);
   const primary = $derived(dates?.claims.find((claim) => claim.primary));
-  const shown = $derived.by(() => {
-    if (!primary) return undefined;
-    const when = primary.when;
-    if (when.state === "exact" && !zone?.supported)
-      return { value: "Zone unavailable", floating: false };
-    return formatWhen(when, zone);
-  });
+  // formatWhen owns the zone-unavailable message for exact values.
+  const shown = $derived(primary ? formatWhen(primary.when, zone) : undefined);
   const settled = $derived(people?.state !== "pending" && people?.state !== "failed");
   // tablePeople keeps independent operator assertions while a derivation is
   // pending or failed; derived edges and candidates wait for it.
@@ -66,9 +61,12 @@
   .facts-cell {
     white-space: nowrap;
   }
+  /* A long value, such as the zone-unavailable message, wraps at spaces when
+   * the column is squeezed instead of widening the table past its budget. */
   .fact-date {
     display: grid;
     line-height: 1.3;
+    white-space: normal;
   }
   .sub-date,
   .fact-muted {
