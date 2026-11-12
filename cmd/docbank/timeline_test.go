@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/v2"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -34,4 +36,23 @@ func TestTimelineQueryAndZoneOutput(t *testing.T) {
 	timelineZoneLine(cmd, "America/Toronto", true)
 	timelineZoneLine(cmd, "UTC", false)
 	require.Equal(t, "timezone: America/Toronto (default)\ntimezone: UTC (explicit)\n", stderr.String())
+}
+
+func TestTimelineCLIJSONAndTimezone(t *testing.T) {
+	_ = setupVaultHome(t)
+	for _, tc := range []struct {
+		args []string
+		line string
+	}{
+		{[]string{"timeline", "day", "2026-03-10"}, "timezone: UTC (default)\n"},
+		{[]string{"timeline", "days", "--from", "2026-03-10", "--to", "2026-03-10", "--timezone", "UTC"}, "timezone: UTC (explicit)\n"},
+	} {
+		out, err := runCLI(t, tc.args...)
+		require.NoError(t, err)
+		require.True(t, strings.HasPrefix(out, tc.line), out)
+		var value map[string]any
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(out, tc.line)), &value))
+		require.Equal(t, "UTC", value["timezone"])
+		require.Equal(t, tc.line == "timezone: UTC (default)\n", value["timezone_defaulted"])
+	}
 }
