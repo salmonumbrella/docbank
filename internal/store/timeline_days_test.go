@@ -714,4 +714,44 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
 		require.Zero(t, scratch)
 	}
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	service := newQuerySnapshotService(s, querySnapshotServiceOptions{
+		ChargeHook: func(ctx context.Context, _ string, _, bytes int64) error {
+			if bytes > 0 {
+				close(entered)
+				<-release
+				return ctx.Err()
+			}
+			return nil
+		},
+	})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	readCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	personQuery := snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT author:\"Absent Reader\""}`)
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.TimelineDay(readCtx, "owner", TimelineDayRequest{Scope: TimelineScope{Query: personQuery, Zone: "UTC"}, Date: date, Limit: 1})
+		done <- err
+	}()
+	<-entered // A placement was read after person-edge TEMP materialization.
+	require.NotEmpty(t, s.LeasedLexicalGenerationRoots())
+	require.Positive(t, service.stats().ReservedBytes)
+	cancel()
+	require.Positive(t, service.stats().ReservedBytes)
+	close(release)
+	released = true
+	require.ErrorIs(t, <-done, context.Canceled)
+	require.Empty(t, s.LeasedLexicalGenerationRoots())
+	require.Equal(t, snapshotCacheStats{}, service.stats())
+	var scratch int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
+	require.Zero(t, scratch)
 }

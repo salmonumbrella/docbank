@@ -172,10 +172,18 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 	defer func() { s.finishBuild(build, published) }()
 	var chargedRows, chargedBytes int64
 	reserve := func(rows, bytes int64) error {
+		if err := buildCtx.Err(); err != nil {
+			return err
+		}
 		chargedRows += rows
 		chargedBytes += bytes
 		if chargedRows > build.reservedRows || chargedBytes > build.reservedBytes {
-			return s.chargeBuild(build, max(0, chargedRows-build.reservedRows), max(0, chargedBytes-build.reservedBytes))
+			if err := s.chargeBuild(build, max(0, chargedRows-build.reservedRows), max(0, chargedBytes-build.reservedBytes)); err != nil {
+				return err
+			}
+		}
+		if s.chargeHook != nil {
+			return s.chargeHook(buildCtx, owner, rows, bytes)
 		}
 		return nil
 	}
