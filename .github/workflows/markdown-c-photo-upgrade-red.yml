@@ -1,0 +1,121 @@
+name: Disposable C photo upgrade RED
+
+on:
+  push:
+    branches: [build/markdown-c-photo-upgrade-red-r2]
+
+permissions:
+  contents: read
+
+jobs:
+  photo-upgrade-red:
+    if: github.repository == 'salmonumbrella/docbank' && github.event_name == 'push' && github.ref == 'refs/heads/build/markdown-c-photo-upgrade-red-r2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ["0", "1"]
+    env:
+      SOURCE: 2f1f1a0aa31e00ca0346491ae73433e223f73cb9
+      CGO_ENABLED: ${{ matrix.cgo }}
+      GOFLAGS: -trimpath
+      DOCBANK_TELEMETRY_ENABLED: "0"
+    steps:
+      - name: Check out disposable workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: proof
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Record immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          printf 'source=%s\nproof=%s\ncgo=%s\n' "$SOURCE" "$GITHUB_SHA" "$CGO_ENABLED" > evidence/inputs.txt
+          test "$(git -C proof rev-parse HEAD^)" = "$SOURCE"
+      - name: Check out exact test-only product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: 2f1f1a0aa31e00ca0346491ae73433e223f73cb9
+          path: source
+          persist-credentials: false
+      - name: Set up Go from exact product go.mod
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: source/go.mod
+          cache: false
+      - name: Run only released photo suggestion upgrade regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE"
+          git -C source diff --exit-code
+          go version > evidence/toolchain.txt
+          (cd source && go env CGO_ENABLED GOOS GOARCH) >> evidence/toolchain.txt
+          set +e
+          (cd source && timeout 900s go test -json -tags fts5 ./internal/store/ -run '^TestUpgradeReleasedV0170PreservesPhotoSuggestions$' -count=1 -timeout=10m) > evidence/go-test.jsonl 2> evidence/go-test.stderr
+          result=$?
+          set -e
+          printf '%s\n' "$result" > evidence/go-test.exit
+          git -C source diff --exit-code
+      - name: Require compiled intended RED in every selected SQLite driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          root = Path('evidence')
+          raw = (root / 'go-test.jsonl').read_text()
+          events = []
+          non_json = []
+          for line in raw.splitlines():
+              try:
+                  events.append(json.loads(line))
+              except json.JSONDecodeError:
+                  non_json.append(line)
+          parent = 'TestUpgradeReleasedV0170PreservesPhotoSuggestions'
+          drivers = ['modernc.org/sqlite']
+          if os.environ['CGO_ENABLED'] == '1':
+              drivers.append('mattn/go-sqlite3')
+          required = {parent, *(parent + '/' + driver for driver in drivers)}
+          failures = {e['Test'] for e in events if e.get('Action') == 'fail' and e.get('Test')}
+          started = {e['Test'] for e in events if e.get('Action') == 'run' and e.get('Test')}
+          skips = [e.get('Test', '<package>') for e in events if e.get('Action') == 'skip']
+          messages = [
+              'upgrades keep pending photo suggestions readable without regeneration',
+              'upgrades preserve every photo suggestion column',
+              'upgrades keep automatic photo descriptions settled',
+              'upgrades must not reopen completed photo description jobs',
+          ]
+          missing = {}
+          for driver in drivers:
+              name = parent + '/' + driver
+              output = ''.join(e.get('Output', '') for e in events if e.get('Test') == name)
+              missing[name] = [message for message in messages if message not in output]
+          output = ''.join(e.get('Output', '') for e in events)
+          (root / 'go-test.log').write_text(output)
+          exit_code = int((root / 'go-test.exit').read_text())
+          package_failed = any(e.get('Action') == 'fail' and e.get('Package') == 'go.kenn.io/docbank/internal/store' and not e.get('Test') for e in events)
+          qualified = (exit_code == 1 and failures == required and required <= started
+                       and not skips and not non_json and not any(missing.values())
+                       and 'Received unexpected error:' not in output and package_failed)
+          receipt = dict(source=os.environ['SOURCE'], cgo=os.environ['CGO_ENABLED'],
+                         exit_code=exit_code, required=sorted(required), failed=sorted(failures),
+                         missing_messages=missing, skipped=skips, non_json=non_json,
+                         package_failed=package_failed, intended_red_qualified=qualified)
+          (root / 'result.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          print(json.dumps(receipt, indent=2))
+          if not qualified:
+              raise SystemExit('Expected compiled photo-upgrade preservation RED did not qualify')
+          PYTHON
+      - name: Upload raw RED logs and qualification receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: c-photo-upgrade-red-cgo${{ matrix.cgo }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
