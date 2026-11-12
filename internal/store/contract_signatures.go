@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"math"
 	"net/url"
 	"path"
@@ -246,58 +245,46 @@ func markContractPendingTx(ctx context.Context, tx *sql.Tx, contractID string) e
 	return err
 }
 func (s *Store) GetSignatureRequest(ctx context.Context, id string) (SignatureRequest, error) {
-	opts := &sql.TxOptions{ReadOnly: true}
-	if s.postgresSchema != "" {
-		opts.Isolation = sql.LevelRepeatableRead
-	}
-	tx, err := s.db.BeginTx(ctx, opts)
+	var v SignatureRequest
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		v, err = getSignatureTx(ctx, tx, id)
+		return err
+	})
 	if err != nil {
 		return SignatureRequest{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	v, err := getSignatureTx(ctx, tx, id)
-	if err != nil {
-		return SignatureRequest{}, err
-	}
-	return v, tx.Commit()
+	return v, nil
 }
+
 func (s *Store) ListSignatureRequests(ctx context.Context, id string, limit, offset int) ([]SignatureRequestSummary, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, ErrInvalidSignatureRequest
 	}
-	opts := &sql.TxOptions{ReadOnly: true}
-	if s.postgresSchema != "" {
-		opts.Isolation = sql.LevelRepeatableRead
-	}
-	tx, err := s.db.BeginTx(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err = getContractTx(ctx, tx, id, time.Now().Format(time.DateOnly)); err != nil {
-		return nil, err
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+signatureColumns+` FROM contract_signature_requests WHERE contract_id=$1 ORDER BY created_at DESC,request_id DESC LIMIT $2 OFFSET $3`, id, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
 	items := []SignatureRequestSummary{}
-	for rows.Next() {
-		v, e := scanSignature(rows)
-		if e != nil {
-			return nil, e
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		if _, err := getContractTx(ctx, tx, id, time.Now().Format(time.DateOnly)); err != nil {
+			return err
 		}
-		items = append(items, v)
-	}
-	if err = rows.Err(); err != nil {
+		rows, err := tx.QueryContext(ctx, `SELECT `+signatureColumns+` FROM contract_signature_requests WHERE contract_id=$1 ORDER BY created_at DESC,request_id DESC LIMIT $2 OFFSET $3`, id, limit, offset)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			v, err := scanSignature(rows)
+			if err != nil {
+				return err
+			}
+			items = append(items, v)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return rows.Close()
+	})
+	if err != nil {
 		return nil, err
-	}
-	if err = rows.Close(); err != nil {
-		return nil, err
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, fmt.Errorf("list signatures: %w", err)
 	}
 	return items, nil
 }
