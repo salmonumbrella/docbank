@@ -149,7 +149,7 @@ describe("snapshot transport and receipt validation", () => {
   it("keeps the default timezone in response metadata, not query evidence", async () => {
     const fetcher = vi.spyOn(globalThis, "fetch");
     fetcher.mockResolvedValueOnce(
-      jsonResponse(await page({ timezone: "America/Toronto", timezone_defaulted: true })),
+      jsonResponse(await page({ timezone: "America/Toronto", timezone_defaulted: true, facets: [] })),
     );
     const accepted = await createSnapshot(
       "session",
@@ -168,6 +168,7 @@ describe("snapshot transport and receipt validation", () => {
           query_fingerprint: await queryFingerprint(changed),
           timezone: "America/Toronto",
           timezone_defaulted: true,
+          facets: [],
         }),
       ),
     );
