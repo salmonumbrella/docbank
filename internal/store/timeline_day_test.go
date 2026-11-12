@@ -188,6 +188,21 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 	require.False(t, second.DateOnlyTruncated)
 	svc.Revoke("owner")
 	require.Equal(t, snapshotCacheStats{}, svc.stats())
+
+	for name, limits := range map[string]snapshotCacheLimits{
+		"rows":  {MaxRows: 201},
+		"bytes": {MaxBytes: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			limited := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: limits})
+			t.Cleanup(func() { require.NoError(t, limited.Close()) })
+			firstRequest := req
+			firstRequest.Cursor = ""
+			_, err := limited.TimelineDay(t.Context(), "owner", firstRequest)
+			require.ErrorIs(t, err, ErrSnapshotAdmission)
+			require.Equal(t, snapshotCacheStats{}, limited.stats())
+		})
+	}
 }
 
 func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store) {
