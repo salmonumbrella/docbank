@@ -1,0 +1,27 @@
+name: C3 CI1 test first
+on:
+  push:
+    branches: [bootstrap/contracts-c3-ci1-test-first-20261112]
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Audit refusal
+        run: go test -tags fts5 ./internal/store -run '^TestContractAuditRefusal$' -count=1
+      - name: Unknown document mutation outcomes (expected RED)
+        run: go test -tags fts5 ./cmd/docbank -run '^TestContractDocumentCLI$' -count=1
