@@ -3,11 +3,13 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/notemarkdown"
 )
 
 func TestNoteTextReadRetainedOriginal(t *testing.T) {
@@ -70,4 +72,43 @@ func TestNoteOutlineSectionEndsAreInclusive(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &result))
 	require.Equal(t, "# First\r\none\r\n", result.Text)
+}
+
+func TestNoteListFiltersBeforePaging(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	for _, test := range []struct{ name, src string }{
+		{"a.md", "---\ntags: [red]\n---\n# A\n"},
+		{"b.md", "---\ntags: [blue]\n---\n# B\n"},
+		{"c.md", "---\ntags: [blue]\n---\n# C\n"},
+	} {
+		hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader(test.src))
+		require.NoError(t, err)
+		_, err = s.CreateFile(ctx, s.RootID(), test.name, hash, size, "text/markdown")
+		require.NoError(t, err)
+		page, err := s.ScanNoteTargetsAfter(ctx, notemarkdown.Recipe, "", 25)
+		require.NoError(t, err)
+		require.Len(t, page.Targets, 1)
+		note, err := notemarkdown.Parse(ctx, []byte(test.src), notemarkdown.Limits{})
+		require.NoError(t, err)
+		require.NoError(t, s.PublishNoteParse(ctx, page.Targets[0], notemarkdown.Recipe, "ok", note))
+	}
+	resp, body := get(t, ts, "/api/v1/notes?field=tags%3Ablue&page_size=1", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var result struct {
+		Items []struct {
+			Path string `json:"path"`
+		} `json:"items"`
+		NextCursor string `json:"next_cursor"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Len(t, result.Items, 1)
+	require.Equal(t, "/b.md", result.Items[0].Path)
+	require.NotEmpty(t, result.NextCursor)
+	resp, body = get(t, ts, "/api/v1/notes?field=tags%3Ablue&page_size=1&cursor="+url.QueryEscape(result.NextCursor), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	require.Len(t, result.Items, 1)
+	require.Equal(t, "/c.md", result.Items[0].Path)
 }

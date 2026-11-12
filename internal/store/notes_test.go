@@ -182,6 +182,32 @@ func checkNoteLifecycle(t *testing.T, newStore func(*testing.T) *Store) {
 	require.Len(t, noteTargets(t, s, notemarkdown.Recipe), 1)
 }
 
+func checkNoteList(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	ctx := t.Context()
+	for _, test := range []struct{ name, src string }{
+		{"a.md", "---\ntags: [red]\n---\n# Alpha\n"},
+		{"b.md", "---\ntags: [blue, green]\n---\n# Beta\n"},
+		{"c.md", "---\ntags: [blue]\n---\n# Gamma\n"},
+	} {
+		createNoteFixture(t, s, s.RootID(), test.name, test.src, "text/markdown")
+		publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], test.src, notemarkdown.Recipe)
+	}
+	query := NoteListQuery{UnderPath: "/", Recursive: true, Sort: "path", Direction: "asc", PageSize: 1, Fields: []NoteFieldFilter{{Key: "tags", Value: "blue"}}}
+	page, err := s.ListNotes(ctx, query, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "/b.md", page.Items[0].Path)
+	require.True(t, page.HasNext)
+	page, err = s.ListNotes(ctx, query, &page.Last)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "/c.md", page.Items[0].Path)
+	require.False(t, page.HasNext)
+}
+
 func checkNoteMoveAndPresence(t *testing.T, newStore func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
