@@ -1,0 +1,56 @@
+name: Tax T4b-1 source generation receipt
+on:
+  push:
+    branches: [build/tax-t4b1-generation]
+permissions:
+  contents: read
+jobs:
+  generate:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - run: make generate-api
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: tax-t4b1-generated-api-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts
+  schema-contract:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Record schema contract output
+        run: |
+          set -o pipefail
+          go test -tags fts5 ./internal/store -run '^TestStorageSchemaVersionContract$' -count=1 2>&1 | tee schema-contract-output.txt
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: tax-t4b1-schema-contract-${{ github.sha }}
+          if-no-files-found: error
+          path: schema-contract-output.txt
