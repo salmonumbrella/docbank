@@ -10,15 +10,23 @@ import type {
   PhotoAuthoredPreparation,
 } from "./generated/docbank.js";
 import type { Query } from "./query.js";
+import { versionFactsResponse } from "./document-facts-test-fixtures.js";
 import type { SavedQuery } from "./savedQueries.js";
 
 type SmartSetOverrides = Partial<Omit<SavedQuery, "kind" | "payload" | "fingerprint">>;
+
+// Facts reads get the exact version's safe facts instead of being held as rows.
+function versionFactsPromise(url: string): Promise<Response> | undefined {
+  const facts = versionFactsResponse(url);
+  return facts && Promise.resolve(facts);
+}
 
 export function stubDeferredPhotoFetch() {
   const rows: ((response: Response) => void)[] = [];
   const counts: ((response: Response) => void)[] = [];
   const fetcher = vi.fn(
     (url: string, init: RequestInit) =>
+      versionFactsPromise(url) ??
       photoMetadataResponse(url, init) ??
       new Promise<Response>((resolve) =>
         (JSON.parse(String(init.body)).facets?.length ? counts : rows).push(resolve),

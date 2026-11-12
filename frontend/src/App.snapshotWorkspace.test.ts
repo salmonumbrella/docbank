@@ -8,6 +8,7 @@ import { canonicalQuery, highlightSetFingerprint, type HighlightSet, type Query 
 import { batchTagRequestDigest } from "./batch-tags.js";
 import type { SnapshotPage, SnapshotRow } from "./snapshots.js";
 import { versionFactsResponse } from "./document-facts-test-fixtures.js";
+import { clearToasts } from "./toast.svelte.js";
 
 afterEach(() => {
   cleanup();
@@ -1271,6 +1272,8 @@ it("uses the inspector's confirmed revision for Tag selected during Advanced sea
 });
 
 it("checks a person chip's search first and acts only for the current selection and click", async () => {
+  // Toasts are module state that cleanup() keeps; start this test without any.
+  clearToasts();
   history.replaceState(
     null,
     "",
@@ -1479,12 +1482,16 @@ it("checks a person chip's search first and acts only for the current selection 
     "value",
     "budget",
   );
+  // The Advanced editor opened here shows no expression field (the last run
+  // search was not loaded from a definition), so edit its page size: that
+  // changes the draft revision without touching the typed search.
   await clickHeld(mara, "Mara Okonkwo-Fell");
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Query syntax"), { target: { value: "minutes" } });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Documents per page: 100" }));
+  await fireEvent.click(screen.getByRole("option", { name: "50" }));
   await release(mara);
   expect(searches).toEqual([initialQuery.text, `person:${ines}`]);
-  expect((screen.getByLabelText("Query syntax") as HTMLTextAreaElement).value).toBe("minutes");
+  expect(screen.getByRole("combobox", { name: "Documents per page: 50" })).toBeTruthy();
 });
 
 it("rereads facts on Refresh and drops the view's reads when leaving Documents", async () => {

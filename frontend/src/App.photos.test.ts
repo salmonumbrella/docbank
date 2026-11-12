@@ -268,6 +268,8 @@ it.each(["workspace switch", "Clear filters"])(
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
     vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      const facts = versionFactsResponse(url);
+      if (facts) return facts;
       if (url.endsWith("/photos/hidden"))
         return Response.json({
           configured: true,
@@ -1744,6 +1746,8 @@ it("clears previews on sidebar and history departure while retaining eligible se
   const stored = storage();
   let changed = false;
   const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     if (url.endsWith("/photos/albums")) return new Response("[]");
     if (url.endsWith("/photos/hidden"))
       return Response.json({ configured: true, change_id: changed ? "second" : "first" });
@@ -2688,6 +2692,8 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
   let listings = 0;
   let finishListing: ((response: Response) => void) | undefined;
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    const facts = versionFactsResponse(url);
+    if (facts) return facts;
     if (url.includes("/photos/assets/query")) {
       const request = JSON.parse(init!.body as string);
       if (request.facets?.length)
