@@ -47,7 +47,7 @@ func registerContentWriteOpenAPI(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Replacement committed", Headers: map[string]*huma.Param{
 				"ETag": {Description: "Quoted resulting node revision", Schema: &huma.Schema{Type: openAPIStringType}},
-			}, Content: map[string]*huma.MediaType{"application/json": {Schema: receiptSchema}}},
+			}, Content: map[string]*huma.MediaType{jsonMediaType: {Schema: receiptSchema}}},
 			"default": {Description: "Error", Content: map[string]*huma.MediaType{
 				"application/problem+json": {Schema: errorSchema},
 			}},

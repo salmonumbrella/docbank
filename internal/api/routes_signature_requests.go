@@ -79,8 +79,7 @@ func signatureResult(v store.SignatureRequest) *signatureOutput {
 	return &signatureOutput{CacheControl: cacheControlNoStore, ETag: revisionETag(v.Revision), Body: v}
 }
 func signatureError(err error) error {
-	var created *contractsign.CreationError
-	if errors.As(err, &created) {
+	if created, ok := errors.AsType[*contractsign.CreationError](err); ok {
 		code := "docuseal_creation_unknown"
 		if errors.Is(err, docusealclient.ErrCreationFailed) {
 			code = "docuseal_creation_failed"
@@ -89,8 +88,7 @@ func signatureError(err error) error {
 		e.RequestID = created.RequestID
 		return e
 	}
-	var problem *Error
-	if errors.As(err, &problem) {
+	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
 	}
 	if errors.Is(err, store.ErrInvalidSignatureRequest) || errors.Is(err, store.ErrSignatureRequestOpen) || errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrStaleRevision) || errors.Is(err, store.ErrAuditMutationUnsupported) {
@@ -139,7 +137,7 @@ func privateSignatureBody(api huma.API) func(huma.Context, func(huma.Context)) {
 		} else {
 			contentType := ctx.Header("Content-Type")
 			if contentType == "" {
-				contentType = "application/json"
+				contentType = jsonMediaType
 			}
 			var request SignatureRequestBody
 			if err = api.Unmarshal(contentType, body, &request); err == nil {

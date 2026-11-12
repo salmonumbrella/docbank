@@ -19,6 +19,12 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
+// Common persisted lifecycle values shared by independent operations.
+const (
+	stateFailed    = "failed"
+	stateCompleted = "completed"
+)
+
 //go:embed schema.sql
 var schemaSQL string
 

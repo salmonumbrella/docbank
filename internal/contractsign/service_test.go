@@ -2,7 +2,6 @@ package contractsign
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -68,6 +67,6 @@ func TestCancellationSettlesAndReopenBlocksSecondInvitation(t *testing.T) {
 	require.Equal(t, "docuseal_creation_unknown", request.LastErrorCode)
 	svc.Store = s
 	_, err = svc.Request(t.Context(), contract.ContractID, contract.Revision, 7, signers)
-	require.True(t, errors.Is(err, store.ErrSignatureRequestOpen))
+	require.ErrorIs(t, err, store.ErrSignatureRequestOpen)
 	require.EqualValues(t, 1, posts.Load())
 }

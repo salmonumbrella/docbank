@@ -118,7 +118,7 @@ func (s *Store) emailDocumentProcessingState(ctx context.Context, q metadataQuer
 			return string(RenditionJobFailed), failure, nil
 		case "queued", "running", "retry_wait":
 			return "pending", failure, nil
-		case "completed":
+		case stateCompleted:
 			return "decoded", "rendition_not_serving", nil
 		}
 	}

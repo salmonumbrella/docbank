@@ -37,14 +37,14 @@ var signatureSignerMetadata = newMetadataTable(metadataTable[metadataSignatureSi
 
 func signatureOpen(s string) bool {
 	switch s {
-	case "creating", "sent", "partially_signed", "completed":
+	case "creating", "sent", "partially_signed", stateCompleted:
 		return true
 	}
 	return false
 }
 func validSignatureState(s string) bool {
 	switch s {
-	case "creating", "sent", "partially_signed", "completed", "stored", "declined", "expired", "cancelled", "failed":
+	case "creating", "sent", "partially_signed", stateCompleted, "stored", "declined", "expired", "cancelled", stateFailed:
 		return true
 	}
 	return false
@@ -59,7 +59,7 @@ func validateSignatureRequestMetadata(v metadataSignatureRequest) error {
 	if v.ProviderSubmissionID != nil && !signaturePositiveID(*v.ProviderSubmissionID) {
 		return errors.New("invalid signature submission ID")
 	}
-	if (v.State == "creating" || v.State == "failed") != (v.ProviderSubmissionID == nil) {
+	if (v.State == "creating" || v.State == stateFailed) != (v.ProviderSubmissionID == nil) {
 		return errors.New("incoherent signature submission")
 	}
 	if err := validateMetadataTime("signature created_at", v.CreatedAt); err != nil {
@@ -75,7 +75,7 @@ func validateSignatureSignerMetadata(v metadataSignatureSigner) error {
 		return errors.New("invalid signature submitter ID")
 	}
 	switch v.State {
-	case "awaiting", "sent", "opened", "completed", "declined":
+	case "awaiting", "sent", "opened", stateCompleted, "declined":
 		return nil
 	}
 	return errors.New("invalid signature signer state")
@@ -118,38 +118,43 @@ func validateSignatureMetadataState(ctx context.Context, q metadataQuerier) erro
 		return err
 	}
 	for _, v := range requests {
-		r, e := q.QueryContext(ctx, `SELECT position,role,provider_submitter_id FROM contract_signature_signers WHERE request_id=$1 ORDER BY position`, v.id)
-		if e != nil {
-			return e
-		}
-		count := 0
-		roles := map[string]bool{}
-		ids := map[string]bool{}
-		for r.Next() {
-			var pos int
-			var role string
-			var id *string
-			if e = r.Scan(&pos, &role, &id); e != nil {
-				_ = r.Close()
-				return e
+		if err := func() error {
+			r, err := q.QueryContext(ctx, `SELECT position,role,provider_submitter_id FROM contract_signature_signers WHERE request_id=$1 ORDER BY position`, v.id)
+			if err != nil {
+				return err
 			}
-			if pos != count || roles[role] || (id == nil) != (v.submission == nil) || (id != nil && ids[*id]) {
-				_ = r.Close()
-				return errors.New("invalid signature signer graph")
+			defer func() { _ = r.Close() }()
+			count := 0
+			roles := map[string]bool{}
+			ids := map[string]bool{}
+			for r.Next() {
+				var pos int
+				var role string
+				var id *string
+				if err := r.Scan(&pos, &role, &id); err != nil {
+					return err
+				}
+				if pos != count || roles[role] || (id == nil) != (v.submission == nil) || (id != nil && ids[*id]) {
+					return errors.New("invalid signature signer graph")
+				}
+				roles[role] = true
+				if id != nil {
+					ids[*id] = true
+				}
+				count++
 			}
-			roles[role] = true
-			if id != nil {
-				ids[*id] = true
+			if err := r.Err(); err != nil {
+				return err
 			}
-			count++
-		}
-		e = r.Err()
-		_ = r.Close()
-		if e != nil {
-			return e
-		}
-		if count < 1 || count > 20 {
-			return errors.New("invalid signature signer count")
+			if err := r.Close(); err != nil {
+				return err
+			}
+			if count < 1 || count > 20 {
+				return errors.New("invalid signature signer count")
+			}
+			return nil
+		}(); err != nil {
+			return err
 		}
 	}
 	return nil

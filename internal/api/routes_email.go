@@ -56,7 +56,7 @@ func handleEmailMetadata(w http.ResponseWriter, r *http.Request, d Deps) {
 }
 
 func handleEnsureEmailMetadata(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
-	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || media != "application/json" {
+	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || media != jsonMediaType {
 		writeError(w, NewError(http.StatusUnsupportedMediaType, "validation", "email ensure requires application/json"))
 		return
 	}
@@ -185,7 +185,7 @@ func registerEmailOpenAPI(api huma.API) {
 	jsonResponse := func(description string, schema *huma.Schema) *huma.Response {
 		return &huma.Response{Description: description, Headers: map[string]*huma.Param{
 			"Cache-Control": {Description: "Mutable selection state is not cacheable", Schema: &huma.Schema{Type: openAPIStringType}},
-		}, Content: map[string]*huma.MediaType{"application/json": {Schema: schema}}}
+		}, Content: map[string]*huma.MediaType{jsonMediaType: {Schema: schema}}}
 	}
 	defaultResponse := &huma.Response{Description: "Error", Content: map[string]*huma.MediaType{
 		"application/problem+json": {Schema: errorSchema},
@@ -209,7 +209,7 @@ func registerEmailOpenAPI(api huma.API) {
 		OperationID: "ensureEmailMetadata", Method: http.MethodPost,
 		Path: "/api/v1/versions/{version_id}/email", Summary: "Ensure email metadata for one immutable version",
 		Parameters: []*huma.Param{versionParam}, RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
-			"application/json": {Schema: &huma.Schema{Type: "object", AdditionalProperties: false}},
+			jsonMediaType: {Schema: &huma.Schema{Type: "object", AdditionalProperties: false}},
 		}}, Responses: map[string]*huma.Response{"200": jsonResponse("Email metadata", metadata), "default": defaultResponse},
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{

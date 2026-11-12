@@ -179,7 +179,7 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		}
 		initialState := "queued"
 		if satisfied {
-			initialState = "completed"
+			initialState = stateCompleted
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO embedding_jobs(
 			job_id,vault_uid,content_version_id,profile_fingerprint,binding_id,input_kind,
@@ -612,7 +612,7 @@ func (s *Store) AbandonEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 }
 
 func (s *Store) FailEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, work EmbeddingJobWork, code EmbeddingFailureCode, receipt EmbeddingAttemptReceipt, at time.Time) error {
-	state, available := "failed", at.UTC()
+	state, available := stateFailed, at.UTC()
 	var claims int
 	if err := s.db.QueryRowContext(ctx, `SELECT claim_count FROM embedding_jobs WHERE job_id=$1`, claim.AttemptID).Scan(&claims); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -646,7 +646,7 @@ func (s *Store) PublishEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 		if _, err := publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, head, work.Consent, prior, claim.AttemptID, claim.Epoch, at); err != nil {
 			return err
 		}
-		return finishEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, "completed", "", receipt, at, at)
+		return finishEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, stateCompleted, "", receipt, at, at)
 	})
 }
 

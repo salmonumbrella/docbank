@@ -50,7 +50,7 @@ func (e *Error) GetStatus() int { return e.Status }
 
 // ContentType keeps huma emitting problem+json for our envelope.
 func (e *Error) ContentType(ct string) string {
-	if ct == "application/json" {
+	if ct == jsonMediaType {
 		return "application/problem+json"
 	}
 	return ct

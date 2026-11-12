@@ -43,6 +43,7 @@ func checkSignatureLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.Len(t, listed, 1)
 }
 func TestSignatureMetadataRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	c, err := s.CreateContract(ctx, ContractInput{Title: "Example"})
@@ -73,7 +74,7 @@ func checkSignatureFailedRetry(t *testing.T, open func(*testing.T) *Store) {
 	next, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
 	require.NoError(t, err)
 	require.NotEqual(t, req.RequestID, next.RequestID)
-	next, err = s.FinishSignatureCreation(ctx, next.RequestID, next.Revision, SignatureCreationResult{SubmissionID: "10", SubmitterIDs: []string{"11"}})
+	_, err = s.FinishSignatureCreation(ctx, next.RequestID, next.Revision, SignatureCreationResult{SubmissionID: "10", SubmitterIDs: []string{"11"}})
 	require.NoError(t, err)
 	c, err = s.GetContract(ctx, c.ContractID, "2026-01-01")
 	require.NoError(t, err)
@@ -81,6 +82,7 @@ func checkSignatureFailedRetry(t *testing.T, open func(*testing.T) *Store) {
 	require.EqualValues(t, 1, c.Revision)
 }
 func TestSignatureEmailUnicodeIngress(t *testing.T) {
+	t.Parallel()
 	v := signatureFixture().Signers[0]
 	v.Email = strings.Repeat("界", 120) + "@example.com"
 	require.True(t, ValidSignatureSigner(v))

@@ -98,7 +98,7 @@ func validSignatureInput(in SignatureRequestInput) bool {
 
 const signatureColumns = `request_id,contract_id,provider,endpoint_origin,api_path,template_id,template_name,provider_submission_id,state,last_error_code,revision,created_at,updated_at`
 
-func scanSignature(row interface{ Scan(...any) error }) (SignatureRequestSummary, error) {
+func scanSignature(row interface{ Scan(dest ...any) error }) (SignatureRequestSummary, error) {
 	var v SignatureRequestSummary
 	err := row.Scan(&v.RequestID, &v.ContractID, &v.Provider, &v.EndpointOrigin, &v.APIPath, &v.TemplateID, &v.TemplateName, &v.ProviderSubmissionID, &v.State, &v.LastErrorCode, &v.Revision, &v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -196,7 +196,7 @@ func (s *Store) FinishSignatureCreation(ctx context.Context, id string, rev int6
 			state = "sent"
 			code = ""
 		} else if !result.Uncertain {
-			state = "failed"
+			state = stateFailed
 		}
 		if code != "" && code != "docuseal_creation_unknown" && code != "docuseal_creation_failed" {
 			return ErrInvalidSignatureRequest

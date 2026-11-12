@@ -47,11 +47,11 @@ func printSignatureRequest(cmd *cobra.Command, v store.SignatureRequest, asJSON 
 		return writeCLIJSON(cmd.OutOrStdout(), v)
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\trevision %d\n", v.RequestID, v.State, v.Revision); err != nil {
-		return err
+		return fmt.Errorf("write signature request: %w", err)
 	}
 	for _, s := range v.Signers {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%q\t%q\t%q\t%s\n", s.Role, s.Name, s.Email, s.State); err != nil {
-			return err
+			return fmt.Errorf("write signer: %w", err)
 		}
 	}
 	return nil
@@ -122,7 +122,7 @@ func newSignatureStatusCommand() *cobra.Command {
 		}
 		for _, v := range page.Items {
 			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%q\trevision %d\n", v.RequestID, v.State, v.TemplateName, v.Revision); err != nil {
-				return err
+				return fmt.Errorf("write signature history: %w", err)
 			}
 		}
 		return nil

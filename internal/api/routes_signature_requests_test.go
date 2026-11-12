@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -87,30 +88,30 @@ func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
 			var all map[string]any
 			if err := json.UnmarshalDecode(decoder, &all); err != nil {
 				t.Error(err)
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			if len(all) != 3 {
 				t.Errorf("unexpected request fields: %v", all)
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			raw, _ := json.Marshal(all)
 			if err := json.Unmarshal(raw, &got); err != nil {
 				t.Error(err)
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			if got.TemplateID != 7 || !got.SendEmail || len(got.Submitters) != 2 {
 				t.Error("invalid submission")
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			for i, role := range []string{"Tenant", "Owner"} {
 				signer := got.Submitters[i]
 				if len(signer) != 4 || signer["role"] != role {
 					t.Error("invalid signer projection")
-					w.WriteHeader(500)
+					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
 			}
@@ -118,13 +119,13 @@ func TestSignatureRequestDisclosesOnlySigners(t *testing.T) {
 			parts := strings.Split(key, ":")
 			if !ok || len(parts) != 3 {
 				t.Error("invalid external key")
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			persisted, err := live.GetSignatureRequest(r.Context(), parts[1])
 			if err != nil || persisted.State != "creating" || len(persisted.Signers) != 2 {
 				t.Error("intent was not durable before POST")
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -207,7 +208,7 @@ func TestSignatureRequestHistoryAvailableWithoutConnection(t *testing.T) {
 
 func TestSignatureRequestDefiniteProviderFailureAllowsRetry(t *testing.T) {
 	for _, status := range []int{http.StatusUnprocessableEntity, http.StatusTooManyRequests} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			var posts atomic.Int32
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost {

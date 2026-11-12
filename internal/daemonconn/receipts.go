@@ -3407,8 +3407,7 @@ func (c *Connection) Shutdown(ctx context.Context, token string) error {
 
 // SignatureRequestErrorID returns an opaque request ID from a signing failure.
 func SignatureRequestErrorID(err error) string {
-	var problem *problemError
-	if errors.As(err, &problem) {
+	if problem, ok := errors.AsType[*problemError](err); ok {
 		return problem.requestID
 	}
 	return ""

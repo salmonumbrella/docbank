@@ -34,6 +34,7 @@ func (c *Connection) CreateSignatureRequest(ctx context.Context, id string, rev 
 	defer func() { _ = r.Body.Close() }()
 	var out struct {
 		store.SignatureRequest
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	err = decodeBoundedResponse(r, &out, 3<<20)
@@ -66,6 +67,7 @@ func (c *Connection) SignatureRequest(ctx context.Context, id string) (store.Sig
 	defer func() { _ = r.Body.Close() }()
 	var out struct {
 		store.SignatureRequest
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	if err = decodeBoundedResponse(r, &out, 3<<20); err == nil {
@@ -89,6 +91,7 @@ func (c *Connection) SignatureRequests(ctx context.Context, id string, limit, of
 	defer func() { _ = r.Body.Close() }()
 	var out struct {
 		api.SignatureRequestPage
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	err = decodeBoundedResponse(r, &out, 3<<20)
