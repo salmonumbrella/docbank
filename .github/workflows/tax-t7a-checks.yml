@@ -49,4 +49,4 @@ jobs:
         run: npm --prefix frontend test -- src/taxMoney.test.ts src/taxesView.test.ts src/Taxes.test.ts src/App.pages.test.ts src/app-opened.test.ts
       - name: Web page route
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: go test -tags fts5 ./internal/api -run '^TestWebPages$'
+        run: go test -tags fts5 ./internal/api -run '^(TestWebPages|TestWebSessionAllowsOnlyTaxListReads)$'
