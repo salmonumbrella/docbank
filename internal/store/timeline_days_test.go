@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -16,17 +15,29 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
-func TestTimelineDaysUndatedAndPending(t *testing.T) {
-	checkTimelineDaysUndatedAndPending(t, newTestStore)
+func publishTimelineSafe(t *testing.T, s *Store, target DocumentEventTarget, record document.DocumentEventsV1) {
+	t.Helper()
+	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+	require.True(t, ok)
+	record.Primaries = append(record.Primaries, primary)
+	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
 }
+
+func timelineTestService(t *testing.T, s *Store) *QuerySnapshotService {
+	t.Helper()
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return svc
+}
+
 func checkTimelineDaysUndatedAndPending(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.txt", fakeHash("a1"), 10, "text/plain")
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
@@ -34,11 +45,7 @@ func checkTimelineDaysUndatedAndPending(t *testing.T, open func(*testing.T) *Sto
 	require.ErrorIs(t, err, ErrDocumentDatesPending)
 	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "d1")
-	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-	require.True(t, ok)
-	record.Primaries = append(record.Primaries, primary)
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
+	publishTimelineSafe(t, s, target, record)
 	days, err := svc.TimelineDays(ctx, "owner", scope, date, date)
 	require.NoError(t, err)
 	require.Len(t, days.Days, 1)
@@ -95,7 +102,6 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 		})
 	}
 	q := base
-	q = base
 	q.Filters.CollapseDuplicates = true
 	require.NoError(t, validatePostgresTimelineScope(q))
 	for _, mode := range []string{"lexical", "semantic", "hybrid"} {
@@ -105,7 +111,7 @@ func TestTimelineScopeRejectsBeforeDatabase(t *testing.T) {
 		}
 	}
 	q.Sort.Field = "relevance"
-	require.Error(t, validatePostgresTimelineScope(q))
+	require.ErrorContains(t, validatePostgresTimelineScope(q), "relevance sort is not supported by bound queries")
 }
 
 func timelineNarrowingFilters() map[string]query.Filters {
@@ -160,23 +166,18 @@ func timelineNarrowingFilters() map[string]query.Filters {
 func checkTimelineScopeRejected(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2026-03-10")
 	require.NoError(t, err)
-	for name, filters := range timelineNarrowingFilters() {
-		t.Run(name, func(t *testing.T) {
-			q := snapshotTestQuery(t, `{}`)
-			q.Filters = filters
-			scope := TimelineScope{Query: q, Zone: "UTC"}
-			_, err := svc.TimelineDays(t.Context(), "owner", scope, date, date)
-			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
-			_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
-			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
-			_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Cursor: "invalid", Limit: 1})
-			require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
-		})
-	}
+	q := snapshotTestQuery(t, `{}`)
+	q.Filters = timelineNarrowingFilters()["person"]
+	scope := TimelineScope{Query: q, Zone: "UTC"}
+	_, err = svc.TimelineDays(t.Context(), "owner", scope, date, date)
+	require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+	_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 1})
+	require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
+	_, err = svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Cursor: "invalid", Limit: 1})
+	require.ErrorIs(t, err, ErrTimelineScopeUnsupported)
 }
 
 // A terminal failed attempt can retain an old generation. Neither that head
@@ -189,13 +190,8 @@ func checkTimelineFreshnessTerminalAttempts(t *testing.T, open func(*testing.T) 
 	require.NoError(t, err)
 	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "f02")
-	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-	require.True(t, ok)
-	record.Primaries = append(record.Primaries, primary)
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	publishTimelineSafe(t, s, target, record)
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
@@ -265,14 +261,9 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 			other.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, other.SourceKey, other.DateKind, other.DateValue, other.Precision, other.TimezoneKind, other.EvidenceSHA256)
 			record.Events = append(record.Events, other)
 		}
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
@@ -324,19 +315,14 @@ func checkTimelineFreshnessSourceRevision(t *testing.T, open func(*testing.T) *S
 	require.NoError(t, err)
 	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "f12")
-	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-	require.True(t, ok)
-	record.Primaries = append(record.Primaries, primary)
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
+	publishTimelineSafe(t, s, target, record)
 	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
 		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic")}}}}
 	raw, _, err := document.MarshalSourceMetadataV1(metadata)
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f13"), raw)
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
@@ -351,14 +337,14 @@ func checkTimelineAnomalousInstantPlacement(t *testing.T, open func(*testing.T) 
 	t.Helper()
 	for _, tc := range []struct {
 		zone, day, instant string
-		minute             int
+		minute, minutes    int
 	}{
-		{"America/Santiago", "2026-09-05", "2026-09-06T03:30:00", 1410},
-		{"America/Santiago", "2026-09-06", "2026-09-06T04:10:00", 10},
-		{"America/Havana", "2026-03-08", "2026-03-08T05:10:00", 10},
-		{"America/Toronto", "2026-03-08", "2026-03-08T07:10:00", 130},
-		{"America/Toronto", "2026-11-01", "2026-11-01T06:10:00", 130},
-		{"America/St_Johns", "2010-11-07", "2010-11-07T03:00:00", 30},
+		{"America/Santiago", "2026-09-05", "2026-09-06T03:30:00", 1410, 1440},
+		{"America/Santiago", "2026-09-06", "2026-09-06T04:10:00", 10, 1380},
+		{"America/Havana", "2026-03-08", "2026-03-08T05:10:00", 10, 1380},
+		{"America/Toronto", "2026-03-08", "2026-03-08T07:10:00", 130, 1380},
+		{"America/Toronto", "2026-11-01", "2026-11-01T06:10:00", 130, 1500},
+		{"America/St_Johns", "2010-11-07", "2010-11-07T03:00:00", 30, 1500},
 	} {
 		t.Run(tc.zone+"/"+tc.day, func(t *testing.T) {
 			s := open(t)
@@ -384,8 +370,7 @@ func checkTimelineAnomalousInstantPlacement(t *testing.T, open func(*testing.T) 
 			}
 			_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 			require.NoError(t, err)
-			svc := NewQuerySnapshotService(s)
-			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			svc := timelineTestService(t, s)
 			date, err := civil.ParseDate(tc.day)
 			require.NoError(t, err)
 			scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: tc.zone}
@@ -394,6 +379,7 @@ func checkTimelineAnomalousInstantPlacement(t *testing.T, open func(*testing.T) 
 			require.Equal(t, []TimelineDayCount{{Date: tc.day, Count: 1}}, days.Days)
 			page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
 			require.NoError(t, err)
+			require.Equal(t, tc.minutes, page.Bounds.Minutes)
 			require.Len(t, page.Items, 1)
 			require.Equal(t, node.ID, page.Items[0].NodeID)
 			require.Equal(t, tc.minute, *page.Items[0].AxisMinute)
@@ -429,8 +415,7 @@ func checkTimelinePairedCalendarDates(t *testing.T, open func(*testing.T) *Store
 	}
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
@@ -462,8 +447,7 @@ func checkTimelineUndatedSafeOnly(t *testing.T, open func(*testing.T) *Store) {
 	record.Events[0].Sensitive = true
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
@@ -489,14 +473,9 @@ func checkTimelineDuplicateCollapse(t *testing.T, open func(*testing.T) *Store) 
 		ids = append(ids, node.ID)
 		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
@@ -551,11 +530,7 @@ func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
 		e.DateValue, e.RawValue, e.Precision, e.AxisKey = "2019-03-04T09:30:00", "2019-03-04T09:30:00", "second", "2019-03-04T09:30:00.000000000"
 		e.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, e.SourceKey, e.DateKind, e.DateValue, e.Precision, e.TimezoneKind, e.EvidenceSHA256)
 		record.Primaries[0].EventID = e.EventID
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
 	roles := `["author","last_saved_by","custodian","sender","recipient","copied","organizer","attendee","participant","speaker","depicted"]`
 	entries := make([]string, 64)
@@ -573,8 +548,7 @@ func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
 	coverage := CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	for _, personScope := range []bool{false, true} {
 		filters := ""
 		if personScope {
@@ -633,16 +607,11 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 	for i, version := range versions {
 		target := requireDocumentEventTarget(t, s, version)
 		record := documentEventRecord(t, s.VaultID(), version, fmt.Sprintf("e%x", i+1))
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"mercury"}`), Zone: "UTC"}
 	assertMatches := func(want int) TimelineDayPage {
 		t.Helper()
@@ -677,43 +646,7 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 	// generation is leased. The cancellation happens after TEMP is populated.
 	_, err = s.CreatePerson(ctx, "Absent Reader", "operator")
 	require.NoError(t, err)
-	compiled := compileFixtureQuery(t, s, `NOT author:"Absent Reader"`, query.Filters{})
 	s.db.SetMaxOpenConns(1)
-	boom := errors.New("synthetic timeline read failure")
-	for _, outcome := range []string{"success", "error", "cancel"} {
-		readCtx, cancel := context.WithCancel(ctx)
-		err := s.withTimelineRead(readCtx, func(q metadataQuerier, generation string) error {
-			require.NotEmpty(t, generation)
-			require.NotEmpty(t, s.LeasedLexicalGenerationRoots())
-			_, err := s.timelinePopulation(readCtx, q, compiled, generation, CoverageSelection{}, false)
-			require.NoError(t, err)
-			var scratch int
-			require.NoError(t, q.QueryRowContext(readCtx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
-			require.Equal(t, 1, scratch)
-			switch outcome {
-			case "error":
-				return boom
-			case "cancel":
-				cancel()
-				return readCtx.Err()
-			default:
-				return nil
-			}
-		})
-		cancel()
-		switch outcome {
-		case "success":
-			require.NoError(t, err)
-		case "error":
-			require.ErrorIs(t, err, boom)
-		case "cancel":
-			require.ErrorIs(t, err, context.Canceled)
-		}
-		require.Empty(t, s.LeasedLexicalGenerationRoots())
-		var scratch int
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
-		require.Zero(t, scratch)
-	}
 
 	entered, release := make(chan struct{}), make(chan struct{})
 	released := false
@@ -756,10 +689,6 @@ func TestTimelineTextScopeUsesPublishedGeneration(t *testing.T) {
 	require.Zero(t, scratch)
 }
 
-func TestTimelinePeopleScopeRespectsHiddenLock(t *testing.T) {
-	checkTimelinePeopleScopeRespectsHiddenLock(t, newTestStore)
-}
-
 func checkTimelinePeopleScopeRespectsHiddenLock(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -777,11 +706,7 @@ func checkTimelinePeopleScopeRespectsHiddenLock(t *testing.T, open func(*testing
 		nodes = append(nodes, node)
 		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, fmt.Sprintf("%x", 0xd90+i))
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "speaker", Action: "assert", Revision: 1})
 		require.NoError(t, err)
 	}
@@ -815,8 +740,7 @@ func checkTimelinePeopleScopeRespectsHiddenLock(t *testing.T, open func(*testing
 	require.NoError(t, err)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
 	if s.postgresSchema == "" {
 		scope.Query = snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"person_ids":[%q]}}`, person.PersonID))

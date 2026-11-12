@@ -40,6 +40,7 @@ var backendSuites = []backendSuite{
 		{"TimelineAnomalousInstantPlacement", func(t *testing.T) { checkTimelineAnomalousInstantPlacement(t, newTestStore) }, func(t *testing.T) { checkTimelineAnomalousInstantPlacement(t, newPostgresQueryStore) }},
 		{"TimelineDayBoundsOperations", func(t *testing.T) { checkTimelineDayBoundsOperations(t, newTestStore) }, func(t *testing.T) { checkTimelineDayBoundsOperations(t, newPostgresQueryStore) }},
 		{"TimelineDayStripAccounting", func(t *testing.T) { checkTimelineDayStripAccounting(t, newTestStore) }, func(t *testing.T) { checkTimelineDayStripAccounting(t, newPostgresQueryStore) }},
+		{"TimelineHiddenChangeInvalidatesContinuation", func(t *testing.T) { checkTimelineHiddenChangeInvalidatesContinuation(t, newTestStore) }, func(t *testing.T) { checkTimelineHiddenChangeInvalidatesContinuation(t, newPostgresQueryStore) }},
 		{"TimelineDayFrozenAfterTrash", func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newTestStore) }, func(t *testing.T) { checkTimelineDayFrozenAfterTrash(t, newPostgresQueryStore) }},
 	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{

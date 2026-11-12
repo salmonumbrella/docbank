@@ -17,6 +17,9 @@ import (
 
 const maxTimelineRangeDates = 92
 
+var ErrTimelineRangeOrder = errors.New("from must not follow to")
+var ErrTimelineRangeTooLarge = errors.New("range exceeds 92 dates")
+
 type TimelineScope struct {
 	Query     query.Query
 	Zone      string
@@ -76,9 +79,20 @@ func (b *timelineBinds) add(value any) string {
 	return "?"
 }
 
+func timelineEligibleSQL(b *timelineBinds, kinds []string) string {
+	if len(kinds) == 0 {
+		return "k.sensitive=0 AND k.primary_safe=1"
+	}
+	marks := make([]string, len(kinds))
+	for i, kind := range kinds {
+		marks[i] = b.add(kind)
+	}
+	return "k.sensitive=0 AND k.date_kind IN (" + strings.Join(marks, ",") + ")"
+}
+
 // timelinePlacedSQL creates one row per current version and day after ranking
 // eligible date claims. The same relation drives counts and the day view.
-func timelinePlacedSQL(population compiledQueryFragment, generation string, scope TimelineScope, from, to civil.Date, loc *time.Location, hidden, postgres bool, tail func(*timelineBinds) string) (string, []any, error) {
+func timelinePlacedSQL(population compiledQueryFragment, generation string, scope TimelineScope, from, to civil.Date, loc *time.Location, postgres bool, tail func(*timelineBinds) string) (string, []any, error) {
 	start, end, err := query.RangeBounds(from, to, loc)
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: %v", ErrTimelineDateNotInZone, err)
@@ -117,18 +131,7 @@ func timelinePlacedSQL(population compiledQueryFragment, generation string, scop
 		binds.add(from.String()[:7]), binds.add(to.String()[:7]), binds.add(from.String()[:4]), binds.add(to.String()[:4]),
 	}
 	binds.args = append(binds.args, population.args...)
-	eligible := "k.sensitive=0 AND k.primary_safe=1"
-	if len(scope.DateKinds) > 0 {
-		marks := make([]string, len(scope.DateKinds))
-		for i, kind := range scope.DateKinds {
-			marks[i] = binds.add(kind)
-		}
-		eligible = "k.sensitive=0 AND k.date_kind IN (" + strings.Join(marks, ",") + ")"
-	}
-	hiddenPredicate := ""
-	if hidden {
-		hiddenPredicate = " AND " + personVersionVisibleSQL("cv.version_id")
-	}
+	eligible := timelineEligibleSQL(binds, scope.DateKinds)
 
 	sqlText := `WITH days(day,start_key,end_key) AS (VALUES ` + strings.Join(values, ",") + `),
  keys AS (
@@ -140,7 +143,7 @@ func timelinePlacedSQL(population compiledQueryFragment, generation string, scop
  FROM keys k JOIN document_event_heads h ON h.generation_id=k.generation_id AND h.content_version_id=k.content_version_id
  JOIN content_versions cv ON cv.version_id=h.content_version_id JOIN nodes n ON n.id=cv.node_id JOIN population m ON m.content_version_id=cv.version_id
  JOIN days d ON ((k.tier=0 AND k.utc_key>=d.start_key AND k.utc_key<d.end_key) OR (k.tier IN (1,2) AND k.civil_date<=d.day AND k.civil_end_date>=d.day) OR (k.tier=3 AND ((k.precision='month' AND k.civil_month=substr(d.day,1,7)) OR (k.precision='year' AND k.civil_year=substr(d.day,1,4)))))
- WHERE ` + currentDocumentDateHead + ` AND ` + eligible + hiddenPredicate + `
+ WHERE ` + currentDocumentDateHead + ` AND ` + eligible + `
  ), placed AS (SELECT eligible.*,ROW_NUMBER() OVER (PARTITION BY day,version_id ORDER BY tier,COALESCE(utc_key,axis_key),event_id) placement_rank FROM eligible)`
 	tailSQL := tail(binds)
 	fragment := compiledQueryFragment{sql: `SELECT * FROM (` + sqlText + ` ` + tailSQL + `) timeline_result`, args: binds.args, relations: population.relations}
@@ -188,6 +191,39 @@ func (s *Store) timelinePopulation(ctx context.Context, q metadataQuerier, compi
 	return population, nil
 }
 
+// timelineReadPopulation resolves visibility and membership on the pinned read.
+func (s *Store) timelineReadPopulation(ctx context.Context, q metadataQuerier, generation string, scope TimelineScope, hidden bool) (context.Context, bool, *PhotoHiddenState, CompiledQuery, compiledQueryFragment, error) {
+	var state *PhotoHiddenState
+	if browser, _ := ctx.Value(visiblePersonContextKey{}).(bool); browser {
+		var err error
+		state, err = s.photoHiddenStateTx(ctx, q)
+		if err != nil {
+			return ctx, false, nil, CompiledQuery{}, compiledQueryFragment{}, err
+		}
+		hidden = state.ExpiresAt == nil
+	}
+	ctx = WithVisiblePeopleOnly(WithQueryDefaultTimezone(ctx, scope.Zone))
+	ctx = context.WithValue(ctx, queryPeopleHiddenKey{}, hidden)
+	if err := requireDocumentDateIndex(ctx, q); err != nil {
+		return ctx, hidden, state, CompiledQuery{}, compiledQueryFragment{}, err
+	}
+	compiled := CompiledQuery{Query: scope.Query}
+	if s.postgresSchema == "" {
+		if scope.Coverage.Configuration == "configured" {
+			if err := validateSnapshotCoverageProfile(ctx, q, scope.Coverage); err != nil {
+				return ctx, hidden, state, compiled, compiledQueryFragment{}, err
+			}
+		}
+		var err error
+		compiled, err = (queryCompiler{}).compile(ctx, scope.Query, queryResolver{q: q})
+		if err != nil {
+			return ctx, hidden, state, compiled, compiledQueryFragment{}, err
+		}
+	}
+	population, err := s.timelinePopulation(ctx, q, compiled, generation, scope.Coverage, hidden)
+	return ctx, hidden, state, compiled, population, err
+}
+
 func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, scope TimelineScope, from, to civil.Date) (TimelineDays, error) {
 	result := TimelineDays{Days: []TimelineDayCount{}, Months: []TimelineMonthCount{}}
 	if s.store != nil && s.store.postgresSchema != "" {
@@ -195,12 +231,18 @@ func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, s
 			return result, err
 		}
 	}
-	if from.Compare(to) > 0 || from.AddDays(maxTimelineRangeDates-1).Compare(to) < 0 {
-		return result, errors.New("invalid timeline range")
+	if from.Compare(to) > 0 {
+		return result, ErrTimelineRangeOrder
+	}
+	if from.AddDays(maxTimelineRangeDates-1).Compare(to) < 0 {
+		return result, ErrTimelineRangeTooLarge
 	}
 	loc, err := query.LoadZone(scope.Zone)
 	if err != nil {
 		return result, err
+	}
+	if _, _, err := query.RangeBounds(from, to, loc); err != nil {
+		return result, fmt.Errorf("%w: %v", ErrTimelineDateNotInZone, err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, querySnapshotBuildTimeout)
 	defer cancel()
@@ -210,60 +252,23 @@ func (s *QuerySnapshotService) TimelineDays(ctx context.Context, owner string, s
 	}
 	defer s.finishBuild(build, false)
 	err = s.store.withTimelineRead(ctx, func(q metadataQuerier, generation string) error {
-		browser, _ := ctx.Value(visiblePersonContextKey{}).(bool)
-		scoped := ctx
-		if browser {
-			var err error
-			scoped, err = s.store.scopeQueryPeople(scoped, q)
-			if err != nil {
-				return err
-			}
-		}
-		hidden := browser && queryPeopleHideLocked(scoped)
-		scoped = WithVisiblePeopleOnly(WithQueryDefaultTimezone(scoped, scope.Zone))
-		scoped = context.WithValue(scoped, queryPeopleHiddenKey{}, hidden)
-		if err := requireDocumentDateIndex(scoped, q); err != nil {
-			return err
-		}
-		postgres := s.store.postgresSchema != ""
-		compiled := CompiledQuery{Query: scope.Query}
-		if !postgres {
-			if scope.Coverage.Configuration == "configured" {
-				if err := validateSnapshotCoverageProfile(scoped, q, scope.Coverage); err != nil {
-					return err
-				}
-			}
-			compiled, err = (queryCompiler{}).compile(scoped, scope.Query, queryResolver{q: q})
-			if err != nil {
-				return err
-			}
-		}
-		population, err := s.store.timelinePopulation(scoped, q, compiled, generation, scope.Coverage, hidden)
+		scoped, _, _, compiled, population, err := s.store.timelineReadPopulation(ctx, q, generation, scope, false)
 		if err != nil {
 			return err
 		}
+		postgres := s.store.postgresSchema != ""
 		coarseIdentity := "version_id"
 		if compiled.Query.Filters.CollapseDuplicates {
 			coarseIdentity = "blob_hash"
 		}
-		visible := ""
-		if hidden {
-			visible = " AND " + personVersionVisibleSQL("m.content_version_id")
-		}
+
 		tail := func(b *timelineBinds) string {
-			condition := "k.sensitive=0 AND k.primary_safe=1"
-			if len(scope.DateKinds) > 0 {
-				marks := make([]string, len(scope.DateKinds))
-				for i, kind := range scope.DateKinds {
-					marks[i] = b.add(kind)
-				}
-				condition = "k.sensitive=0 AND k.date_kind IN (" + strings.Join(marks, ",") + ")"
-			}
+			condition := timelineEligibleSQL(b, scope.DateKinds)
 			return `SELECT 'd',day,COUNT(*),CAST(SUM(CASE WHEN tier=1 THEN 1 ELSE 0 END) AS BIGINT),CAST(SUM(CASE WHEN tier=2 THEN 1 ELSE 0 END) AS BIGINT) FROM placed WHERE placement_rank=1 AND tier<3 GROUP BY day
  UNION ALL SELECT 'm',substr(day,1,7),COUNT(DISTINCT ` + coarseIdentity + `),0,0 FROM eligible WHERE tier=3 GROUP BY substr(day,1,7)
- UNION ALL SELECT 'u','',COUNT(*),0,0 FROM population m JOIN document_event_heads h ON h.content_version_id=m.content_version_id WHERE ` + currentDocumentDateHead + visible + ` AND NOT EXISTS (SELECT 1 FROM document_date_keys k WHERE k.generation_id=h.generation_id AND ` + condition + `) ORDER BY 1,2`
+ UNION ALL SELECT 'u','',COUNT(*),0,0 FROM population m JOIN document_event_heads h ON h.content_version_id=m.content_version_id WHERE ` + currentDocumentDateHead + ` AND NOT EXISTS (SELECT 1 FROM document_date_keys k WHERE k.generation_id=h.generation_id AND ` + condition + `) ORDER BY 1,2`
 		}
-		statement, args, err := timelinePlacedSQL(population, generation, scope, from, to, loc, hidden, postgres, tail)
+		statement, args, err := timelinePlacedSQL(population, generation, scope, from, to, loc, postgres, tail)
 		if err != nil {
 			return err
 		}

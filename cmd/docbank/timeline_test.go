@@ -1,17 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/query"
 )
 
-func TestTimelineQueryAndZoneOutput(t *testing.T) {
+func TestTimelineQueryParsing(t *testing.T) {
 	for _, tc := range []struct {
 		args   []string
 		syntax string
@@ -30,12 +28,6 @@ func TestTimelineQueryAndZoneOutput(t *testing.T) {
 	}
 	_, err := timelineQuery([]string{`{"unexpected":true}`})
 	require.Error(t, err)
-	var stderr bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetErr(&stderr)
-	timelineZoneLine(cmd, "America/Toronto", true)
-	timelineZoneLine(cmd, "UTC", false)
-	require.Equal(t, "timezone: America/Toronto (default)\ntimezone: UTC (explicit)\n", stderr.String())
 }
 
 func TestTimelineCLIJSONAndTimezone(t *testing.T) {

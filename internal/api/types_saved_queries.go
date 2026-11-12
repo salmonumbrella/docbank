@@ -68,16 +68,16 @@ type savedQueryGPSBoundsSchema struct {
 	East  string `json:"east" maxLength:"64"`
 }
 
+type savedQueryPersonFilterSchema struct {
+	PersonID string   `json:"person_id" format:"uuid"`
+	Roles    []string `json:"roles" minItems:"1" maxItems:"64"`
+}
+
 type savedQueryDateSchema struct {
 	From       string   `json:"from"`
 	To         string   `json:"to"`
 	Kinds      []string `json:"kinds,omitempty"`
 	Precisions []string `json:"precisions,omitempty" enum:"exact,day,coarse"`
-}
-
-type savedQueryPersonFilterSchema struct {
-	PersonID string   `json:"person_id" format:"uuid"`
-	Roles    []string `json:"roles" minItems:"1" maxItems:"64"`
 }
 
 type savedQueryFiltersSchema struct {

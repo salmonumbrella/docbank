@@ -157,7 +157,7 @@ func (s *Store) photoHiddenChangeSQL() string {
 }
 
 // photoHiddenStateTx reads the Hidden scope inside the caller's snapshot.
-func (s *Store) photoHiddenStateTx(ctx context.Context, tx *sql.Tx) (*PhotoHiddenState, error) {
+func (s *Store) photoHiddenStateTx(ctx context.Context, tx metadataQuerier) (*PhotoHiddenState, error) {
 	state := &PhotoHiddenState{}
 	if err := tx.QueryRowContext(ctx, s.photoHiddenChangeSQL()).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err

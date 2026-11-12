@@ -77,6 +77,7 @@ type TimelineDayRequest struct {
 	Cursor       string
 	Limit        int
 	HiddenLocked bool
+	HiddenState  *PhotoHiddenState
 }
 type TimelineDayPage struct {
 	Bounds                                TimelineDayBounds
@@ -94,18 +95,27 @@ type timelineCachedMetadata struct {
 
 func timelineScopeHash(req TimelineDayRequest) (string, error) {
 	raw, err := json.Marshal(struct {
-		Query  query.Query
-		Zone   string
-		Date   string
-		Kinds  []string
-		Limit  int
-		Hidden bool
-	}{req.Scope.Query, req.Scope.Zone, req.Date.String(), req.Scope.DateKinds, req.Limit, req.HiddenLocked})
+		Query      query.Query
+		Zone       string
+		Date       string
+		Kinds      []string
+		Limit      int
+		Hidden     bool
+		Configured bool
+		ChangeID   string
+	}{req.Scope.Query, req.Scope.Zone, req.Date.String(), req.Scope.DateKinds, req.Limit, req.HiddenLocked, req.HiddenState != nil && req.HiddenState.Configured, hiddenChangeID(req.HiddenState)})
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func hiddenChangeID(state *PhotoHiddenState) string {
+	if state == nil {
+		return ""
+	}
+	return state.ChangeID
 }
 
 func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, req TimelineDayRequest) (TimelineDayPage, error) {
@@ -170,60 +180,20 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 	}
 	published := false
 	defer func() { s.finishBuild(build, published) }()
-	var chargedRows, chargedBytes int64
-	reserve := func(rows, bytes int64) error {
-		if err := buildCtx.Err(); err != nil {
-			return err
-		}
-		chargedRows += rows
-		chargedBytes += bytes
-		if chargedRows > build.reservedRows || chargedBytes > build.reservedBytes {
-			if err := s.chargeBuild(build, max(0, chargedRows-build.reservedRows), max(0, chargedBytes-build.reservedBytes)); err != nil {
-				return err
-			}
-		}
-		if s.chargeHook != nil {
-			return s.chargeHook(buildCtx, owner, rows, bytes)
-		}
-		return nil
-	}
+	reserve, chargedBytes := s.snapshotCharge(buildCtx, owner, build)
 	page := TimelineDayPage{Bounds: bounds, Zone: req.Scope.Zone, Defaulted: req.Scope.Defaulted, Items: []TimelineItem{}, DateOnly: []TimelineItem{}, MonthOnly: []TimelineItem{}}
 	var timed []TimelineItem
 	err = s.store.withTimelineRead(buildCtx, func(q metadataQuerier, generation string) error {
-		browser, _ := buildCtx.Value(visiblePersonContextKey{}).(bool)
-		scoped := buildCtx
-		if browser {
-			var err error
-			scoped, err = s.store.scopeQueryPeople(scoped, q)
-			if err != nil {
-				return err
-			}
-			req.HiddenLocked = queryPeopleHideLocked(scoped)
-		}
-		scoped = WithVisiblePeopleOnly(WithQueryDefaultTimezone(scoped, req.Scope.Zone))
-		scoped = context.WithValue(scoped, queryPeopleHiddenKey{}, req.HiddenLocked)
-		if err := requireDocumentDateIndex(scoped, q); err != nil {
-			return err
-		}
-		postgres := s.store.postgresSchema != ""
-		compiled := CompiledQuery{Query: req.Scope.Query}
-		if !postgres {
-			if req.Scope.Coverage.Configuration == "configured" {
-				if err := validateSnapshotCoverageProfile(scoped, q, req.Scope.Coverage); err != nil {
-					return err
-				}
-			}
-			compiled, err = (queryCompiler{}).compile(scoped, req.Scope.Query, queryResolver{q: q})
-			if err != nil {
-				return err
-			}
-		}
-		population, err := s.store.timelinePopulation(scoped, q, compiled, generation, req.Scope.Coverage, req.HiddenLocked)
+		scoped, hidden, state, _, population, err := s.store.timelineReadPopulation(buildCtx, q, generation, req.Scope, req.HiddenLocked)
 		if err != nil {
 			return err
 		}
-		tail := `SELECT node_id,version_id,generation_id,event_id,tier,axis_key,COALESCE(utc_key,''),civil_end_date FROM (SELECT placed.*,ROW_NUMBER() OVER (PARTITION BY tier ORDER BY civil_date,node_id) strip_rank FROM placed WHERE placement_rank=1) ranked WHERE tier<2 OR strip_rank<=201 ORDER BY tier,axis_key,node_id`
-		statement, args, err := timelinePlacedSQL(population, generation, req.Scope, req.Date, req.Date, loc, req.HiddenLocked, postgres, func(*timelineBinds) string { return tail })
+		if state != nil {
+			req.HiddenLocked, req.HiddenState = hidden, state
+		}
+		postgres := s.store.postgresSchema != ""
+		tail := `SELECT node_id,version_id,generation_id,event_id,tier,axis_key,COALESCE(utc_key,''),civil_end_date FROM (SELECT placed.*,ROW_NUMBER() OVER (PARTITION BY tier ORDER BY axis_key,node_id) strip_rank FROM placed WHERE placement_rank=1) ranked WHERE tier<2 OR strip_rank<=201 ORDER BY tier,axis_key,node_id`
+		statement, args, err := timelinePlacedSQL(population, generation, req.Scope, req.Date, req.Date, loc, postgres, func(*timelineBinds) string { return tail })
 		if err != nil {
 			return err
 		}
@@ -334,8 +304,8 @@ func (s *QuerySnapshotService) TimelineDay(ctx context.Context, owner string, re
 			return TimelineDayPage{}, ErrQuerySnapshotTooLarge
 		}
 	}
-	if bytes > chargedBytes {
-		if err := reserve(0, bytes-chargedBytes); err != nil {
+	if bytes > *chargedBytes {
+		if err := reserve(0, bytes-*chargedBytes); err != nil {
 			return TimelineDayPage{}, err
 		}
 	}

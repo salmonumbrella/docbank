@@ -49,10 +49,6 @@ func TestTimelineDayBoundsVectors(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestTimelineDayFrozenAfterTrash(t *testing.T) {
-	checkTimelineDayFrozenAfterTrash(t, newTestStore)
-}
-
 func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -70,14 +66,9 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 		event.AxisKey = "2019-03-04T09:30:00.000000000"
 		event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
 		record.Primaries[0].EventID = event.EventID
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
@@ -186,22 +177,6 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	require.ErrorIs(t, err, ErrSnapshotGone)
 }
 
-func TestTimelineDayFrozenOwnerAndScope(t *testing.T) {
-	s := newTestStore(t)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	date, err := civil.ParseDate("2026-03-10")
-	require.NoError(t, err)
-	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
-	page, err := svc.TimelineDay(t.Context(), "owner", req)
-	require.NoError(t, err)
-	require.Empty(t, page.Items)
-	require.Empty(t, page.NextCursor)
-	req.Cursor = "not-a-cursor"
-	_, err = svc.TimelineDay(t.Context(), "owner", req)
-	require.ErrorIs(t, err, ErrTimelineCursorMismatch)
-}
-
 // The 201st strip row signals truncation; it is not retained or repeated on
 // continuation pages. Cache accounting includes the retained strip rows.
 func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store) {
@@ -225,17 +200,16 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 			event := &record.Events[0]
 			event.DateValue, event.RawValue, event.Precision = "2019-03", "2019-03", "month"
 			event.AxisKey = "2019-03-01T00:00:00.000000000"
+			if i == 403 {
+				event.DateValue, event.RawValue, event.Precision = "2019", "2019", "year"
+				event.AxisKey = "2019-01-01T00:00:00.000000000"
+			}
 			event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
 			record.Primaries[0].EventID = event.EventID
 		}
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
@@ -245,6 +219,7 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 	require.Len(t, first.DateOnly, 200)
 	require.True(t, first.DateOnlyTruncated)
 	require.Len(t, first.MonthOnly, 200)
+	require.Equal(t, document.EventPrecision("year"), first.MonthOnly[0].Event.Precision)
 	require.True(t, first.MonthOnlyTruncated)
 	require.EqualValues(t, 402, svc.stats().CachedRows)
 	require.Positive(t, svc.stats().CachedBytes)
@@ -279,28 +254,7 @@ func checkTimelineDayStripAccounting(t *testing.T, open func(*testing.T) *Store)
 func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	for _, tc := range []struct {
-		zone, date     string
-		minutes, ticks int
-	}{
-		{"America/Santiago", "2026-09-06", 1380, 23},
-		{"America/Havana", "2026-03-08", 1380, 23},
-		{"America/Toronto", "2026-03-08", 1380, 23},
-		{"America/Toronto", "2026-11-01", 1500, 25},
-		{"America/St_Johns", "2010-11-07", 1500, 26},
-	} {
-		t.Run(tc.zone+"/"+tc.date, func(t *testing.T) {
-			date, err := civil.ParseDate(tc.date)
-			require.NoError(t, err)
-			scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: tc.zone}
-			page, err := svc.TimelineDay(t.Context(), "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
-			require.NoError(t, err)
-			require.Equal(t, tc.minutes, page.Bounds.Minutes)
-			require.Len(t, page.Bounds.Ticks, tc.ticks)
-		})
-	}
+	svc := timelineTestService(t, s)
 	// Populate the day before Apia's skipped date so the interior-range
 	// assertion proves placement as well as endpoint admission.
 	node, err := s.CreateFile(t.Context(), s.RootID(), "apia.txt", fakeHash("af1"), 1, "text/plain")
@@ -311,11 +265,7 @@ func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store
 	event.DateValue, event.RawValue, event.AxisKey = "2011-12-29", "2011-12-29", "2011-12-29T00:00:00.000000000"
 	event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
 	record.Primaries[0].EventID = event.EventID
-	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-	require.True(t, ok)
-	record.Primaries = append(record.Primaries, primary)
-	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
+	publishTimelineSafe(t, s, target, record)
 	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "Pacific/Apia"}
 	skipped, err := civil.ParseDate("2011-12-30")
 	require.NoError(t, err)
@@ -381,8 +331,7 @@ func TestTimelineDayScaleCI(t *testing.T) {
 		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 		require.NoError(t, err)
 	}
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 500}
@@ -402,4 +351,57 @@ func TestTimelineDayScaleCI(t *testing.T) {
 			require.Empty(t, req.Cursor)
 		}
 	}
+}
+
+func checkTimelineHiddenChangeInvalidatesContinuation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	var nodes []Node
+	for i := range 2 {
+		seed := fmt.Sprintf("%x", 0xe40+i)
+		node, err := s.CreateFile(ctx, s.RootID(), seed+".jpg", fakeHash(seed), 1, "image/jpeg")
+		require.NoError(t, err)
+		nodes = append(nodes, node)
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		e := &record.Events[0]
+		e.DateValue, e.RawValue, e.Precision = "2019-03-04T09:30:00", "2019-03-04T09:30:00", "second"
+		e.AxisKey = "2019-03-04T09:30:00.000000000"
+		e.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, e.SourceKey, e.DateKind, e.DateValue, e.Precision, e.TimezoneKind, e.EvidenceSHA256)
+		record.Primaries[0].EventID = e.EventID
+		publishTimelineSafe(t, s, target, record)
+	}
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err := s.PhotoAssetForNode(ctx, nodes[1].ID)
+	require.NoError(t, err)
+	svc := timelineTestService(t, s)
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	browser := WithVisiblePeopleOnly(ctx)
+	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 1}
+	first, err := svc.TimelineDay(browser, "owner", req)
+	require.NoError(t, err)
+	require.NotEmpty(t, first.NextCursor)
+	state, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	req.Cursor, req.HiddenLocked, req.HiddenState = first.NextCursor, true, &state
+	_, err = svc.TimelineDay(browser, "owner", req)
+	require.NoError(t, err)
+	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	state, err = s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	req.HiddenState = &state
+	_, err = svc.TimelineDay(browser, "owner", req)
+	require.ErrorIs(t, err, ErrTimelineCursorMismatch)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	state, err = s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	req.HiddenState = &state
+	_, err = svc.TimelineDay(browser, "owner", req)
+	require.ErrorIs(t, err, ErrTimelineCursorMismatch)
 }

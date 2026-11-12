@@ -783,19 +783,21 @@ func (s *Store) openCandidatesForVersions(ctx context.Context, q metadataQuerier
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 		}
 		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `)`
-		if len(versionIDs) == 1 {
-			args = append(args, versionIDs[0])
-			versionParam := fmt.Sprintf("$%d", len(args))
-			membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o WHERE json_extract(o.value, '$.content_version_id') = ` + versionParam + `)`
-			if s.postgresSchema != "" {
-				membership = `EXISTS (SELECT 1 FROM jsonb_array_elements(convert_from(evidence_json,'UTF8')::jsonb) o(value) WHERE o.value->>'content_version_id' = ` + versionParam + `)`
-			}
-			filter += ` AND ` + membership
+		encodedVersions, err := json.Marshal(versionIDs)
+		if err != nil {
+			return nil, err
 		}
+		args = append(args, string(encodedVersions))
+		versionParam := fmt.Sprintf("$%d", len(args))
+		membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o JOIN json_each(` + versionParam + `) v ON json_extract(o.value, '$.content_version_id')=v.value)`
+		if s.postgresSchema != "" {
+			membership = `EXISTS (SELECT 1 FROM jsonb_array_elements(convert_from(evidence_json,'UTF8')::jsonb) o(value) JOIN jsonb_array_elements_text(CAST(` + versionParam + ` AS jsonb)) v(value) ON o.value->>'content_version_id'=v.value)`
+		}
+		filter += ` AND ` + membership
 		columns := `candidate_id,actor_key,evidence_json,created_at`
 		query := `SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NULL AND ` + filter +
 			` UNION ALL SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NOT NULL AND ` + filter
-		err := func() error {
+		err = func() error {
 			rows, err := q.QueryContext(ctx, query, args...)
 			if err != nil {
 				return err

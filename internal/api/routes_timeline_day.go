@@ -54,6 +54,10 @@ func timelineDate(value string) (civil.Date, error) {
 }
 func timelineError(err error) error {
 	switch {
+	case errors.Is(err, store.ErrTimelineRangeOrder):
+		return NewError(http.StatusBadRequest, "invalid_date", err.Error())
+	case errors.Is(err, store.ErrTimelineRangeTooLarge):
+		return NewError(http.StatusBadRequest, "range_too_large", err.Error())
 	case errors.Is(err, store.ErrTimelineDateNotInZone):
 		return NewError(http.StatusBadRequest, "date_not_in_zone", err.Error())
 	case errors.Is(err, store.ErrTimelineCursorMismatch):
@@ -84,16 +88,7 @@ func registerTimelineDayRoutes(api huma.API, d Deps, service *store.QuerySnapsho
 		if err != nil {
 			return nil, err
 		}
-		if from.Compare(to) > 0 {
-			return nil, NewError(http.StatusBadRequest, "invalid_date", "from must not follow to")
-		}
-		if from.AddDays(91).Compare(to) < 0 {
-			return nil, NewError(http.StatusBadRequest, "range_too_large", "range exceeds 92 dates")
-		}
-		loc, _ := query.LoadZone(scope.Zone)
-		if _, _, err := query.RangeBounds(from, to, loc); err != nil {
-			return nil, NewError(http.StatusBadRequest, "date_not_in_zone", err.Error())
-		}
+
 		counts, err := service.TimelineDays(browserPeopleScope(ctx), owner, scope, from, to)
 		if err != nil {
 			return nil, timelineError(err)
@@ -127,14 +122,16 @@ func registerTimelineDayRoutes(api huma.API, d Deps, service *store.QuerySnapsho
 			return nil, NewError(http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 500")
 		}
 		hidden := false
-		if browserSessionRequest(ctx) {
+		var hiddenState *store.PhotoHiddenState
+		if in.Body.Cursor != "" && browserSessionRequest(ctx) {
 			state, err := d.Store.PhotoHiddenState(ctx)
 			if err != nil {
 				return nil, FromStoreError(err)
 			}
 			hidden = state.ExpiresAt == nil
+			hiddenState = &state
 		}
-		page, err := service.TimelineDay(browserPeopleScope(ctx), owner, store.TimelineDayRequest{Scope: scope, Date: date, Cursor: in.Body.Cursor, Limit: in.Body.Limit, HiddenLocked: hidden})
+		page, err := service.TimelineDay(browserPeopleScope(ctx), owner, store.TimelineDayRequest{Scope: scope, Date: date, Cursor: in.Body.Cursor, Limit: in.Body.Limit, HiddenLocked: hidden, HiddenState: hiddenState})
 		if err != nil {
 			return nil, timelineError(err)
 		}

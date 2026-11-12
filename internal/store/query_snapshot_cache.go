@@ -363,23 +363,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	}
 	options.Now = s.now
 	options.SavedQuery = saved
-	var chargedRows, chargedBytes int64
-	options.Charge = func(rows, bytes int64) error {
-		if err := buildCtx.Err(); err != nil {
-			return err
-		}
-		chargedRows += rows
-		chargedBytes += bytes
-		if chargedRows > build.reservedRows || chargedBytes > build.reservedBytes {
-			if err := s.chargeBuild(build, max(0, chargedRows-build.reservedRows), max(0, chargedBytes-build.reservedBytes)); err != nil {
-				return err
-			}
-		}
-		if s.chargeHook != nil {
-			return s.chargeHook(buildCtx, owner, rows, bytes)
-		}
-		return nil
-	}
+	options.Charge, _ = s.snapshotCharge(buildCtx, owner, build)
 	projection, err := s.store.materializeNormalizedQuerySnapshot(buildCtx, normalized, options)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
@@ -759,6 +743,28 @@ func (s *QuerySnapshotService) admitBuild(
 	}
 	s.wg.Add(1)
 	return build, false, nil
+}
+
+// snapshotCharge accounts for every row and byte until the build finishes.
+func (s *QuerySnapshotService) snapshotCharge(buildCtx context.Context, owner string, build *querySnapshotBuild) (func(int64, int64) error, *int64) {
+	var chargedRows, chargedBytes int64
+	charge := func(rows, bytes int64) error {
+		if err := buildCtx.Err(); err != nil {
+			return err
+		}
+		chargedRows += rows
+		chargedBytes += bytes
+		if chargedRows > build.reservedRows || chargedBytes > build.reservedBytes {
+			if err := s.chargeBuild(build, max(0, chargedRows-build.reservedRows), max(0, chargedBytes-build.reservedBytes)); err != nil {
+				return err
+			}
+		}
+		if s.chargeHook != nil {
+			return s.chargeHook(buildCtx, owner, rows, bytes)
+		}
+		return nil
+	}
+	return charge, &chargedBytes
 }
 
 func (s *QuerySnapshotService) chargeBuild(build *querySnapshotBuild, rows, bytes int64) error {

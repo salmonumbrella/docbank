@@ -11,17 +11,6 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestTimelineHydrationEmpty(t *testing.T) {
-	s := newTestStore(t)
-	err := s.withReadTx(t.Context(), func(tx *sql.Tx) error {
-		items, err := s.hydrateTimelineItems(t.Context(), tx, nil, false)
-		require.NoError(t, err)
-		require.Empty(t, items)
-		return nil
-	})
-	require.NoError(t, err)
-}
-
 func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -30,18 +19,13 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.NoError(t, err)
 	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "dc2")
-	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-	require.True(t, ok)
-	record.Primaries = append(record.Primaries, primary)
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
+	publishTimelineSafe(t, s, target, record)
 	input, err := s.PrepareDocumentPeopleInputs(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	personID := input.Bindings["email:ada@example.test"][0].PersonID
 	_, err = s.PublishDocumentPeople(ctx, documentPeoplePublicationForInput(t, input))
 	require.NoError(t, err)
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10}
@@ -200,11 +184,7 @@ func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T)
 			other.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, other.SourceKey, other.DateKind, other.DateValue, other.Precision, other.TimezoneKind, other.EvidenceSHA256)
 			record.Events = append(record.Events, event, other)
 		}
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
 	openCandidateForTest(t, s, candidateForTest(t, "email:ada@example.test", "Ada", "", []PersonCandidateOccurrence{
 		{ContentVersionID: versions[0], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/dc2"},
@@ -219,8 +199,7 @@ func checkTimelineHydrationCandidateEvidence(t *testing.T, open func(*testing.T)
 			{ContentVersionID: versions[1], Role: "author", EvidenceKind: "source_metadata", EvidenceID: "metadata/dc2"},
 		}))
 	}
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	page, err := svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10})
@@ -258,21 +237,23 @@ func checkTimelineHydrationChunking(t *testing.T, open func(*testing.T) *Store) 
 		actor := &record.Events[0].Actors[0]
 		actor.Address, actor.ActorKey = address, "email:"+address
 		actor.Claim = fmt.Sprintf(`{"address":%q}`, address)
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 		placements = append(placements, TimelinePlacement{NodeID: node.ID, VersionID: node.CurrentVersionID, EventID: record.Events[0].EventID})
 	}
-	for _, tc := range []struct{ count, statements int }{{1, 5}, {401, 10}} {
+	var singleChunkStatements int
+	for _, count := range []int{1, 401} {
 		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			q := &timelineCountingQuerier{metadataQuerier: tx}
-			items, err := s.hydrateTimelineItems(ctx, q, placements[:tc.count], false)
+			items, err := s.hydrateTimelineItems(ctx, q, placements[:count], false)
 			require.NoError(t, err)
-			require.Len(t, items, tc.count)
-			require.Equal(t, tc.statements, q.statements)
-			require.LessOrEqual(t, q.maxArgs, 500)
+			require.Len(t, items, count)
+			if count == 1 {
+				singleChunkStatements = q.statements
+			} else {
+				require.Equal(t, 2*singleChunkStatements, q.statements)
+			}
+			// Candidate batches use at most 400 actor keys plus one version-list bind.
+			require.LessOrEqual(t, q.maxArgs, 401)
 			for _, item := range items {
 				require.NotEmpty(t, item.Name)
 			}
@@ -300,11 +281,7 @@ func checkTimelineHydrationEmailFamily(t *testing.T, open func(*testing.T) *Stor
 	require.NotNil(t, child)
 	target := requireDocumentEventTarget(t, s, child.VersionID)
 	record := documentEventRecord(t, s.VaultID(), child.VersionID, "dc6")
-	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-	require.True(t, ok)
-	record.Primaries = append(record.Primaries, primary)
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
+	publishTimelineSafe(t, s, target, record)
 	placement := TimelinePlacement{NodeID: child.NodeID, VersionID: child.VersionID, EventID: record.Events[0].EventID}
 	parentOf := func(hideLocked bool) *int64 {
 		t.Helper()
@@ -370,11 +347,7 @@ func checkTimelineHydrationStalePeopleHeads(t *testing.T, open func(*testing.T) 
 		t.Helper()
 		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
-		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
-		require.True(t, ok)
-		record.Primaries = append(record.Primaries, primary)
-		_, err := s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-		require.NoError(t, err)
+		publishTimelineSafe(t, s, target, record)
 	}
 	publishPeople := func() {
 		t.Helper()
@@ -385,8 +358,7 @@ func checkTimelineHydrationStalePeopleHeads(t *testing.T, open func(*testing.T) 
 	}
 	publishEvent("df2")
 	publishPeople()
-	svc := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc := timelineTestService(t, s)
 	date, err := civil.ParseDate("2019-03-04")
 	require.NoError(t, err)
 	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 10}

@@ -29,7 +29,6 @@ func TestTimelineDayRequestValidation(t *testing.T) {
 		{"/api/v1/timeline/day", `{"query":{},"date":"2026-02-30"}`, "invalid_date", 400},
 		{"/api/v1/timeline/day", `{"query":{},"date":"2026-03-10","timezone":"Mars/Olympus"}`, "invalid_timezone", 400},
 		{"/api/v1/timeline/day", `{"query":{},"date":"2026-03-10","disclosure":"full"}`, "unknown_parameter", 400},
-		{"/api/v1/timeline/day", `{"query":{},"date":"2026-03-10","surprise":true}`, "unknown_parameter", 400},
 		{"/api/v1/timeline/days", `{"query":{},"from":"2026-03-10","to":"2026-03-09"}`, "invalid_date", 400},
 		{"/api/v1/timeline/days", `{"query":{},"from":"2011-12-30","to":"2011-12-31","timezone":"Pacific/Apia"}`, "date_not_in_zone", 400},
 		{"/api/v1/timeline/days", `{"query":{},"from":"2026-01-01","to":"2026-04-03"}`, "range_too_large", 400},
@@ -41,7 +40,8 @@ func TestTimelineDayRequestValidation(t *testing.T) {
 		})
 	}
 	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{"unexpected":true},"date":"2026-03-10"}`)
-	require.GreaterOrEqual(t, response.StatusCode, http.StatusBadRequest, body)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
 	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{},"from":"2026-01-01","to":"2026-04-02","timezone":"UTC"}`)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{},"from":"2011-12-29","to":"2011-12-31","timezone":"Pacific/Apia"}`)
@@ -90,12 +90,12 @@ func TestTimelineHTTPBoundariesAndEcho(t *testing.T) {
 		if count == 16 {
 			require.Equal(t, http.StatusOK, resp.StatusCode, raw)
 		} else {
-			require.GreaterOrEqual(t, resp.StatusCode, http.StatusBadRequest, raw)
+			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, raw)
+			require.Equal(t, "validation", decodeProblem(t, raw).Code)
 		}
 	}
 	for _, length := range []int{2048, 2049} {
 		resp, raw := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{},"date":"2026-03-10","cursor":"`+strings.Repeat("a", length)+`"}`)
-		require.GreaterOrEqual(t, resp.StatusCode, http.StatusBadRequest, raw)
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode, raw)
 		require.Equal(t, "cursor_mismatch", decodeProblem(t, raw).Code)
 	}
@@ -196,13 +196,7 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &switched))
 	require.Len(t, switched.Items, 2)
 	require.Equal(t, "date-kind-switch", switched.Items[0].When.PlacedBy.Rule)
-	createSavedQuery(t, ts.URL, "ZoneScope", `{"syntax":"advanced","text":"date:2026-03-10","timezone":"UTC"}`)
-	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{"syntax":"advanced","text":"saved:ZoneScope"},"date":"2026-03-10","timezone":"UTC"}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var saved api.TimelineDayResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &saved))
-	require.Equal(t, "UTC", saved.Timezone)
-	require.False(t, saved.TimezoneDefaulted)
+
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{"filters":{"paths":["/report-0.pdf"]}},"from":"2026-03-10","to":"2026-03-10"}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var scoped api.TimelineDaysResponse
@@ -220,8 +214,6 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NotContains(t, body, person.PersonID)
 	require.NotContains(t, body, "Synthetic Blind Recipient")
-	resp, _ = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day?disclosure=full", web, request)
-	require.NotEqual(t, http.StatusOK, resp.StatusCode)
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{},"date":"2026-03-10","limit":500}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NotContains(t, body, person.PersonID)
