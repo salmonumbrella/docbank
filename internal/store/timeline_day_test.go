@@ -56,9 +56,11 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
+	var nodes []Node
 	for _, seed := range []string{"a1", "a2"} {
 		node, err := s.CreateFile(ctx, s.RootID(), seed+".txt", fakeHash(seed), 10, "text/plain")
 		require.NoError(t, err)
+		nodes = append(nodes, node)
 		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
 		event := &record.Events[0]
@@ -83,6 +85,8 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	require.Len(t, first.Items, 1)
 	require.NotEmpty(t, first.NextCursor)
 	_, _, err = s.Trash(ctx, first.Items[0].NodeID, UnconditionalRev)
+	require.NoError(t, err)
+	_, _, err = s.Move(ctx, nodes[1].ID, s.RootID(), "renamed.txt", nodes[1].Revision)
 	require.NoError(t, err)
 	req.Cursor = first.NextCursor
 	for name, change := range map[string]func(*TimelineDayRequest){
@@ -112,6 +116,8 @@ func checkTimelineDayFrozenAfterTrash(t *testing.T, open func(*testing.T) *Store
 	require.NoError(t, err)
 	require.Len(t, second.Items, 1)
 	require.NotEqual(t, first.Items[0].NodeID, second.Items[0].NodeID)
+	require.Equal(t, "a2.txt", second.Items[0].Name)
+	require.Equal(t, "/a2.txt", second.Items[0].Path)
 	require.Empty(t, second.NextCursor)
 	_, err = svc.TimelineDay(ctx, "other", req)
 	require.ErrorIs(t, err, ErrTimelineCursorMismatch)

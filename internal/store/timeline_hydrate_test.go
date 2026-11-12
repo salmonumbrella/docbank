@@ -65,6 +65,24 @@ func checkTimelineHydrationCurrentPeople(t *testing.T, open func(*testing.T) *St
 	require.True(t, got.LinkedContact)
 	require.Equal(t, "synthetic", got.ArchiveID)
 	require.Equal(t, "person-a", got.UID)
+	if s.postgresSchema == "" {
+		for _, tc := range []struct {
+			text string
+			want int
+		}{
+			{"person:" + personID, 1},
+			{"person:" + blind.PersonID, 0},
+			{"NOT person:" + blind.PersonID, 1},
+			{"NOT person:" + personID, 0},
+		} {
+			scoped := req
+			scoped.Scope.Query.Syntax = "advanced"
+			scoped.Scope.Query.Text = tc.text
+			page, err := svc.TimelineDay(ctx, "owner", scoped)
+			require.NoError(t, err, tc.text)
+			require.Len(t, page.DateOnly, tc.want, tc.text)
+		}
+	}
 
 	// Suppression advances the binding epoch and excludes the stale derived edge.
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: personID, Role: "author", Action: "suppress", Revision: 1})
