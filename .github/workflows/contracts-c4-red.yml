@@ -1,0 +1,35 @@
+name: Contracts C4 round 3 regressions (expected RED)
+
+on:
+  push:
+    branches: [bootstrap/contracts-c4-red-r3-20261112]
+
+permissions:
+  contents: read
+
+jobs:
+  regressions:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "26.13.0"
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - name: Legal long node path
+        if: always()
+        working-directory: frontend
+        run: npx vp test run src/contracts.test.ts -t "accepts a legal 16,384-byte node path and refuses a longer one" --reporter=verbose
+      - name: Full unavailable hash
+        if: always()
+        working-directory: frontend
+        run: npx vp test run src/ContractsPage.test.ts -t "reads the contract fresh and shows facts, parties, terms and documents" --reporter=verbose
+      - name: Affected contracts test files
+        if: always()
+        working-directory: frontend
+        run: npx vp test run src/contracts.test.ts src/ContractsPage.test.ts --reporter=verbose
