@@ -794,7 +794,7 @@ references, and active-name uniqueness. Audited vaults refuse party mutations.
 
 ### Contract authority
 
-Schema 49 also stores contracts in `contracts` (UUID, title, type, stored
+Schema 50 stores contracts in `contracts` (UUID, title, type, stored
 status, optional start, expiry and signing dates, four free-text terms,
 revision, and creation and update times) and their party links in
 `contract_parties`. A link's primary key is the contract, party, and role, so a
@@ -804,7 +804,7 @@ The effective status (`expired`) is derived on read from the stored status and
 expiry date and is never stored. Contracts and links round-trip through metadata
 JSONL as `contract` and `contract_party` records, which restore validates.
 
-Signature requests and ordered signers are metadata authority in
+Schema 51 adds signature requests and ordered signers as metadata authority in
 `contract_signature_requests` and `contract_signature_signers`; both round-trip
 through JSONL and restore validation. The history index orders by contract,
 creation time and request ID. Signers reference their request with cascade
