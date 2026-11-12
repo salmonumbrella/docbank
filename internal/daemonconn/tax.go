@@ -103,12 +103,6 @@ func readTaxReceiptLimit(ctx context.Context, response *http.Response, page bool
 	if int64(len(data)) > limit {
 		return nil, &responseDecodeError{err: errors.New("tax response exceeds size limit")}
 	}
-	invalid := func() (api.TaxAccountPage, error) {
-		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account response")}
-=======
-		return nil, &responseDecodeError{err: err}
->>>>>>> 8c3376f (fix(tax): validate complete record receipts)
-	}
 	invalid := func() ([]byte, error) { return nil, &responseDecodeError{err: errors.New("invalid tax response")} }
 	var items []jsontext.Value
 	if page {

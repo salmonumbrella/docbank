@@ -109,3 +109,13 @@ func taxRouteError(err error) error {
 func isTaxOperation(ctx huma.Context) bool {
 	return ctx.Operation() != nil && strings.HasPrefix(ctx.Operation().Path, "/api/v1/tax/")
 }
+
+func taxCountrySelector(value string) string {
+	country := []byte(value)
+	for i, c := range country {
+		if c >= 'a' && c <= 'z' {
+			country[i] = c - ('a' - 'A')
+		}
+	}
+	return string(country)
+}

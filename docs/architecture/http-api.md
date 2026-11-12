@@ -1551,7 +1551,7 @@ invalid tax values return 422 `invalid_tax`, retired accounts return 409
 `state`, and `kind` filters with AND. `include_retired` defaults to false;
 `limit` defaults to 100 (1–1000), and `offset` defaults to zero. ASCII lowercase
 country codes are normalized. Get-one includes retired records. Responses do
-not include an account identifier or a reveal option.
+include `account_id` as a link when attached, but do not include the account’s secret `identifier` or a reveal option.
 
 Create with `POST /api/v1/tax/records`; update with `PATCH` on the record ID;
 retire with `POST /api/v1/tax/records/{record_id}/retire`. Both writes on an

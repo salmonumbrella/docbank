@@ -80,13 +80,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		Limit          int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset         int    `query:"offset" default:"0" minimum:"0"`
 	}) (*taxAccountPageOutput, error) {
-		country := []byte(in.Country)
-		for i, c := range country {
-			if c >= 'a' && c <= 'z' {
-				country[i] = c - ('a' - 'A')
-			}
-		}
-		rows, err := d.Store.ListTaxAccounts(ctx, store.TaxAccountListOptions{FilerPartyID: in.Filer, Country: string(country), TaxKind: in.TaxKind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
+		rows, err := d.Store.ListTaxAccounts(ctx, store.TaxAccountListOptions{FilerPartyID: in.Filer, Country: taxCountrySelector(in.Country), TaxKind: in.TaxKind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
 		if err != nil {
 			return nil, taxRouteError(err)
 		}
