@@ -178,7 +178,9 @@ async function views(browser: Browser, binary: string, label: "before" | "after"
     await main
       .getByRole("button", { name: "Show contract Northwind Storage - unit lease" })
       .click();
-    await expect(main.getByRole("heading", { name: "Northwind Storage - unit lease" })).toBeVisible();
+    await expect(
+      main.getByRole("heading", { name: "Northwind Storage - unit lease" }),
+    ).toBeVisible();
     await shot(page, `${label}-detail-desktop-dark.png`);
     await page.getByRole("button", { name: "All files", exact: true }).click();
     await page.getByRole("cell", { name: "agreements", exact: true }).dblclick();
@@ -196,7 +198,9 @@ async function views(browser: Browser, binary: string, label: "before" | "after"
     await main
       .getByRole("button", { name: "Show contract Northwind Storage - unit lease" })
       .click();
-    await expect(main.getByRole("heading", { name: "Northwind Storage - unit lease" })).toBeVisible();
+    await expect(
+      main.getByRole("heading", { name: "Northwind Storage - unit lease" }),
+    ).toBeVisible();
     expect(await main.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
     await shot(page, `${label}-detail-mobile-dark.png`);
   } finally {
@@ -258,20 +262,36 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
   };
   const pause = (ms = 2000) => page.waitForTimeout(ms);
   // point glides the arrow tip to the target's centre, then clicks it.
-  const point = async (locator: Locator, click = true) => {
-    await locator.scrollIntoViewIfNeeded();
-    const box = await locator.boundingBox();
-    if (!box) throw new Error("Missing recording target");
-    const target = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-    for (let i = 1; i <= 24; i++) {
+  // A listing that re-renders replaces its rows (runs 43294590088 attempts 1
+  // and 2 lost the folder cell mid-scroll), so the box is read from the
+  // locator each time rather than from one element that may detach.
+  const centre = async (locator: Locator) => {
+    await expect(locator).toBeVisible();
+    let box: Awaited<ReturnType<Locator["boundingBox"]>> = null;
+    await expect.poll(async () => (box = await locator.boundingBox()) !== null).toBe(true);
+    const { x, y, width, height } = box!;
+    if (y < 0 || y + height > size.height) {
+      await locator.scrollIntoViewIfNeeded();
+      return centre(locator);
+    }
+    return { x: x + width / 2, y: y + height / 2 };
+  };
+  const glide = async (target: { x: number; y: number }, steps: number) => {
+    for (let i = 1; i <= steps; i++) {
       await page.mouse.move(
-        position.x + ((target.x - position.x) * i) / 24,
-        position.y + ((target.y - position.y) * i) / 24,
+        position.x + ((target.x - position.x) * i) / steps,
+        position.y + ((target.y - position.y) * i) / steps,
       );
       await page.waitForTimeout(25);
     }
     position = target;
+  };
+  const point = async (locator: Locator, click = true) => {
+    await glide(await centre(locator), 24);
     await page.waitForTimeout(350);
+    // The tip ends on the click point even if the target moved meanwhile.
+    const settled = await centre(locator);
+    if (Math.hypot(settled.x - position.x, settled.y - position.y) > 1) await glide(settled, 6);
     if (click) await locator.click();
   };
   const type = async (locator: Locator, text: string) => {
@@ -287,10 +307,7 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
     await expect(main.getByRole("table", { name: "Contracts" }).getByRole("row")).toHaveCount(3);
     await page.mouse.move(position.x, position.y);
     // Frames before the loaded register are trimmed, so no blank page shows.
-    await writeFile(
-      path.join(screenshots, "video-start.txt"),
-      ((Date.now() - opened) / 1000 + 0.3).toFixed(2),
-    );
+    const recordingStart = ((Date.now() - opened) / 1000 + 0.3).toFixed(2);
     await caption("Contracts: start a new contract");
     await pause(1200);
 
@@ -398,7 +415,9 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
       };
     });
     await report("inspector-section-geometry", sectionGeometry);
-    expect(Math.abs(sectionGeometry.buttonRight - sectionGeometry.headerRight)).toBeLessThanOrEqual(2);
+    expect(Math.abs(sectionGeometry.buttonRight - sectionGeometry.headerRight)).toBeLessThanOrEqual(
+      2,
+    );
     await shot(page, "after-inspector-linked-desktop-dark.png");
     await pause();
 
@@ -408,6 +427,11 @@ test("recording: create, stale edit and inspector link", async ({ browser }) => 
     await expect(main.getByText("lease-signed.pdf")).toBeVisible();
     await shot(page, "after-detail-linked-desktop-dark.png");
     await pause(2500);
+    // Only an attempt that reaches the end saves its recording, under one
+    // exact name the encoder reads; earlier failed attempts are never used.
+    await context.close();
+    await page.video()!.saveAs(path.join(screenshots, "recording.webm"));
+    await writeFile(path.join(screenshots, "recording-start.txt"), recordingStart);
   } finally {
     await context.close();
     await vault.close();

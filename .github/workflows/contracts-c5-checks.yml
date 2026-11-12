@@ -2,13 +2,13 @@ name: Contracts C5 combined checks and media
 
 on:
   push:
-    branches: [ci/contracts-c5-combined]
+    branches: [ci/contracts-c5-combined-r2]
 
 permissions:
   contents: read
 
 env:
-  C5_SOURCE: d1ea4aa6efb0bf326fe861848a9a9bd6b1c69aa8
+  C5_SOURCE: 79fb83c6d43887b30dd7d7a369801ef1fe6650b1
   C5_BASE: 93c3f0b5e347de899822d9d3ad82693d32df4072
 
 jobs:
@@ -169,9 +169,10 @@ jobs:
         if: always()
         run: |
           shots=.superpowers/contracts-c5-shots
-          webm=$(find "$shots/video" -name '*.webm' -print -quit 2>/dev/null || true)
-          if [ -z "$webm" ]; then echo "no recording"; exit 0; fi
-          start=$(cat "$shots/video-start.txt")
+          # The test saves only the attempt that completed the whole sequence.
+          webm="$shots/recording.webm"
+          test -s "$webm" || { echo "no completed recording"; exit 1; }
+          start=$(cat "$shots/recording-start.txt")
           ffmpeg -y -loglevel error -ss "$start" -i "$webm" -c:v libx264 -pix_fmt yuv420p -preset slow -crf 20 -movflags +faststart "$shots/contracts-c5.mp4"
           ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate:format=duration -of default=nw=1 "$shots/contracts-c5.mp4" | tee "$shots/mp4-probe.txt"
           mkdir -p "$shots/frames"
