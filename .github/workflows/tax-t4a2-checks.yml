@@ -88,6 +88,16 @@ jobs:
       - run: |
           PATH="$(go env GOPATH)/bin:$PATH" make lint
           git diff --exit-code
+      - name: Capture lint patch
+        if: always()
+        run: git diff > "$RUNNER_TEMP/tax-t4a2-lint.patch"
+      - name: Upload lint patch
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: tax-t4a2-lint-patch
+          path: ${{ runner.temp }}/tax-t4a2-lint.patch
+          if-no-files-found: error
 
   docs-and-generated:
     if: github.repository == 'salmonumbrella/docbank'
