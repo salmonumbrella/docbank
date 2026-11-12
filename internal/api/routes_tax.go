@@ -14,6 +14,7 @@ import (
 func registerTaxRoutes(api huma.API, d Deps, g *gate) {
 	registerTaxAccountRoutes(api, d, g)
 	registerTaxRecordRoutes(api, d, g)
+	registerTaxEventRoutes(api, d, g)
 }
 
 // Each field records the Huma locations that may be reported for it. The
@@ -27,7 +28,7 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"reveal", "q"}, {"account_id", "bp"}, {"If-Match", "h"},
 	{"title", "b"}, {"kind", "bq"}, {"form_code", "b"}, {"tax_year", "b"},
 	{"period_start", "b"}, {"period_end", "b"}, {"due_date", "b"},
-	{"direction", "b"}, {"amount", "b"}, {"state", "q"}, {"year", "q"}, {"record_id", "p"},
+	{"direction", "b"}, {"amount", "b"}, {"state", "bq"}, {"year", "q"}, {"record_id", "p"}, {"event_id", "p"}, {"occurred_on", "b"}, {"reference", "b"}, {"reason", "b"},
 }
 var taxDiagnosticReasons = []string{"invalid value", "invalid length or text", "control character", "invalid country", "invalid subdivision", "invalid currency", "invalid date", "precedes effective_start", "not canonical", "required", "unknown cadence", "out of range", "party not found", "party is retired", "party is not own", "party is not an organization", "unknown kind", "unknown state", "unknown direction", "amount required when currency changes", "amount required", "zero required", "unknown amount must be null", "invalid length", "invalid precision", "invalid decimal or overflow", "overflow", "precedes period_start"}
 
