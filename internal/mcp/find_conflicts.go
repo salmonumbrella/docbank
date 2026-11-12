@@ -87,7 +87,7 @@ func findConflicts(ctx context.Context, lease *daemonLease, raw []byte) (findCon
 
 const (
 	conflictSourceLimit = 256 << 10
-	conflictKindField   = "kind"
+	kindField           = "kind"
 )
 
 func sourceText(ctx context.Context, c *daemonconn.Connection, hit api.DocumentSearchResult, summary api.DocumentSummary) string {
@@ -148,9 +148,9 @@ func findConflictsSchemas() (schema, schema) {
 		"passage": integerSchema(1, 100), "text": stringSchema(512), "value": stringSchema(512), "quote": stringSchema(512),
 	}, "passage", "text", "value", "quote")
 	conflict := objectSchema(schema{
-		conflictKindField: enumSchema("money", "percent", "duration"), "unit": stringSchema(512),
+		kindField: enumSchema("money", "percent", "duration"), "unit": stringSchema(512),
 		"figures": arraySchema(figure, 0),
-	}, conflictKindField, "unit", "figures")
+	}, kindField, "unit", "figures")
 	passage := objectSchema(schema{
 		"rank": integerSchema(1, 100), "node_id": integerSchema(1, 0), versionField: uuidSchema(), //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
 		"path":        schema{"type": "string", "minLength": 1, "maxLength": maxPathCharacters, "pattern": "^/"}, //nolint:goconst // JSON Schema vocabulary is intentionally repeated.

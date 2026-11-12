@@ -1,5 +1,7 @@
 package mcp
 
+import "math"
+
 const (
 	contractSafeInteger     = 9_007_199_254_740_991
 	contractSchemaString    = "string"
@@ -37,7 +39,7 @@ func contractDetailProperties() schema {
 	}
 	p["created_at"] = dateTimeSchema()
 	p["updated_at"] = dateTimeSchema()
-	p["parties"] = arraySchema(objectSchema(schema{"party_id": uuidSchema(), roleField: stringSchema(32), "display_name": stringSchema(200), conflictKindField: stringSchema(32), "own": booleanSchema(), "retired_at": schema{"anyOf": []schema{dateTimeSchema(), {contractSchemaType: "null"}}}}, "party_id", roleField, "display_name", conflictKindField, "own", "retired_at"), 0)
+	p["parties"] = arraySchema(objectSchema(schema{"party_id": uuidSchema(), roleField: stringSchema(32), "display_name": stringSchema(200), kindField: stringSchema(32), "own": booleanSchema(), "retired_at": schema{"anyOf": []schema{dateTimeSchema(), {contractSchemaType: "null"}}}}, "party_id", roleField, "display_name", kindField, "own", "retired_at"), 0)
 	p["documents"] = arraySchema(objectSchema(schema{nodeField: integerSchema(1, 0), versionField: uuidSchema(), "blob_sha256": sha256Schema(), sizeField: integerSchema(0, 0), roleField: stringSchema(32), "added_at": dateTimeSchema(), "current": booleanSchema(), "available": booleanSchema()}, nodeField, versionField, "blob_sha256", sizeField, roleField, "added_at", "current", "available"), 0)
 	return p
 }
@@ -63,8 +65,8 @@ func createContractSchemas() (schema, schema) {
 func updateContractSchemas() (schema, schema) {
 	patch := objectSchema(contractEditableProperties())
 	patch["minProperties"] = 1
-	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0), "patch": patch}, "contract_id", "revision", "patch"), contractWriteReceiptSchema()
+	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, math.MaxInt64), "patch": patch}, "contract_id", "revision", "patch"), contractWriteReceiptSchema()
 }
 func linkContractDocumentSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, 0), nodeField: integerSchema(1, 0), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", nodeField, versionField, roleField), contractWriteReceiptSchema()
+	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, math.MaxInt64), nodeField: integerSchema(1, math.MaxInt64), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", nodeField, versionField, roleField), contractWriteReceiptSchema()
 }

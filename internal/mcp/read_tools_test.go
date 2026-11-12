@@ -950,10 +950,14 @@ func TestBoundedToolSuccessExactIntegerSerialization(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(decoded.Content[0].Text), &text))
 	require.Equal(t, output.Revision, text.Revision)
-	_, err = boundedToolSuccess(mustResolveSchema(&jsonschema.Schema{Type: "string"}), output, nil)
-	require.Error(t, err)
-	_, err = boundedToolSuccess(mustResolveSchema(&jsonschema.Schema{Type: "string"}), strings.Repeat("x", maxToolResponseBytes), nil)
-	require.ErrorIs(t, err, errToolResultTooLarge)
+	t.Run("schema rejection", func(t *testing.T) {
+		_, err := boundedToolSuccess(mustResolveSchema(&jsonschema.Schema{Type: "string"}), output, nil)
+		require.Error(t, err)
+	})
+	t.Run("size limit", func(t *testing.T) {
+		_, err := boundedToolSuccess(mustResolveSchema(&jsonschema.Schema{Type: "string"}), strings.Repeat("x", maxToolResponseBytes), nil)
+		require.ErrorIs(t, err, errToolResultTooLarge)
+	})
 }
 
 func TestBoundedToolSuccessPreservesEmptyCollections(t *testing.T) {

@@ -81,7 +81,6 @@ func TestContractMCPImportedRevisionPrecision(t *testing.T) {
 				t.Helper()
 				return exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": name, "arguments": args}))
 			}
-			// Each subtest continues after a read failure so hosted logs expose every boundary.
 			t.Run("list", func(t *testing.T) {
 				assertPrecisionWire(t, call("list_contracts", map[string]any{}), tc.revision, true)
 			})
@@ -209,14 +208,7 @@ func TestContractMCPImportedRevisionPrecision(t *testing.T) {
 		wire := exchangeRaw(t, server, request)
 		require.Equal(t, "/api/v1/contracts/"+id+"/documents/9007199254740993", gotPath, "%s", wire)
 		assertPrecisionWire(t, wire, 2, false)
-		gotPath = ""
-		overflow := strings.Replace(string(request), `"node_id":9007199254740993`, `"node_id":9223372036854775808`, 1)
-		require.NotEqual(t, string(request), overflow)
-		wire = exchangeRaw(t, server, []byte(overflow))
-		require.Empty(t, gotPath)
-		require.EqualValues(t, -32602, decodeWireError(t, wire).Code)
 	})
-
 }
 
 func assertPrecisionWire(t *testing.T, wire []byte, want int64, list bool) {

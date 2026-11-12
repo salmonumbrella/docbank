@@ -38,6 +38,8 @@ func TestContractMCPCatalogOptIn(t *testing.T) {
 func TestContractMCPInputSemanticsTermsByteLimit(t *testing.T) {
 	assert.True(t, validToolSemantics("update_contract", map[string]any{"patch": map[string]any{"summary": strings.Repeat("é", 4096)}}))
 	assert.False(t, validToolSemantics("update_contract", map[string]any{"patch": map[string]any{"summary": strings.Repeat("é", 4097)}}))
+	assert.True(t, validToolSemantics("create_contract", map[string]any{"summary": strings.Repeat("é", 4096)}))
+	assert.False(t, validToolSemantics("create_contract", map[string]any{"summary": strings.Repeat("é", 4097)}))
 }
 
 func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
@@ -298,6 +300,12 @@ func TestContractMCPWriteInvalidIntegerEncoding(t *testing.T) {
 	wireRequest := strings.Replace(string(request), `"revision":1`, `"revision":1.0`, 1)
 	require.NotEqual(t, string(request), wireRequest)
 	wire := exchangeRaw(t, server, []byte(wireRequest))
+	assert.Zero(t, mutations.Load())
+	assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
+	link := requestFor("tools/call", map[string]any{"name": "link_contract_document", "arguments": map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": 1, "node_id": 1, "content_version_id": "22222222-2222-4222-8222-222222222222", "role": "signed"}})
+	overflow := strings.Replace(string(link), `"node_id":1`, `"node_id":9223372036854775808`, 1)
+	require.NotEqual(t, string(link), overflow)
+	wire = exchangeRaw(t, server, []byte(overflow))
 	assert.Zero(t, mutations.Load())
 	assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
 }

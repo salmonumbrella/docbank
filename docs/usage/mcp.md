@@ -732,7 +732,8 @@ With contract writes enabled, a synthetic workflow is:
    signed copy does not change the contract status.
 
 Use the latest revision from a read or receipt. Revisions are positive 64-bit
-integers; clients must preserve their exact value, including above 2^53.
+integers; clients must preserve their exact value, including above 2^53. Supply
+integer arguments as JSON integer literals without a decimal point or exponent.
 A stale revision is rejected;
 read again before deciding whether to retry. If a write returns
 `contract_outcome_unknown`, inspect the contract before retrying. For a create,

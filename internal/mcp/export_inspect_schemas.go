@@ -19,7 +19,7 @@ func exportSourceSchema() schema {
 	queryFingerprint[jsonSchemaPattern] = "^sha256:[0-9a-f]{64}$"
 	return objectSchema(schema{
 		"id": uuidSchema(), "request_sha256": sha256Schema(),
-		conflictKindField: enumSchema(
+		kindField: enumSchema(
 			"explicit", "nodes", "query", "saved_query", "snapshot", "upload", "mailbox_collection", "photos",
 		),
 		schemaStateField: enumSchema("sealed"), "member_hash": sha256Schema(),
@@ -28,7 +28,7 @@ func exportSourceSchema() schema {
 		"created_at":     dateTimeSchema(), "expires_at": dateTimeSchema(),
 		"saved_query_id": uuidSchema(), "saved_query_revision": integerSchema(1, math.MaxInt64),
 		"query_fingerprint": queryFingerprint, "collection_id": uuidSchema(),
-	}, "id", "request_sha256", conflictKindField, schemaStateField, "member_hash", schemaTotalField,
+	}, "id", "request_sha256", kindField, schemaStateField, "member_hash", schemaTotalField,
 		"source_bytes", "created_at", "expires_at")
 }
 

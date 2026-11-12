@@ -238,11 +238,11 @@ func personSchemaProperties() schema {
 
 func personIdentitySchema() schema {
 	return objectSchema(schema{
-		"identity_id": uuidSchema(), conflictKindField: stringSchema(64), "value_display": stringSchema(document.MaxPersonIdentityValueBytes),
+		"identity_id": uuidSchema(), kindField: stringSchema(64), "value_display": stringSchema(document.MaxPersonIdentityValueBytes),
 		"value_normalized": stringSchema(document.MaxPersonIdentityValueBytes), "scope_kind": stringSchema(document.MaxPersonIdentityScopeKindBytes), "scope_value": stringSchema(document.MaxPersonIdentityScopeValueBytes),
 		"normalization": stringSchema(64), "origin": stringSchema(64), "evidence_kind": stringSchema(128),
 		"evidence_id": stringSchema(document.MaxPersonEvidenceIDBytes), "confidence": stringSchema(64), "recorded_at": dateTimeSchema(),
-	}, "identity_id", conflictKindField, "value_display", "value_normalized", "normalization", "origin", "evidence_kind", "evidence_id", "confidence", "recorded_at")
+	}, "identity_id", kindField, "value_display", "value_normalized", "normalization", "origin", "evidence_kind", "evidence_id", "confidence", "recorded_at")
 }
 
 func personExternalIdentitySchema() schema {
@@ -509,12 +509,12 @@ func findBatesExportsSchemas() (schema, schema) {
 		personIDField:     selectorExcludes("bates_label", "custodian_label"),
 	}
 	evidence := objectSchema(schema{
-		conflictKindField: enumSchema("label", "custodian"), "occurrence_id": stringSchema(128), "label": stringSchema(maxBatesLabelChars),
+		kindField: enumSchema("label", "custodian"), "occurrence_id": stringSchema(128), "label": stringSchema(maxBatesLabelChars),
 		"output_page": integerSchema(1, 1_000_000), "assignment_id": uuidSchema(), "scope_kind": enumSchema("package", "collection", "document"),
 		"raw_label": stringSchema(200), personIDField: uuidSchema(), "rank": enumSchema("primary", "additional"),
 		"basis": enumSchema("operator_assigned", "package_column", "transfer_record"), packageIDField: uuidSchema(),
 		"package_record_id": sha256Schema(),
-	}, conflictKindField, "occurrence_id")
+	}, kindField, "occurrence_id")
 	candidate := objectSchema(schema{
 		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "snapshot_id": uuidSchema(),
 		"blob_sha256": sha256Schema(), sizeField: integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
@@ -642,9 +642,9 @@ func getVaultInfoSchemas() (schema, schema) {
 func listChangesSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{schemaCursorField: stringSchema(maxChangeCursorBytes)})
 	event := objectSchema(schema{
-		schemaCursorField: stringSchema(maxChangeCursorBytes), conflictKindField: stringSchema(64),
+		schemaCursorField: stringSchema(maxChangeCursorBytes), kindField: stringSchema(64),
 		"node_id": integerSchema(1, 0), "revision": integerSchema(1, 0),
-	}, schemaCursorField, conflictKindField, "node_id", "revision")
+	}, schemaCursorField, kindField, "node_id", "revision")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"events":      arraySchema(event, maxChangesPage),
 		"next_cursor": stringSchema(maxChangeCursorBytes), "has_more": booleanSchema(),
@@ -933,7 +933,7 @@ func photoFileSchema() schema {
 func photoAssetOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"id":                       uuidSchema(),
-		conflictKindField:          enumSchema("photo", "video"),
+		kindField:                  enumSchema("photo", "video"),
 		schemaRevisionField:        integerSchema(1, 0),
 		"excluded_at":              dateTimeSchema(),
 		"display_file_id":          uuidSchema(),
@@ -946,7 +946,7 @@ func photoAssetOutputSchema() schema {
 		"file_offset":              integerSchema(0, 256),
 		"next_file_offset":         integerSchema(1, 256),
 		"agreement":                objectSchema(schema{"rating": booleanSchema(), "flag": booleanSchema(), "label": booleanSchema(), "caption": booleanSchema(), "creator": booleanSchema(), "copyright": booleanSchema(), "rotation": booleanSchema()}),
-	}), "id", conflictKindField, schemaRevisionField, "display_source", schemaCreatedAtField, "updated_at", "files", "total_files", "file_offset", "ttlMs", "cacheScope")
+	}), "id", kindField, schemaRevisionField, "display_source", schemaCreatedAtField, "updated_at", "files", "total_files", "file_offset", "ttlMs", "cacheScope")
 }
 
 func photoAssetMutationSchemas(properties schema, required ...string) (schema, schema) {
@@ -1020,9 +1020,9 @@ func getPhotoFacesSchemas() (schema, schema) {
 
 func createPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"node_id":         integerSchema(1, 0),
-		conflictKindField: enumSchema("photo", "video"),
-		roleField:         enumSchema("raw", "image", "video", "sidecar"),
+		"node_id": integerSchema(1, 0),
+		kindField: enumSchema("photo", "video"),
+		roleField: enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }
 
@@ -1057,7 +1057,7 @@ func promotePhotoNodeSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
 		"node_id":           integerSchema(1, 0),
 		schemaRevisionField: integerSchema(1, 0),
-		conflictKindField:   enumSchema("photo", "video"),
+		kindField:           enumSchema("photo", "video"),
 		roleField:           enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }

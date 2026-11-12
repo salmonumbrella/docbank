@@ -742,7 +742,7 @@ func domainErrorMessage(code string) string {
 	case "consent_required":
 		return "Processing requires prior operator consent for this exact plan."
 	case "processing_outcome_unknown":
-		return "The initial processing outcome is unknown and has no MCP job ID; do not retry blindly."
+		return "The operation outcome is unknown; inspect its state before retrying."
 	case "daemon_unavailable":
 		return "The local Docbank daemon is unavailable; check the daemon and retry."
 	case "scope_too_large":
