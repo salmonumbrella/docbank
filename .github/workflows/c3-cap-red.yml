@@ -1,0 +1,58 @@
+name: C3 capped regression red
+on:
+  push:
+    branches: [bootstrap/contracts-c3-cap-red-20261112]
+permissions:
+  contents: read
+jobs:
+  sqlite:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Retained node high-water
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite$/^organization$/^ContractDocumentNodeHighWater$' -count=1
+      - name: Malformed document query
+        if: always()
+        run: go test -tags fts5 ./internal/api -run '^TestContractDocumentRoutes$' -count=1
+  postgres:
+    runs-on: ubuntu-26.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Retained node high-water
+        env:
+          DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres$/^organization$/^ContractDocumentNodeHighWater$' -count=1
