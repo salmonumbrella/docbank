@@ -2219,6 +2219,7 @@ var backendSuites = []backendSuite{
 		{"PartyPersonLifecycle", func(t *testing.T) { checkPartyPersonLifecycle(t, newTestStore) }, func(t *testing.T) { checkPartyPersonLifecycle(t, newPostgresQueryStore) }},
 		{"ContractPartyHistory", func(t *testing.T) { checkContractPartyHistory(t, newTestStore) }, func(t *testing.T) { checkContractPartyHistory(t, newPostgresQueryStore) }},
 		{"ContractFilters", func(t *testing.T) { checkContractFilters(t, newTestStore) }, func(t *testing.T) { checkContractFilters(t, newPostgresQueryStore) }},
+		{"ContractConcurrentRevisionFence", func(t *testing.T) { checkContractConcurrentRevisionFence(t, newTestStore) }, func(t *testing.T) { checkContractConcurrentRevisionFence(t, newPostgresQueryStore) }},
 		{"ContractLifecycle", func(t *testing.T) { checkContractLifecycle(t, newTestStore) }, func(t *testing.T) { checkContractLifecycle(t, newPostgresQueryStore) }},
 		{"PartyLifecycle", func(t *testing.T) { checkPartyLifecycle(t, newTestStore) }, func(t *testing.T) { checkPartyLifecycle(t, newPostgresQueryStore) }},
 		{"PartyConcurrentNameAdmission", func(t *testing.T) { checkPartyConcurrentNameAdmission(t, newTestStore) }, func(t *testing.T) { checkPartyConcurrentNameAdmission(t, newPostgresQueryStore) }},
