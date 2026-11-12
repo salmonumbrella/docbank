@@ -28,9 +28,7 @@
   // A pending or failed derivation still shows the independent operator
   // assertions; only derived edges and candidates wait for it.
   const team = $derived(
-    people
-      ? tablePeople(settled ? people : { ...people, edges: [], unresolved: [] })
-      : undefined,
+    people ? tablePeople(settled ? people : { ...people, edges: [], unresolved: [] }) : undefined,
   );
   const visible = $derived(team?.people.slice(0, 3) ?? []);
   const more = $derived((team?.people.length ?? 0) - visible.length);

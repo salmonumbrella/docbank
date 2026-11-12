@@ -286,9 +286,7 @@ test("shows document dates and people in the inspector and both tables", async (
       if (narrow) await expect(header).toBeHidden();
       else {
         await expect(header).toBeVisible();
-        await expect(
-          liveRow("board-update.eml").getByText(EMAIL_SENT),
-        ).toBeVisible();
+        await expect(liveRow("board-update.eml").getByText(EMAIL_SENT)).toBeVisible();
       }
     });
 
@@ -356,9 +354,7 @@ test("shows document dates and people in the inspector and both tables", async (
       const people = inspector.getByRole("region", { name: "People" });
       await expect(people.getByText("People couldn't be loaded.")).toBeVisible();
       await expect(
-        inspector
-          .getByRole("region", { name: "Dates" })
-          .getByText(PDF_CREATED),
+        inspector.getByRole("region", { name: "Dates" }).getByText(PDF_CREATED),
       ).toBeVisible();
       await capture(page, testInfo, "people-failed-wide", "light");
       const before = requested.length;
@@ -366,7 +362,9 @@ test("shows document dates and people in the inspector and both tables", async (
       await expect(people.getByText("L. Beerwijk")).toBeVisible();
       // Other rows' reads may still be queued; only this version's reads count.
       expect(
-        requested.slice(before).filter((read) => read.startsWith(`${version["board-minutes.pdf"]}/`)),
+        requested
+          .slice(before)
+          .filter((read) => read.startsWith(`${version["board-minutes.pdf"]}/`)),
       ).toEqual([`${version["board-minutes.pdf"]}/people`]);
       await capture(page, testInfo, "people-retried-wide", "light");
       await page.unroute(peopleOf);
