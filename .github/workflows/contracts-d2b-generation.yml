@@ -1,0 +1,62 @@
+name: Contracts D2b integrated generation
+on:
+  push:
+    branches: [ci/contracts-d2b-gen-14b1779ca]
+permissions:
+  contents: read
+jobs:
+  generated:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify exact handwritten source parent
+        run: |
+          test "$(git rev-parse HEAD^)" = 14b1779ca0271b3e00a9abf32ef088ad117fa461
+          test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 2
+          test -z "$(git status --porcelain)"
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - run: kit-retry 3 5 go mod download
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - name: Render source API and generate clients
+        run: |
+          mkdir -p .superpowers/openapi
+          cat > .superpowers/openapi/main.go <<'GO'
+          package main
+          import (
+              "os"
+              "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+              out, err := api.OpenAPIYAML()
+              if err != nil { panic(err) }
+              if _, err := os.Stdout.Write(out); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi > internal/api/openapi.yaml
+          make generate-photo-policy
+          go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+          npm --prefix frontend run generate:api
+          mkdir -p d2b-artifact/internal/api d2b-artifact/internal/apiclient d2b-artifact/frontend/src/generated
+          cp internal/api/openapi.yaml d2b-artifact/internal/api/openapi.yaml
+          cp internal/apiclient/client.gen.go d2b-artifact/internal/apiclient/client.gen.go
+          cp frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts d2b-artifact/frontend/src/generated/
+          printf '%s\n' 14b1779ca0271b3e00a9abf32ef088ad117fa461 > d2b-artifact/source.txt
+          (cd d2b-artifact && sha256sum internal/api/openapi.yaml internal/apiclient/client.gen.go frontend/src/generated/docbank.ts frontend/src/generated/photoSourceExtensions.ts > SHA256SUMS)
+          cat d2b-artifact/SHA256SUMS
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: contracts-d2b-generated-14b1779ca-${{ github.sha }}
+          if-no-files-found: error
+          path: d2b-artifact/
