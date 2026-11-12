@@ -55,7 +55,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v23"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v24"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -1536,14 +1536,9 @@ func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string
 		return
 	}
 	civil, err := time.Parse("2006-01-02T15:04:05", *date.Civil)
-	if err != nil {
-		c.string("email.sent.raw", "email", "Date", raw, false)
-		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
-		return
-	}
 	stamp := document.SourceMetadataTimestampV1{Raw: raw, Normalized: *date.Civil,
 		Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}
-	if date.UTC != nil {
+	if date.UTC != nil && err == nil {
 		instant, err := time.Parse(time.RFC3339, *date.UTC)
 		if err != nil {
 			c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
@@ -1556,6 +1551,11 @@ func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string
 			stamp.Timezone = document.SourceMetadataTimezoneOffset
 			stamp.Offset = stamp.Normalized[len(stamp.Normalized)-6:]
 		}
+	}
+	if document.ValidateSourceMetadataTimestamp(stamp) != nil {
+		c.string("email.sent.raw", "email", "Date", raw, false)
+		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
+		return
 	}
 	c.addTimestamp("email.sent", "email", "Date", stamp)
 }

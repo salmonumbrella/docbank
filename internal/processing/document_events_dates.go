@@ -17,7 +17,7 @@ import (
 var (
 	metadataOffset = regexp.MustCompile(`^[+-](0[0-9]|1[0-4]):[0-5][0-9]$`)
 
-	emailDate = regexp.MustCompile(`^(?:[A-Za-z]{3},\s*)?([0-9]{1,2})\s+([A-Za-z]{3})\s+([0-9]{2}|[0-9]{4})\s+([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(?:\s+([+-][0-9]{4}|[A-Za-z]{1,10}))?(?:\s+\([^\r\n]*\))?$`)
+	emailDate = regexp.MustCompile(`^(?:([A-Za-z]{3}),\s*)?([0-9]{1,2})\s+([A-Za-z]{3})\s+([0-9]{2}|[0-9]{4})\s+([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(?:\s+([+-](?:[0-9]{4}|[0-9]{2}:[0-9]{2}|[0-9]{1,2})|[A-Za-z]{1,10}))?(?:\s+\([^\r\n]*\))?$`)
 )
 
 func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentEventV1, error) {
@@ -140,13 +140,13 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 	if match == nil {
 		return document.DocumentEventV1{}, false
 	}
-	monthTime, err := time.Parse("Jan", canonicalRFCMonth(match[2]))
+	monthTime, err := time.Parse("Jan", canonicalRFCMonth(match[3]))
 	if err != nil {
 		return document.DocumentEventV1{}, false
 	}
-	day, _ := strconv.Atoi(match[1])
-	year, _ := strconv.Atoi(match[3])
-	if len(match[3]) == 2 {
+	day, _ := strconv.Atoi(match[2])
+	year, _ := strconv.Atoi(match[4])
+	if len(match[4]) == 2 {
 		// RFC 5322 section 4.3 uses 1950–2049 for two-digit years.
 		if year < 50 {
 			year += 2000
@@ -154,28 +154,27 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 			year += 1900
 		}
 	}
-	hour, _ := strconv.Atoi(match[4])
-	minute, _ := strconv.Atoi(match[5])
-	second := 0
-	if match[6] != "" {
-		second, _ = strconv.Atoi(match[6])
-	}
+	hour, _ := strconv.Atoi(match[5])
+	minute, _ := strconv.Atoi(match[6])
+	second, _ := strconv.Atoi(match[7])
 	calendar := time.Date(year, monthTime.Month(), day, hour, minute, second, 0, time.UTC)
+	// A present weekday must agree with the date, as the strict decoder requires.
 	if year < 1 || year > 9999 || calendar.Year() != year || calendar.Month() != monthTime.Month() ||
-		calendar.Day() != day || calendar.Hour() != hour || calendar.Minute() != minute || calendar.Second() != second {
+		calendar.Day() != day || calendar.Hour() != hour || calendar.Minute() != minute || calendar.Second() != second ||
+		(match[1] != "" && !strings.EqualFold(match[1], calendar.Weekday().String()[:3])) {
 		return document.DocumentEventV1{}, false
 	}
 	base := fmt.Sprintf("%04d-%02d-%02dT%02d:%02d", year, int(monthTime.Month()), day, hour, minute)
 	precision := document.EventPrecision("minute")
-	if match[6] != "" {
+	if match[7] != "" {
 		base += fmt.Sprintf(":%02d", second)
 		precision = "second"
 	}
-	if match[7] != "" {
-		base += match[7]
+	if match[8] != "" {
+		base += match[8]
 		precision = "fraction"
 	}
-	zoneToken := match[8]
+	zoneToken := match[9]
 	zone, offset := emailZone(zoneToken)
 	zoneText := zoneToken
 
@@ -193,12 +192,13 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 		ZoneText: zoneText, OffsetSeconds: offset,
 	}
 	if precision == "fraction" {
-		event.FractionDigits = len(match[7]) - 1
+		event.FractionDigits = len(match[8]) - 1
 	}
 	return event, true
 }
 
-// emailZone classifies the zone tokens admitted by emailDate.
+// emailZone classifies the zone tokens admitted by emailDate. A numeric token
+// is +hhmm or +hh:mm; the short +h and +hh spellings are malformed and invalid.
 func emailZone(token string) (document.EventTimezoneKind, *int) {
 	upper := strings.ToUpper(token)
 	if token == "" {
@@ -208,10 +208,10 @@ func emailZone(token string) (document.EventTimezoneKind, *int) {
 		return "utc", nil
 	}
 	if token[0] == '+' || token[0] == '-' {
-		hour, _ := strconv.Atoi(token[1:3])
-		minute, _ := strconv.Atoi(token[3:5])
-		seconds := hour*3600 + minute*60
-		if minute > 59 || seconds > 18*3600 {
+		digits := strings.Replace(token[1:], ":", "", 1)
+		value, err := strconv.ParseUint(digits, 10, 16)
+		seconds := int(value/100*3600 + value%100*60) // value is hhmm
+		if err != nil || len(digits) != 4 || value%100 > 59 || seconds > 18*3600 {
 			return "invalid", nil
 		}
 		if seconds == 0 {

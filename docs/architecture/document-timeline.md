@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-11-12
 title: Document timeline
 description: How Docbank derives date claims from stored document evidence.
 ---
@@ -223,7 +223,10 @@ Calendar IANA zones resolve overlaps to the earlier instant and gaps to the
 first instant after the gap. Email RFC 5322 zone names use their fixed offsets;
 unknown names and `-0000` remain floating. The stored instant is validated
 without resolving it again, so changing time-zone data does not invalidate a
-retained generation. The event derivation recipe advances when these rules
+retained generation. The first derivation resolves an IANA zone with the host's
+time-zone data, so hosts with different data can store different instants for
+the same `TZID`; replaying a retained generation keeps the stored instant.
+The event derivation recipe advances when these rules
 change; `primary-rule/v1` remains unchanged.
 
 ## Read date claims
