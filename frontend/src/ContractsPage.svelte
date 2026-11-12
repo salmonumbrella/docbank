@@ -50,6 +50,8 @@
   let controller: AbortController | undefined;
 
   const rows = $derived(visibleContracts(items, filters, asOf));
+  // The filtered empty state carries its own Clear filters action.
+  const filteredEmpty = $derived(!loading && !error && rows.length === 0 && filtersSet(filters));
   const typeOptions = $derived(contractTypeOptions([...seenTypes, filters.type]));
 
   $effect(() => {
@@ -246,7 +248,7 @@
           options={expiryOptions}
           onchange={(value) => setFilters({ expiringDays: Number(value) as ExpiryWindow })}
         />
-        {#if filtersSet(filters)}<Button
+        {#if filtersSet(filters) && !filteredEmpty}<Button
             size="sm"
             onclick={() => setFilters({ ...noContractFilters })}>Clear filters</Button
           >{/if}
@@ -256,9 +258,7 @@
           {#if filters.expiringDays}
             Shows agreements expiring from {formatCivilDate(asOf)} through {formatCivilDate(
               addCivilDays(asOf, filters.expiringDays),
-            )}{filters.status
-              ? "."
-              : ", in any status. Choose Active to see only current agreements."}
+            )}.
           {:else}
             Dates as of {formatCivilDate(asOf)}.
           {/if}
