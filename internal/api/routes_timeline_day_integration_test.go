@@ -235,3 +235,30 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	require.Equal(t, http.StatusGone, resp.StatusCode, body)
 	require.Equal(t, "snapshot_gone", decodeProblem(t, body).Code)
 }
+
+func TestTimelineTextCoverageProfileAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		profiles []string
+		status   int
+	}{
+		{name: "unconfigured", status: http.StatusUnprocessableEntity},
+		{name: "configured", profiles: []string{"first"}, status: http.StatusOK},
+		{name: "ambiguous", profiles: []string{"first", "second"}, status: http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, _ := newTestServer(t, func(d *api.Deps) { collectionCoverageConfig(d, tc.profiles...) })
+			headers := map[string]string{"X-Api-Key": testAPIKey}
+			for _, request := range []struct{ route, body string }{
+				{"/api/v1/timeline/days", `{"query":{"syntax":"advanced","text":"text_coverage:unprocessed"},"from":"2026-03-10","to":"2026-03-10"}`},
+				{"/api/v1/timeline/day", `{"query":{"syntax":"advanced","text":"text_coverage:unprocessed"},"date":"2026-03-10"}`},
+			} {
+				resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, request.route, headers, request.body)
+				require.Equal(t, tc.status, resp.StatusCode, body)
+				if tc.status != http.StatusOK {
+					require.Contains(t, body, `"code":"invalid_profile"`)
+				}
+			}
+		})
+	}
+}

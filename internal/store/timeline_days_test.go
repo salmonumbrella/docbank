@@ -593,6 +593,7 @@ func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
 		var scratch int
 		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
 		require.Zero(t, scratch)
+		require.Empty(t, s.LeasedLexicalGenerationRoots())
 		if personScope {
 			_, _, err = s.Trash(ctx, nodes[1].ID, UnconditionalRev)
 			require.NoError(t, err)
@@ -609,4 +610,5 @@ func TestTimelinePreparedPopulationAndCoverage(t *testing.T) {
 	var scratch int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&scratch))
 	require.Zero(t, scratch)
+	require.Empty(t, s.LeasedLexicalGenerationRoots())
 }
