@@ -1,4 +1,5 @@
 import * as actions from "./action-events.js";
+import * as preview from "./queryPreview.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
@@ -1312,11 +1313,24 @@ it("checks a person chip's search first and acts only for the current selection 
   // A held preview waits until the test releases it.
   const holding = new Set<string>();
   const held = new Map<string, () => void>();
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+  // Each person preview's own promise, observed through the real function.
+  // It settles only after App's continuation, which registered first, has
+  // run, so awaiting it needs no timer.
+  const previews = new Map<string, Promise<unknown>>();
+  const realPreview = preview.previewQuery;
+  vi.spyOn(preview, "previewQuery").mockImplementation((...args) => {
+    const pending = realPreview(...args);
+    const id = args[1].text.slice("person:".length);
+    previews.set(
+      id,
+      pending.catch(() => {}),
+    );
+    return pending;
+  });
   const release = async (id: string) => {
     held.get(id)!();
     held.delete(id);
-    await settle();
+    await previews.get(id);
   };
   const searches: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
