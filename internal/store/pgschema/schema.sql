@@ -2597,3 +2597,19 @@ CREATE TABLE {{schema}}.tax_events (
     record_revision BIGINT NOT NULL,
     UNIQUE(record_id, record_revision)
 );
+
+CREATE TABLE {{schema}}.tax_record_documents (
+    link_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    record_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.tax_records(record_id) ON DELETE CASCADE,
+    event_id TEXT COLLATE "C" REFERENCES {{schema}}.tax_events(event_id),
+    node_id BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE SET NULL,
+    content_version_id TEXT COLLATE "C",
+    content_sha256 TEXT COLLATE "C" NOT NULL,
+    role TEXT COLLATE "C" NOT NULL,
+    form_code TEXT COLLATE "C" NOT NULL,
+    note TEXT COLLATE "C" NOT NULL,
+    recorded_at TEXT COLLATE "C" NOT NULL,
+    retired_at TEXT COLLATE "C"
+);
+CREATE UNIQUE INDEX tax_documents_null_event ON {{schema}}.tax_record_documents(record_id,node_id,role) WHERE retired_at IS NULL AND node_id IS NOT NULL AND event_id IS NULL;
+CREATE UNIQUE INDEX tax_documents_event ON {{schema}}.tax_record_documents(record_id,node_id,role,event_id) WHERE retired_at IS NULL AND node_id IS NOT NULL AND event_id IS NOT NULL;

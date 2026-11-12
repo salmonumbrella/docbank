@@ -561,7 +561,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= taxStorageSchemaVersion {
-		if err := exportMetadataTables(ctx, tx, write, taxMetadataTables); err != nil {
+		tables := taxMetadataTables
+		if layout.schemaVersion < 52 {
+			tables = tables[:len(tables)-1]
+		}
+		if err := exportMetadataTables(ctx, tx, write, tables); err != nil {
 			return err
 		}
 	}
@@ -1678,7 +1682,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= taxStorageSchemaVersion {
-			if err := validateTaxMetadataState(ctx, tx); err != nil {
+			if err := validateTaxMetadataState(ctx, tx, layout.schemaVersion); err != nil {
 				return err
 			}
 		}

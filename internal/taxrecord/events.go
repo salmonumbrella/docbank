@@ -12,6 +12,7 @@ type EventValues struct {
 type EventFact struct {
 	EventValues
 
+	EventID        string
 	RecordRevision int64
 	Voided         bool
 }

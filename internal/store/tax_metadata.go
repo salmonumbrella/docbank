@@ -112,7 +112,7 @@ func validateTaxRecordMetadata(m metadataTaxRecord) error {
 	return validateTaxMetadataTimes(m.CreatedAt, m.UpdatedAt, m.RetiredAt)
 }
 
-var taxMetadataTables = []metadataRecordCodec{taxAccountMetadata, taxRecordMetadata, taxEventMetadata}
+var taxMetadataTables = []metadataRecordCodec{taxAccountMetadata, taxRecordMetadata, taxEventMetadata, taxDocumentMetadata}
 
 func validateTaxMetadataTimes(created, updated string, retired *string) error {
 	if err := validateMetadataTime("tax created_at", created); err != nil {
@@ -134,8 +134,16 @@ func validateTaxMetadataTimes(created, updated string, retired *string) error {
 	}
 	return nil
 }
-func validateTaxMetadataState(ctx context.Context, q metadataQuerier) error {
-	for _, codec := range taxMetadataTables {
+func validateTaxMetadataState(ctx context.Context, q metadataQuerier, versions ...int) error {
+	version := currentStorageSchemaVersion
+	if len(versions) > 0 {
+		version = versions[0]
+	}
+	codecs := taxMetadataTables
+	if version < 52 {
+		codecs = codecs[:len(codecs)-1]
+	}
+	for _, codec := range codecs {
 		if err := codec.validateRows(ctx, q); err != nil {
 			return err
 		}
@@ -157,7 +165,13 @@ func validateTaxMetadataState(ctx context.Context, q metadataQuerier) error {
 	if invalid {
 		return errors.New("duplicate tax record period")
 	}
-	return validateTaxEventAuthority(ctx, q)
+	if err := validateTaxEventAuthority(ctx, q); err != nil {
+		return err
+	}
+	if version >= 52 {
+		return validateTaxDocumentAuthority(ctx, q)
+	}
+	return nil
 }
 
 type metadataTaxEvent struct {
@@ -281,6 +295,62 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	for _, p := range parents {
 		if p.state != p.derived.State {
 			return &taxrecord.FieldError{Field: "state", Reason: "unsupported state"}
+		}
+	}
+	return nil
+}
+
+type metadataTaxDocument struct {
+	Type             string  `json:"type"`
+	LinkID           string  `json:"link_id" db:"link_id"`
+	RecordID         string  `json:"record_id" db:"record_id"`
+	EventID          *string `json:"event_id" db:"event_id"`
+	NodeID           *int64  `json:"node_id" db:"node_id"`
+	ContentVersionID *string `json:"content_version_id" db:"content_version_id"`
+	ContentSHA256    string  `json:"content_sha256" db:"content_sha256"`
+	Role             string  `json:"role" db:"role"`
+	FormCode         string  `json:"form_code" db:"form_code"`
+	Note             string  `json:"note" db:"note"`
+	RecordedAt       string  `json:"recorded_at" db:"recorded_at"`
+	RetiredAt        *string `json:"retired_at" db:"retired_at"`
+}
+
+var taxDocumentMetadata = newMetadataTable(metadataTable[metadataTaxDocument]{record: metadataTaxDocument{Type: "tax_record_document"}, table: "tax_record_documents", suffix: "ORDER BY link_id", validate: validateTaxDocumentMetadata})
+
+func validateTaxDocumentMetadata(m metadataTaxDocument) error {
+	if m.Type != "tax_record_document" || validateUUIDv4(m.LinkID) != nil || validateUUIDv4(m.RecordID) != nil || m.NodeID != nil && *m.NodeID <= 0 {
+		return errors.New("invalid tax document identity")
+	}
+	if err := taxrecord.ValidateDocument(taxrecord.DocumentValues{EventID: m.EventID, ContentVersionID: m.ContentVersionID, ContentSHA256: m.ContentSHA256, Role: m.Role, FormCode: m.FormCode, Note: m.Note}); err != nil {
+		return err
+	}
+	if err := validateMetadataTime("tax document recorded_at", m.RecordedAt); err != nil {
+		return err
+	}
+	if m.RetiredAt != nil {
+		if err := validateMetadataTime("tax document retired_at", *m.RetiredAt); err != nil {
+			return err
+		}
+		if *m.RetiredAt < m.RecordedAt {
+			return errors.New("tax document retirement precedes recording")
+		}
+	}
+	return nil
+}
+func validateTaxDocumentAuthority(ctx context.Context, q metadataQuerier) error {
+	var bad bool
+	for _, query := range []string{
+		`SELECT EXISTS(SELECT 1 FROM tax_record_documents d LEFT JOIN tax_events e ON e.event_id=d.event_id WHERE d.event_id IS NOT NULL AND (e.event_id IS NULL OR e.record_id<>d.record_id))`,
+		`SELECT EXISTS(SELECT 1 FROM tax_record_documents d LEFT JOIN nodes n ON n.id=d.node_id WHERE d.node_id IS NOT NULL AND (n.id IS NULL OR n.kind<>'file'))`,
+		`SELECT EXISTS(SELECT 1 FROM tax_record_documents d JOIN content_versions v ON v.version_id=d.content_version_id WHERE d.node_id IS NULL OR v.node_id<>d.node_id OR v.blob_hash<>d.content_sha256)`,
+		`SELECT EXISTS(SELECT 1 FROM tax_record_documents WHERE retired_at IS NULL AND node_id IS NOT NULL AND event_id IS NULL GROUP BY record_id,node_id,role HAVING COUNT(*)>1)`,
+		`SELECT EXISTS(SELECT 1 FROM tax_record_documents WHERE retired_at IS NULL AND node_id IS NOT NULL AND event_id IS NOT NULL GROUP BY record_id,node_id,role,event_id HAVING COUNT(*)>1)`,
+	} {
+		if err := q.QueryRowContext(ctx, query).Scan(&bad); err != nil {
+			return err
+		}
+		if bad {
+			return errors.New("invalid tax document authority")
 		}
 	}
 	return nil

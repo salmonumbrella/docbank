@@ -3349,3 +3349,19 @@ CREATE TABLE IF NOT EXISTS tax_events (
     record_revision INTEGER NOT NULL,
     UNIQUE(record_id, record_revision)
 );
+
+CREATE TABLE IF NOT EXISTS tax_record_documents (
+    link_id TEXT PRIMARY KEY NOT NULL,
+    record_id TEXT NOT NULL REFERENCES tax_records(record_id) ON DELETE CASCADE,
+    event_id TEXT REFERENCES tax_events(event_id),
+    node_id INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+    content_version_id TEXT,
+    content_sha256 TEXT NOT NULL,
+    role TEXT NOT NULL,
+    form_code TEXT NOT NULL,
+    note TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS tax_documents_null_event ON tax_record_documents(record_id,node_id,role) WHERE retired_at IS NULL AND node_id IS NOT NULL AND event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tax_documents_event ON tax_record_documents(record_id,node_id,role,event_id) WHERE retired_at IS NULL AND node_id IS NOT NULL AND event_id IS NOT NULL;

@@ -34,9 +34,11 @@ type TaxEventMutation struct {
 
 // TaxRecordDetail contains a parent and its events in append order.
 type TaxRecordDetail struct {
-	Record  TaxRecord
-	Events  []TaxEvent
-	Balance taxrecord.Balance
+	Record    TaxRecord
+	Events    []TaxEvent
+	Balance   taxrecord.Balance
+	Documents []TaxDocumentLinkView
+	Evidence  taxrecord.Evidence
 }
 
 const taxEventColumns = `event_id,record_id,kind,occurred_on,sets_state,amount_minor,currency,reference,note,recorded_at,voided_at,void_reason,record_revision`
@@ -49,7 +51,7 @@ func scanTaxEvent(row interface{ Scan(dest ...any) error }) (TaxEvent, error) {
 func taxEventFacts(events []TaxEvent) []taxrecord.EventFact {
 	facts := make([]taxrecord.EventFact, 0, len(events))
 	for _, e := range events {
-		facts = append(facts, taxrecord.EventFact{EventValues: e.EventValues, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
+		facts = append(facts, taxrecord.EventFact{EventValues: e.EventValues, EventID: e.EventID, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
 	}
 	return facts
 }
@@ -66,7 +68,15 @@ func getTaxRecordDetail(ctx context.Context, q metadataQuerier, id string) (TaxR
 	if err != nil {
 		return TaxRecordDetail{}, err
 	}
-	return TaxRecordDetail{Record: r, Events: events, Balance: balance}, nil
+	documents, err := taxDocumentViews(ctx, q, id)
+	if err != nil {
+		return TaxRecordDetail{}, err
+	}
+	links := make([]taxrecord.EvidenceLink, 0, len(documents))
+	for _, d := range documents {
+		links = append(links, taxrecord.EvidenceLink{EventID: d.EventID, Role: d.Role, Live: d.Live})
+	}
+	return TaxRecordDetail{Record: r, Events: events, Balance: balance, Documents: documents, Evidence: taxrecord.EvaluateEvidence(taxEventFacts(events), links)}, nil
 }
 
 func getTaxRecordEvents(ctx context.Context, q metadataQuerier, id string) ([]TaxEvent, error) {

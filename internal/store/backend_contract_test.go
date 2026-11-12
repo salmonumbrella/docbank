@@ -2232,6 +2232,7 @@ var backendSuites = []backendSuite{
 			checkTaxEventsAuthority(t, newPostgresQueryStore)
 			checkTaxEventsAuthorityAndBalance(t, newPostgresQueryStore)
 		}},
+		{"TaxDocumentLinksLifecycle", func(t *testing.T) { checkTaxDocumentLinksLifecycle(t, newTestStore) }, func(t *testing.T) { checkTaxDocumentLinksLifecycle(t, newPostgresQueryStore) }},
 		{"TaxEventsLifecycle", func(t *testing.T) {
 			t.Helper()
 			checkTaxEventsLifecycle(t, newTestStore)

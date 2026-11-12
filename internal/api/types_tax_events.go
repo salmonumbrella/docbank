@@ -35,8 +35,10 @@ type TaxBalance struct {
 type TaxRecordDetail struct {
 	TaxRecord
 
-	Events  []TaxEvent `json:"events"`
-	Balance TaxBalance `json:"balance"`
+	Events    []TaxEvent        `json:"events"`
+	Balance   TaxBalance        `json:"balance"`
+	Documents []TaxDocumentLink `json:"documents"`
+	Evidence  TaxEvidence       `json:"evidence"`
 }
 type AddTaxEventRequest struct {
 	Kind       string  `json:"kind"`
@@ -108,6 +110,14 @@ func fromStoreTaxEvent(e store.TaxEvent, reveal bool) TaxEvent {
 }
 func fromStoreTaxRecordDetail(d store.TaxRecordDetail, reveal bool) TaxRecordDetail {
 	out := TaxRecordDetail{TaxRecord: fromStoreTaxRecord(d.Record), Events: make([]TaxEvent, 0, len(d.Events)), Balance: TaxBalance{OutstandingMinor: d.Balance.OutstandingMinor, Currency: d.Balance.Currency, OtherCurrencyEvents: d.Balance.OtherCurrencyEvents}}
+	out.Documents = make([]TaxDocumentLink, 0, len(d.Documents))
+	for _, link := range d.Documents {
+		out.Documents = append(out.Documents, fromStoreTaxDocument(link))
+	}
+	out.Evidence = TaxEvidence{State: d.Evidence.State, Unmet: make([]TaxEvidenceRequirement, 0, len(d.Evidence.Unmet))}
+	for _, requirement := range d.Evidence.Unmet {
+		out.Evidence.Unmet = append(out.Evidence.Unmet, TaxEvidenceRequirement{Requires: requirement.Requires, EventID: requirement.EventID})
+	}
 	for _, e := range d.Events {
 		out.Events = append(out.Events, fromStoreTaxEvent(e, reveal))
 	}

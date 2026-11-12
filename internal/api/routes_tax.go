@@ -15,6 +15,7 @@ func registerTaxRoutes(api huma.API, d Deps, g *gate) {
 	registerTaxAccountRoutes(api, d, g)
 	registerTaxRecordRoutes(api, d, g)
 	registerTaxEventRoutes(api, d, g)
+	registerTaxDocumentRoutes(api, d, g)
 }
 
 // Each field records the Huma locations that may be reported for it. The
