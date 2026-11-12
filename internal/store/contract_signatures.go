@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"path"
 	"strconv"
@@ -152,17 +153,10 @@ func (s *Store) BeginSignatureRequest(ctx context.Context, contractID string, re
 		if open {
 			return ErrSignatureRequestOpen
 		}
-
-		_, e = tx.ExecContext(ctx, `INSERT INTO contract_signature_requests (`+signatureColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, id, contractID, "docuseal", in.EndpointOrigin, in.APIPath, in.TemplateID, in.TemplateName, nil, "creating", "", 1, now, now)
-		if e != nil {
-			return e
+		if c.Status == "draft" && c.Revision == math.MaxInt64 {
+			return errContractRevisionExhausted
 		}
-		for i, p := range in.Signers {
-			if _, e = tx.ExecContext(ctx, `INSERT INTO contract_signature_signers(request_id,position,role,name,email,provider_submitter_id,state) VALUES ($1,$2,$3,$4,$5,$6,$7)`, id, i, p.Role, p.Name, p.Email, nil, "awaiting"); e != nil {
-				return e
-			}
-		}
-		out, e = getSignatureTx(ctx, tx, id)
+		out, e = insertSignatureRequestTx(ctx, tx, id, contractID, now, in)
 		return e
 	})
 	return out, err
@@ -183,15 +177,8 @@ func (s *Store) FinishSignatureCreation(ctx context.Context, id string, rev int6
 			if !signaturePositiveID(result.SubmissionID) || len(result.SubmitterIDs) != len(v.Signers) {
 				return ErrInvalidSignatureRequest
 			}
-			seen := map[string]bool{}
-			for i, p := range result.SubmitterIDs {
-				if !signaturePositiveID(p) || seen[p] {
-					return ErrInvalidSignatureRequest
-				}
-				seen[p] = true
-				if _, e = tx.ExecContext(ctx, `UPDATE contract_signature_signers SET provider_submitter_id=$1 WHERE request_id=$2 AND position=$3`, p, id, i); e != nil {
-					return e
-				}
+			if e = saveSignatureSubmittersTx(ctx, tx, id, result.SubmitterIDs); e != nil {
+				return e
 			}
 			submission = result.SubmissionID
 			state = "sent"
@@ -206,7 +193,7 @@ func (s *Store) FinishSignatureCreation(ctx context.Context, id string, rev int6
 			return e
 		}
 		if state == "sent" {
-			if _, e = tx.ExecContext(ctx, `UPDATE contracts SET status='pending_signature',revision=revision+1,updated_at=$1 WHERE contract_id=$2 AND status='draft'`, nowRFC3339(), v.ContractID); e != nil {
+			if e = markContractPendingTx(ctx, tx, v.ContractID); e != nil {
 				return e
 			}
 		}
@@ -214,6 +201,49 @@ func (s *Store) FinishSignatureCreation(ctx context.Context, id string, rev int6
 		return e
 	})
 	return out, err
+}
+
+// insertSignatureRequestTx records a creating request and its awaiting signers.
+func insertSignatureRequestTx(ctx context.Context, tx *sql.Tx, id, contractID, now string, in SignatureRequestInput) (SignatureRequest, error) {
+	_, e := tx.ExecContext(ctx, `INSERT INTO contract_signature_requests (`+signatureColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, id, contractID, "docuseal", in.EndpointOrigin, in.APIPath, in.TemplateID, in.TemplateName, nil, "creating", "", 1, now, now)
+	if e != nil {
+		return SignatureRequest{}, e
+	}
+	for i, p := range in.Signers {
+		if _, e = tx.ExecContext(ctx, `INSERT INTO contract_signature_signers(request_id,position,role,name,email,provider_submitter_id,state) VALUES ($1,$2,$3,$4,$5,$6,$7)`, id, i, p.Role, p.Name, p.Email, nil, "awaiting"); e != nil {
+			return SignatureRequest{}, e
+		}
+	}
+	return getSignatureTx(ctx, tx, id)
+}
+
+// saveSignatureSubmittersTx stores one distinct provider submitter ID per signer position.
+func saveSignatureSubmittersTx(ctx context.Context, tx *sql.Tx, id string, ids []string) error {
+	seen := map[string]bool{}
+	for i, p := range ids {
+		if !signaturePositiveID(p) || seen[p] {
+			return ErrInvalidSignatureRequest
+		}
+		seen[p] = true
+		if _, e := tx.ExecContext(ctx, `UPDATE contract_signature_signers SET provider_submitter_id=$1 WHERE request_id=$2 AND position=$3`, p, id, i); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// markContractPendingTx moves a contract still in draft to pending_signature, keeping concurrent edits.
+// It refuses before the increment can overflow, so no backend commits an unreadable revision.
+func markContractPendingTx(ctx context.Context, tx *sql.Tx, contractID string) error {
+	var exhausted bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM contracts WHERE contract_id=$1 AND status='draft' AND revision>=$2)`, contractID, int64(math.MaxInt64)).Scan(&exhausted); err != nil {
+		return err
+	}
+	if exhausted {
+		return errContractRevisionExhausted
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE contracts SET status='pending_signature',revision=revision+1,updated_at=$1 WHERE contract_id=$2 AND status='draft'`, nowRFC3339(), contractID)
+	return err
 }
 func (s *Store) GetSignatureRequest(ctx context.Context, id string) (SignatureRequest, error) {
 	opts := &sql.TxOptions{ReadOnly: true}
