@@ -24,7 +24,7 @@ export async function captureTheme(
     document.documentElement.classList.toggle("dark", value === "dark");
     await document.fonts.ready;
   }, theme);
-  await page.screenshot({
+  return page.screenshot({
     path: path.join(output, `${name}-${theme}.png`),
     clip,
     animations: "disabled",

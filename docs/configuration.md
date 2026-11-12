@@ -141,6 +141,7 @@ idle_timeout = "30m"  # automatically started daemons only; "0" = never
 
 [web]
 enabled = true
+timeline_timezone = "UTC"      # IANA zone for exact document times
 base_path = ""                 # empty = root; e.g. "/archive" (no trailing slash)
 public_origin = ""             # empty = loopback web origin; set = 32+ char api_key
 allowed_hosts = []             # extra exact host[:port] authorities; needs public_origin
@@ -211,6 +212,10 @@ exclude_patterns = ["*.swp"]
   authenticated browser session on a fresh per-daemon loopback origin,
   independent of a configured `api_port`. Disabling it 404s `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
+- **`[web] timeline_timezone`**: displays exact document times in this IANA
+  time zone, such as `"America/Toronto"`. It defaults to `"UTC"`. An empty
+  value, `"Local"`, numeric offsets, slash-less names such as `"EST"`,
+  `posix/` or `right/` zones, and unknown zones are rejected at startup. Floating and date-only values are not converted.
 - **`[web] base_path`**: mounts browser pages, assets, and API requests beneath a
   path such as `/archive`. Empty means `/`. Use ASCII letters, digits, `-`, `.`,
   `_`, and `~` in nonempty segments; omit the trailing slash. Dot segments and
