@@ -7,36 +7,45 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/recordtype"
 )
 
-func recordAssignments(sets, clears []string, current map[string]any) (map[string]any, error) {
+func recordAssignments(def recordtype.Definition, sets, clears []string, current map[string]any) (map[string]any, error) {
 	fields := map[string]any{}
 	seen := map[string]bool{}
 	apply := func(key string, value any) error {
-		if seen[key] || ((key == "term" && (seen["term.start"] || seen["term.end"])) || (strings.HasPrefix(key, "term.") && seen["term"])) {
+		id, part, dotted := strings.Cut(key, ".")
+		var field *recordtype.Field
+		for i := range def.Fields {
+			if def.Fields[i].ID == id && !def.Fields[i].Retired {
+				field = &def.Fields[i]
+				break
+			}
+		}
+		if field == nil || (dotted && (field.Type != "date_range" || (part != "start" && part != "end"))) {
+			return fmt.Errorf("unknown field %s", key)
+		}
+		if seen[key] || (dotted && seen[id]) || (!dotted && (seen[id+".start"] || seen[id+".end"])) {
 			return fmt.Errorf("field %s is assigned more than once", key)
 		}
 		seen[key] = true
-		switch key {
-		case "contract_type", "signed_on", "summary", "purpose", "consideration", "termination", "term":
-			fields[key] = value
-		case "term.start", "term.end":
-			m, ok := fields["term"].(map[string]any)
-			if !ok {
-				m = map[string]any{}
-				if previous, ok := current["term"].(map[string]any); ok {
-					for k, v := range previous {
-						m[k] = v
-					}
-				}
-				fields["term"] = m
-			}
-			_, part, _ := strings.Cut(key, ".")
-			m[part] = value
-		default:
-			return fmt.Errorf("unknown field %s", key)
+		if !dotted {
+			fields[id] = value
+			return nil
 		}
+		m, ok := fields[id].(map[string]any)
+		if !ok {
+			m = map[string]any{}
+			if previous, ok := current[id].(map[string]any); ok {
+				for k, v := range previous {
+					m[k] = v
+				}
+			}
+			fields[id] = m
+		}
+		m[part] = value
 		return nil
 	}
 	for _, entry := range sets {
@@ -65,13 +74,13 @@ func init() {
 	var listType, listStatus, listQuery, listAsOf string
 	var filters, before, after []string
 	var limit, offset int
-	var listJSON bool
+	var listJSON, includeInactive bool
 	list := &cobra.Command{Use: "list", Short: "List live records of a type", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		page, err := c.ListRecords(cmd.Context(), daemonconn.RecordListOptions{TypeID: listType, Status: listStatus, Query: listQuery, AsOf: listAsOf, Fields: filters, Before: before, After: after, Limit: limit, Offset: offset})
+		page, err := c.ListRecords(cmd.Context(), daemonconn.RecordListOptions{TypeID: listType, IncludeInactive: includeInactive, Status: listStatus, Query: listQuery, AsOf: listAsOf, Fields: filters, Before: before, After: after, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -93,6 +102,7 @@ func init() {
 	}}
 	list.Flags().StringVar(&listType, "type", "", "Record type")
 	_ = list.MarkFlagRequired("type")
+	list.Flags().BoolVar(&includeInactive, "include-inactive", false, "Include records of inactive types")
 	list.Flags().StringVar(&listStatus, "status", "", "Effective status")
 	list.Flags().StringVar(&listQuery, "q", "", "Literal title substring")
 	list.Flags().StringVar(&listAsOf, "as-of", "", "Date for derived status")
@@ -131,20 +141,24 @@ func init() {
 	var createStatus, createNote string
 	var createJSON bool
 	create := &cobra.Command{Use: "create <type> <title>", Short: "Create a record", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		fields, err := recordAssignments(createSets, nil, nil)
-		if err != nil {
-			return err
-		}
-		body := map[string]any{"type_id": args[0], "title": args[1], "fields": fields}
-		if cmd.Flags().Changed("status") {
-			body["status"] = createStatus
-		}
-		if cmd.Flags().Changed("note") {
-			body["note"] = createNote
-		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
+		}
+		state, err := c.GetRecordType(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		fields, err := recordAssignments(state.Definition, createSets, nil, nil)
+		if err != nil {
+			return err
+		}
+		body := api.RecordCreateRequest{TypeID: args[0], Title: args[1], Fields: fields}
+		if cmd.Flags().Changed("status") {
+			body.Status = &createStatus
+		}
+		if cmd.Flags().Changed("note") {
+			body.Note = &createNote
 		}
 		r, err := c.CreateRecord(cmd.Context(), body)
 		if err != nil {
@@ -176,24 +190,28 @@ func init() {
 		if err != nil {
 			return err
 		}
-		fields, err := recordAssignments(editSets, editClears, old.Fields)
+		state, err := c.GetRecordType(cmd.Context(), old.TypeID)
 		if err != nil {
 			return err
 		}
-		body := map[string]any{}
+		fields, err := recordAssignments(state.Definition, editSets, editClears, old.Fields)
+		if err != nil {
+			return err
+		}
+		body := api.RecordUpdateRequest{}
 		if len(fields) > 0 {
-			body["fields"] = fields
+			body.Fields = fields
 		}
 		if cmd.Flags().Changed("title") {
-			body["title"] = editTitle
+			body.Title = &editTitle
 		}
 		if cmd.Flags().Changed("status") {
-			body["status"] = editStatus
+			body.Status = &editStatus
 		}
 		if cmd.Flags().Changed("note") {
-			body["note"] = editNote
+			body.Note = &editNote
 		}
-		if len(body) == 0 {
+		if body.Fields == nil && body.Title == nil && body.Status == nil && body.Note == nil {
 			return fmt.Errorf("no changes specified")
 		}
 		revision := old.Revision

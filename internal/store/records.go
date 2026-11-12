@@ -42,6 +42,7 @@ type RecordListOptions struct {
 	Fields                      map[string]any
 	Before, After               map[string]string
 	Limit, Offset               int
+	IncludeInactive             bool
 }
 
 type recordQueryer interface {
@@ -385,9 +386,12 @@ func (s *Store) ListRecords(ctx context.Context, opts RecordListOptions) ([]Reco
 	args := []any{}
 	bind := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 	where := []string{"r.type_id=" + bind(opts.TypeID), "r.retired_at IS NULL"}
+	if !opts.IncludeInactive {
+		where = append(where, "EXISTS (SELECT 1 FROM record_types rt WHERE rt.type_id=r.type_id AND rt.active=1)")
+	}
 	if opts.Query != "" {
 		q := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(asciiLower(opts.Query))
-		where = append(where, "LOWER(r.title) LIKE "+bind("%"+q+"%")+" ESCAPE '!'")
+		where = append(where, asciiFoldSQL("r.title")+" LIKE "+bind("%"+q+"%")+" ESCAPE '!'")
 	}
 	// Each shipped derived status has a stored-state admission list and a date selector.
 	effective := "r.status"
@@ -514,6 +518,15 @@ func recordDate(fields map[string]any, path string) string {
 	s, _ := v.(string)
 	return s
 }
+
+// asciiFoldSQL uses only portable replace(), so non-ASCII bytes retain their case.
+func asciiFoldSQL(expr string) string {
+	for c := byte('A'); c <= 'Z'; c++ {
+		expr = "REPLACE(" + expr + ", '" + string(c) + "', '" + string(c+('a'-'A')) + "')"
+	}
+	return expr
+}
+
 func asciiLower(s string) string {
 	b := []byte(s)
 	for i, c := range b {

@@ -159,20 +159,21 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 		return &recordOutput{ETag: revisionETag(r.Revision), CacheControl: "no-store", Body: fromRecord(r, asOf)}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "listRecords", Method: http.MethodGet, Path: "/api/v1/records", Summary: "List records"}, func(ctx context.Context, in *struct {
-		Type   string   `query:"type" required:"true"`
-		Status string   `query:"status"`
-		Query  string   `query:"q"`
-		AsOf   string   `query:"as_of"`
-		Field  []string `query:"field"`
-		Before []string `query:"before"`
-		After  []string `query:"after"`
-		Limit  int      `query:"limit" default:"100" minimum:"1" maximum:"1000"`
-		Offset int      `query:"offset" minimum:"0"`
+		Type            string   `query:"type" required:"true"`
+		Status          string   `query:"status"`
+		IncludeInactive bool     `query:"include_inactive"`
+		Query           string   `query:"q"`
+		AsOf            string   `query:"as_of"`
+		Field           []string `query:"field"`
+		Before          []string `query:"before"`
+		After           []string `query:"after"`
+		Limit           int      `query:"limit" default:"100" minimum:"1" maximum:"1000"`
+		Offset          int      `query:"offset" minimum:"0"`
 	}) (*struct {
 		CacheControl string `header:"Cache-Control"`
 		Body         RecordPage
 	}, error) {
-		opts := store.RecordListOptions{TypeID: in.Type, Status: in.Status, Query: in.Query, AsOf: recordToday(in.AsOf), Fields: map[string]any{}, Before: map[string]string{}, After: map[string]string{}, Limit: in.Limit, Offset: in.Offset}
+		opts := store.RecordListOptions{TypeID: in.Type, Status: in.Status, IncludeInactive: in.IncludeInactive, Query: in.Query, AsOf: recordToday(in.AsOf), Fields: map[string]any{}, Before: map[string]string{}, After: map[string]string{}, Limit: in.Limit, Offset: in.Offset}
 		for _, v := range in.Field {
 			id, raw, ok := strings.Cut(v, "=")
 			if !ok {
@@ -215,8 +216,18 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 			Body         RecordPage
 		}{"no-store", RecordPage{Records: out, Total: total, Limit: opts.Limit, Offset: opts.Offset, AsOf: opts.AsOf}}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body map[string]any }) (*recordOutput, error) {
-		id, input, _, err := parseRecordBody(in.Body, true)
+	huma.Register(api, huma.Operation{OperationID: "createRecord", Method: http.MethodPost, Path: "/api/v1/records", MaxBodyBytes: 512 << 10, Summary: "Create a record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body RecordCreateRequest }) (*recordOutput, error) {
+		body := map[string]any{"type_id": in.Body.TypeID, "title": in.Body.Title}
+		if in.Body.Fields != nil {
+			body["fields"] = in.Body.Fields
+		}
+		if in.Body.Status != nil {
+			body["status"] = *in.Body.Status
+		}
+		if in.Body.Note != nil {
+			body["note"] = *in.Body.Note
+		}
+		id, input, _, err := parseRecordBody(body, true)
 		if err != nil {
 			return nil, err
 		}
@@ -234,13 +245,26 @@ func registerRecordRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "updateRecord", Method: http.MethodPatch, Path: "/api/v1/records/{id}", MaxBodyBytes: 512 << 10, Summary: "Edit a record"}, func(ctx context.Context, in *struct {
 		ID      string `path:"id"`
 		IfMatch string `header:"If-Match"`
-		Body    map[string]any
+		Body    RecordUpdateRequest
 	}) (*recordOutput, error) {
 		revision, err := recordRevision(in.IfMatch, false)
 		if err != nil {
 			return nil, err
 		}
-		_, _, patch, err := parseRecordBody(in.Body, false)
+		body := map[string]any{}
+		if in.Body.Title != nil {
+			body["title"] = *in.Body.Title
+		}
+		if in.Body.Note != nil {
+			body["note"] = *in.Body.Note
+		}
+		if in.Body.Status != nil {
+			body["status"] = *in.Body.Status
+		}
+		if in.Body.Fields != nil {
+			body["fields"] = in.Body.Fields
+		}
+		_, _, patch, err := parseRecordBody(body, false)
 		if err != nil {
 			return nil, err
 		}

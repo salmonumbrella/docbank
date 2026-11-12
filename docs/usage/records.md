@@ -18,7 +18,7 @@ docbank record create contract "Example service agreement" \
 `docbank types list` shows active types. Add `--include-inactive` to see the
 built-in type before activation, and use `docbank types show contract` to
 inspect its fields. Deactivating a type prevents record writes until it is
-activated again. Existing records remain readable.
+activated again. Existing records remain readable by ID; add `--include-inactive` to list them.
 
 List and inspect records with `docbank record list --type contract` and
 `docbank record show <id>`. Add `--json` to commands for machine-readable

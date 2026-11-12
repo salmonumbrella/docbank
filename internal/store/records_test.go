@@ -68,7 +68,7 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 	for _, input := range []recordtype.Record{
 		{Title: "A", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "service"}},
 		{Title: "B", Status: "active", Fields: map[string]any{"term": map[string]any{"end": "2026-01-02"}, "contract_type": "service"}},
-		{Title: "C", Status: "draft", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "lease"}},
+		{Title: "Éclair %", Status: "draft", Fields: map[string]any{"term": map[string]any{"end": "2026-01-01"}, "contract_type": "lease"}},
 	} {
 		_, err = s.CreateRecord(ctx, "contract", input)
 		require.NoError(t, err)
@@ -82,6 +82,20 @@ func checkRecordListFiltersEffectiveStatusBeforePaging(t *testing.T, open func(*
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
 	require.Equal(t, "A", page[0].Title)
+	page, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", Query: "ÉCLAIR %", AsOf: "2026-01-02", Limit: 10})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, "Éclair %", page[0].Title)
+	state, err := s.GetRecordType(ctx, "contract")
+	require.NoError(t, err)
+	_, err = s.DeactivateRecordType(ctx, "contract", state.Revision)
+	require.NoError(t, err)
+	_, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Limit: 10})
+	require.NoError(t, err)
+	require.Zero(t, total)
+	_, total, err = s.ListRecords(ctx, RecordListOptions{TypeID: "contract", AsOf: "2026-01-02", Limit: 10, IncludeInactive: true})
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
 }
 
 func TestRecordListFiltersEffectiveStatusBeforePaging(t *testing.T) {

@@ -1,16 +1,12 @@
 package daemonconn
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
-
-	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -20,6 +16,7 @@ type RecordListOptions struct {
 	TypeID, Status, Query, AsOf string
 	Fields, Before, After       []string
 	Limit, Offset               int
+	IncludeInactive             bool
 }
 
 func (c *Connection) ListRecordTypes(ctx context.Context, includeInactive bool) ([]api.RecordType, error) {
@@ -85,7 +82,7 @@ func (c *Connection) ListRecords(ctx context.Context, opts RecordListOptions) (a
 		fields = append(fields, k+"="+string(raw))
 	}
 	limit, offset := int64(opts.Limit), int64(opts.Offset)
-	query := &apiclient.ListRecordsQuery{Type: opts.TypeID, Status: &opts.Status, Q: &opts.Query, AsOf: &opts.AsOf, Field: fields, Before: opts.Before, After: opts.After, Limit: &limit, Offset: &offset}
+	query := &apiclient.ListRecordsQuery{Type: opts.TypeID, IncludeInactive: &opts.IncludeInactive, Status: &opts.Status, Q: &opts.Query, AsOf: &opts.AsOf, Field: fields, Before: opts.Before, After: opts.After, Limit: &limit, Offset: &offset}
 	page, err := c.API().ListRecords(ctx, &apiclient.ListRecordsRequestOptions{Query: query})
 	if err != nil {
 		return api.RecordPage{}, err
@@ -96,29 +93,14 @@ func (c *Connection) ListRecords(ctx context.Context, opts RecordListOptions) (a
 	return *page, nil
 }
 
-// The generated schema represents arbitrary JSON properties as struct{}.
-// Keep the generated operation and route, while encoding the validated field map
-// in the request editor until the generator supports arbitrary JSON values.
-func recordBodyEditor(body map[string]any) runtime.RequestEditorFn {
-	return func(_ context.Context, req *http.Request) error {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("encoding record request: %w", err)
-		}
-		req.Body = io.NopCloser(bytes.NewReader(encoded))
-		req.ContentLength = int64(len(encoded))
-		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(encoded)), nil }
-		return nil
-	}
-}
-func (c *Connection) CreateRecord(ctx context.Context, body map[string]any) (api.Record, error) {
+func (c *Connection) CreateRecord(ctx context.Context, body api.RecordCreateRequest) (api.Record, error) {
 	var response *http.Response
-	result, err := c.apiWithResponse(&response).CreateRecord(ctx, &apiclient.CreateRecordRequestOptions{}, recordBodyEditor(body))
+	result, err := c.apiWithResponse(&response).CreateRecord(ctx, &apiclient.CreateRecordRequestOptions{Body: &body})
 	return recordResponse(response, result, err, "")
 }
-func (c *Connection) UpdateRecord(ctx context.Context, id string, revision int64, body map[string]any) (api.Record, error) {
+func (c *Connection) UpdateRecord(ctx context.Context, id string, revision int64, body api.RecordUpdateRequest) (api.Record, error) {
 	var response *http.Response
-	result, err := c.apiWithResponse(&response).UpdateRecord(ctx, &apiclient.UpdateRecordRequestOptions{PathParams: &apiclient.UpdateRecordPath{ID: id}, Header: &apiclient.UpdateRecordHeaders{IfMatch: revisionIfMatch(revision)}}, recordBodyEditor(body))
+	result, err := c.apiWithResponse(&response).UpdateRecord(ctx, &apiclient.UpdateRecordRequestOptions{PathParams: &apiclient.UpdateRecordPath{ID: id}, Header: &apiclient.UpdateRecordHeaders{IfMatch: revisionIfMatch(revision)}, Body: &body})
 	return recordResponse(response, result, err, id)
 }
 func (c *Connection) RetireRecord(ctx context.Context, id string, revision int64) (api.Record, error) {

@@ -2563,7 +2563,7 @@ A never-activated type reports revision 0; its first activation uses
 `If-Match: "0"`. A stale revision returns 412. Record writes require an active
 type and return `409 audit_mutation_unsupported` in an audited vault.
 
-`GET /records` requires `type`. Repeated `field=field_id=JSON-value` selectors
+`GET /records` requires `type`. Inactive types are hidden unless `include_inactive=true`. Repeated `field=field_id=JSON-value` selectors
 match field values; `before=field_id=YYYY-MM-DD` and `after=field_id=YYYY-MM-DD`
 are exclusive. `q` matches a literal ASCII case-insensitive title substring.
 `status` compares the effective status before pagination. `as_of` selects the

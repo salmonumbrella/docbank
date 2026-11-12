@@ -25,6 +25,24 @@ type Record struct {
 	UpdatedAt       string         `json:"updated_at"`
 	RetiredAt       *string        `json:"retired_at"`
 }
+
+// RecordCreateRequest supplies the fixed envelope and type-defined fields.
+type RecordCreateRequest struct {
+	TypeID string         `json:"type_id" minLength:"1"`
+	Title  string         `json:"title" minLength:"1" doc:"After trimming and NFC normalization, 1 to 300 characters and at most 1200 UTF-8 bytes."`
+	Note   *string        `json:"note,omitzero" nullable:"false" doc:"At most 8192 UTF-8 bytes after normalization."`
+	Status *string        `json:"status,omitzero" nullable:"false"`
+	Fields map[string]any `json:"fields,omitempty" nullable:"false"`
+}
+
+// RecordUpdateRequest changes only supplied fields; null clears a dynamic field.
+type RecordUpdateRequest struct {
+	Title  *string        `json:"title,omitzero" nullable:"false" doc:"After trimming and NFC normalization, 1 to 300 characters and at most 1200 UTF-8 bytes."`
+	Note   *string        `json:"note,omitzero" nullable:"false" doc:"At most 8192 UTF-8 bytes after normalization."`
+	Status *string        `json:"status,omitzero" nullable:"false"`
+	Fields map[string]any `json:"fields,omitempty" nullable:"false"`
+}
+
 type RecordPage struct {
 	Records []Record `json:"records"`
 	Total   int      `json:"total"`
