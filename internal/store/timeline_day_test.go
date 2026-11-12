@@ -2,7 +2,10 @@ package store
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"testing"
+	"time"
 	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
@@ -221,4 +224,74 @@ func checkTimelineDayBoundsOperations(t *testing.T, open func(*testing.T) *Store
 	require.ErrorIs(t, err, civiltime.ErrDateNotInZone)
 	_, err = svc.TimelineDays(t.Context(), "owner", scope, skipped.AddDays(-1), skipped.AddDays(1))
 	require.NoError(t, err)
+}
+
+// This is deliberately an upstream Linux CI measurement, never a local benchmark.
+func TestTimelineDayScaleCI(t *testing.T) {
+	if os.Getenv("CI") != "true" || runtime.GOOS != "linux" {
+		t.Skip("synthetic scale measurement runs only on Linux CI")
+	}
+	s := newTestStore(t)
+	ctx := t.Context()
+	expected := make([]int64, 0, 5000)
+	for i := range 25500 {
+		seed := fmt.Sprintf("%064x", i+1)
+		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("scale-%05d.txt", i), seed, 1, "text/plain")
+		require.NoError(t, err)
+		if i < 5000 {
+			expected = append(expected, node.ID)
+		}
+		target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, seed)
+		event := &record.Events[0]
+		switch {
+		case i < 5000:
+			event.DateValue, event.RawValue, event.Precision = "2019-03-04T09:30:00", "2019-03-04T09:30:00", "second"
+			event.AxisKey = "2019-03-04T09:30:00.000000000"
+		case i < 25000:
+			event.DateValue, event.RawValue, event.AxisKey = "2019-03-05", "2019-03-05", "2019-03-05T00:00:00.000000000"
+		default:
+			record.DocumentKind = "calendar"
+			event.DateKind = "started"
+			event.DateValue, event.RawValue, event.AxisKey = "2019-03-01", "2019-03-01", "2019-03-01T00:00:00.000000000"
+			event.SourceKey = "metadata/scale/calendar.event.e000001.start/0"
+		}
+		event.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
+		if i >= 25000 {
+			end := *event
+			end.DateKind, end.DateValue, end.RawValue, end.AxisKey = "ended", "2019-03-06", "2019-03-06", "2019-03-06T00:00:00.000000000"
+			end.SourceKey = "metadata/scale/calendar.event.e000001.end/1"
+			end.EventID = document.DocumentEventID(record.VaultUID, record.ContentVersionID, end.SourceKey, end.DateKind, end.DateValue, end.Precision, end.TimezoneKind, end.EvidenceSHA256)
+			record.Events = append(record.Events, end)
+		}
+		record.Primaries = nil
+		for _, disclosure := range []string{"full", "safe"} {
+			primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", disclosure)
+			require.True(t, ok)
+			record.Primaries = append(record.Primaries, primary)
+		}
+		_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+		require.NoError(t, err)
+	}
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civiltime.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	req := TimelineDayRequest{Scope: TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}, Date: date, Limit: 500}
+	for pageNumber := range 10 {
+		started := time.Now()
+		page, err := svc.TimelineDay(ctx, "owner", req)
+		t.Logf("timeline page %d: %s", pageNumber+1, time.Since(started))
+		require.NoError(t, err)
+		require.Len(t, page.Items, 500)
+		for i, item := range page.Items {
+			require.Equal(t, expected[pageNumber*500+i], item.NodeID)
+		}
+		req.Cursor = page.NextCursor
+		if pageNumber < 9 {
+			require.NotEmpty(t, req.Cursor)
+		} else {
+			require.Empty(t, req.Cursor)
+		}
+	}
 }
