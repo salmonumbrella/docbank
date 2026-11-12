@@ -1,0 +1,23 @@
+name: Tax event voided client regression
+
+on:
+  push:
+    branches: [build/tax-t4a1-voided-red]
+
+permissions:
+  contents: read
+
+jobs:
+  voided-error:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go test -tags fts5 ./internal/daemonconn -run '^TestTaxEventVoidedTypedError$' -count=1
