@@ -277,6 +277,9 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				return err
 			}
 		}
+		if options.SavedQuery == nil {
+			value.Filters.People = compiled.Query.Filters.People
+		}
 		projection = SnapshotProjection{
 			FullDisclosure: request.FullDisclosure, Timezone: compiled.Timezone, TimezoneDefaulted: compiled.TimezoneDefaulted,
 			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: value, Dependencies: slices.Clone(compiled.Dependencies),

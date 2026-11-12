@@ -444,15 +444,15 @@ func normalizeQuery(value Query) (Query, error) {
 
 func normalizeFilters(value Filters) (Filters, error) {
 	var err error
+	value.People, err = normalizePeople(value.People)
+	if err != nil {
+		return Filters{}, err
+	}
 	if value.DocumentDate != nil {
 		value.DocumentDate, err = normalizeDocumentDate(value.DocumentDate)
 		if err != nil {
 			return Filters{}, err
 		}
-	}
-	value.People, err = normalizePeople(value.People)
-	if err != nil {
-		return Filters{}, err
 	}
 	value, err = normalizeQualityFilters(value)
 	if err != nil {
