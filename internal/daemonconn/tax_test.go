@@ -271,9 +271,9 @@ func TestTaxReceiptBoundAndMetadata(t *testing.T) {
 	// Every byte of the largest legal text fields could take six JSON bytes.
 	// The remaining allowance must hold IDs, dates, field names and the envelope.
 	assert.Greater(t, maxTaxReceiptBytes, 1000*6*(3*8192+2*256+2+6+3)+1000*1000)
-	assert.Greater(t, maxTaxAccountReceiptBytes, 6*(3*8192+2*256+2+6+3)+1000)
-	assert.Less(t, maxTaxAccountReceiptBytes, maxTaxReceiptBytes)
-	large := response(strings.Repeat("x", maxTaxAccountReceiptBytes+1))
+	assert.Greater(t, maxTaxSingleReceiptBytes, 6*(3*8192+2*256+2+6+3)+1000)
+	assert.Less(t, maxTaxSingleReceiptBytes, maxTaxReceiptBytes)
+	large := response(strings.Repeat("x", maxTaxSingleReceiptBytes+1))
 	defer func() { _ = large.Body.Close() }()
 	_, err = decodeTaxReceipt(t.Context(), large, false)
 	assert.True(t, IsResponseDecodeError(err))
