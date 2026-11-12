@@ -92,15 +92,28 @@ func checkSignatureTerminalHistoryDeletion(t *testing.T, open func(*testing.T) *
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
+	document, err := s.CreateFile(ctx, s.RootID(), "agreement.pdf", fakeHash("a1"), 4, "application/pdf")
+	require.NoError(t, err)
 	c, err := s.CreateContract(ctx, ContractInput{Title: "Example"})
 	require.NoError(t, err)
 	req, err := s.BeginSignatureRequest(ctx, c.ContractID, c.Revision, signatureFixture())
 	require.NoError(t, err)
 	_, err = s.FinishSignatureCreation(ctx, req.RequestID, req.Revision, SignatureCreationResult{ErrorCode: "docuseal_creation_failed"})
 	require.NoError(t, err)
+	require.ErrorIs(t, s.DeleteContract(ctx, c.ContractID, c.Revision+1), ErrStaleRevision)
+	retained, err := s.GetSignatureRequest(ctx, req.RequestID)
+	require.NoError(t, err)
+	require.Len(t, retained.Signers, 1)
 	require.NoError(t, s.DeleteContract(ctx, c.ContractID, c.Revision))
 	_, err = s.GetSignatureRequest(ctx, req.RequestID)
 	require.ErrorIs(t, err, ErrNotFound)
+	var signers int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM contract_signature_signers WHERE request_id=$1`, req.RequestID).Scan(&signers))
+	require.Zero(t, signers)
+	live, err := s.ChildByName(ctx, s.RootID(), "agreement.pdf")
+	require.NoError(t, err)
+	require.Equal(t, document.ID, live.ID)
+	require.Equal(t, document.CurrentVersionID, live.CurrentVersionID)
 }
 
 // An uncertain result stays open and remains visible in paginated local history.
