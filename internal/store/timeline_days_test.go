@@ -311,6 +311,37 @@ func checkTimelinePlacementTiers(t *testing.T, open func(*testing.T) *Store) {
 	require.Equal(t, ids["exact"], page.Items[0].NodeID)
 }
 
+// Republishing source metadata invalidates the revision without fabricating a head.
+func checkTimelineFreshnessSourceRevision(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "revision.txt", fakeHash("f11"), 1, "text/plain")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "f12")
+	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "safe")
+	require.True(t, ok)
+	record.Primaries = append(record.Primaries, primary)
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1,
+		Fields: []document.SourceMetadataFieldV1{{Key: "title", Namespace: "pdf.info", SourceField: "Title", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic")}}}}
+	raw, _, err := document.MarshalSourceMetadataV1(metadata)
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f13"), raw)
+	require.NoError(t, err)
+	svc := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	date, err := civil.ParseDate("2019-03-04")
+	require.NoError(t, err)
+	scope := TimelineScope{Query: snapshotTestQuery(t, `{}`), Zone: "UTC"}
+	_, err = svc.TimelineDays(ctx, "owner", scope, date, date)
+	require.ErrorIs(t, err, ErrDocumentDatesPending)
+	_, err = svc.TimelineDay(ctx, "owner", TimelineDayRequest{Scope: scope, Date: date, Limit: 10})
+	require.ErrorIs(t, err, ErrDocumentDatesPending)
+}
+
 // Exact instants use containing day bounds even when the local date differs.
 func checkTimelineAnomalousInstantPlacement(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()

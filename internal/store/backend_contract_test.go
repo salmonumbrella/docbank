@@ -30,6 +30,7 @@ var backendSuites = []backendSuite{
 		{"TimelineUndatedSafeOnly", func(t *testing.T) { checkTimelineUndatedSafeOnly(t, newTestStore) }, func(t *testing.T) { checkTimelineUndatedSafeOnly(t, newPostgresQueryStore) }},
 		{"TimelinePairedCalendarDates", func(t *testing.T) { checkTimelinePairedCalendarDates(t, newTestStore) }, func(t *testing.T) { checkTimelinePairedCalendarDates(t, newPostgresQueryStore) }},
 		{"TimelinePlacementTiers", func(t *testing.T) { checkTimelinePlacementTiers(t, newTestStore) }, func(t *testing.T) { checkTimelinePlacementTiers(t, newPostgresQueryStore) }},
+		{"TimelineFreshnessSourceRevision", func(t *testing.T) { checkTimelineFreshnessSourceRevision(t, newTestStore) }, func(t *testing.T) { checkTimelineFreshnessSourceRevision(t, newPostgresQueryStore) }},
 		{"TimelineFreshnessTerminalAttempts", func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newTestStore) }, func(t *testing.T) { checkTimelineFreshnessTerminalAttempts(t, newPostgresQueryStore) }},
 		{"TimelineScopeRejected", nil, func(t *testing.T) { checkTimelineScopeRejected(t, newPostgresQueryStore) }},
 		{"TimelineAnomalousInstantPlacement", func(t *testing.T) { checkTimelineAnomalousInstantPlacement(t, newTestStore) }, func(t *testing.T) { checkTimelineAnomalousInstantPlacement(t, newPostgresQueryStore) }},
