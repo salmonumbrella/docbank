@@ -20,22 +20,22 @@ vi.mock("./generated/docbank.js", () => {
       new Promise((resolve, reject) => requests.push({ id, resource, options, resolve, reject }));
   return { getVersionDates: read("dates"), getVersionPeople: read("people") };
 });
-let observer: FakeObserver;
+let notify: IntersectionObserverCallback;
+const observer = {
+  show(target: Element) {
+    notify(
+      [{ target, isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    );
+  },
+};
 class FakeObserver {
-  callback: IntersectionObserverCallback;
   constructor(callback: IntersectionObserverCallback) {
-    this.callback = callback;
-    observer = this;
+    notify = callback;
   }
   observe() {}
   unobserve() {}
   disconnect() {}
-  show(target: Element) {
-    this.callback(
-      [{ target, isIntersecting: true } as IntersectionObserverEntry],
-      this as unknown as IntersectionObserver,
-    );
-  }
 }
 const flush = async () => {
   await Promise.resolve();
