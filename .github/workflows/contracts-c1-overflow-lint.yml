@@ -1,0 +1,112 @@
+name: Contracts C1 revision exhaustion lint acceptance
+on:
+  push:
+    branches: [ci/contracts-c1-overflow-lint]
+permissions:
+  contents: read
+env:
+  GOPROXY: https://proxy.golang.org|direct
+  GOFLAGS: -trimpath
+jobs:
+  focused:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: [0, 1]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Party metadata NUL fixture
+        run: go test -tags fts5 ./internal/store -run '^TestPartyMetadataRoundTripAndMalformedInput$' -count=1 -v
+      - name: Party revision exhaustion
+        if: always()
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsSQLite/organization/PartyRevisionExhaustion$' -count=1 -v
+  postgres:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: docbank_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: docbank_test
+          PGDATA: /pgdata/data
+        ports: ['5432:5432']
+        options: >-
+          --tmpfs /pgdata
+          --health-cmd "pg_isready -h 127.0.0.1 -U docbank_test -d docbank_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-cgo
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - run: kit-retry 3 5 go mod download
+      - name: PostgreSQL party revision exhaustion
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/organization/PartyRevisionExhaustion$' -count=1 -v
+  lint:
+    if: github.repository == 'salmonumbrella/docbank'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-lint
+          extra-path: ~/.cache/golangci-lint
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Reject timing suppressions
+        run: make check-timing-suppressions
+      - name: Linux lint
+        uses: step-security/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          skip-cache: true
+      - name: Windows lint
+        if: always()
+        env:
+          GOOS: windows
+        run: ./custom-gcl run ./...
+      - name: macOS lint
+        if: always()
+        env:
+          GOOS: darwin
+        run: ./custom-gcl run ./...
+      - name: Workflow download retries
+        if: always()
+        run: |
+          GOFLAGS="${GOFLAGS:+$GOFLAGS }-n" kit-retry 3 5 make lint-workflow-retries
+          make lint-workflow-retries
