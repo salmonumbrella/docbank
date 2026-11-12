@@ -99,9 +99,12 @@ func signatureError(err error) error {
 	return docuSealProblem(err)
 }
 
+type signatureHumaContext huma.Context
+
 // signatureBodyContext replays the bounded, validated bytes to Huma.
 type signatureBodyContext struct {
-	huma.Context
+	signatureHumaContext
+
 	body *bytes.Reader
 }
 
@@ -140,7 +143,7 @@ func privateSignatureBody(api huma.API) func(huma.Context, func(huma.Context)) {
 			}
 			var request SignatureRequestBody
 			if err = api.Unmarshal(contentType, body, &request); err == nil {
-				next(signatureBodyContext{Context: ctx, body: bytes.NewReader(body)})
+				next(signatureBodyContext{signatureHumaContext: ctx, body: bytes.NewReader(body)})
 				return
 			} else if errors.Is(err, huma.ErrUnknownContentType) {
 				status = http.StatusUnsupportedMediaType
