@@ -40,7 +40,9 @@ func TestTimelineDayRequestValidation(t *testing.T) {
 			require.Equal(t, tc.code, decodeProblem(t, body).Code)
 		})
 	}
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{},"from":"2026-01-01","to":"2026-04-02","timezone":"UTC"}`)
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{"unexpected":true},"date":"2026-03-10"}`)
+	require.GreaterOrEqual(t, response.StatusCode, http.StatusBadRequest, body)
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{},"from":"2026-01-01","to":"2026-04-02","timezone":"UTC"}`)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{},"from":"2011-12-29","to":"2011-12-31","timezone":"Pacific/Apia"}`)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -195,13 +197,19 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &switched))
 	require.Len(t, switched.Items, 2)
 	require.Equal(t, "date-kind-switch", switched.Items[0].When.PlacedBy.Rule)
-	createSavedQuery(t, ts.URL, "ZoneScope", `{"timezone":"UTC"}`)
+	createSavedQuery(t, ts.URL, "ZoneScope", `{"syntax":"advanced","text":"date:2026-03-10","timezone":"UTC"}`)
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{"syntax":"advanced","text":"saved:ZoneScope"},"date":"2026-03-10","timezone":"UTC"}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var saved api.TimelineDayResponse
 	require.NoError(t, json.Unmarshal([]byte(body), &saved))
 	require.Equal(t, "UTC", saved.Timezone)
 	require.False(t, saved.TimezoneDefaulted)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/days", headers, `{"query":{"filters":{"paths":["/report-0.pdf"]}},"from":"2026-03-10","to":"2026-03-10"}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var scoped api.TimelineDaysResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &scoped))
+	require.Len(t, scoped.Days, 1)
+	require.EqualValues(t, 1, scoped.Days[0].Count)
 	resp, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var session struct {
@@ -218,4 +226,12 @@ func TestTimelineHTTPPublishedDatesAndFrozenPages(t *testing.T) {
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, `{"query":{},"date":"2026-03-10","limit":500}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NotContains(t, body, person.PersonID)
+	// New snapshots evict the oldest owner handle without waiting for the clock.
+	for range 9 {
+		resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, request)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	}
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/timeline/day", headers, continuation)
+	require.Equal(t, http.StatusGone, resp.StatusCode, body)
+	require.Equal(t, "snapshot_gone", decodeProblem(t, body).Code)
 }

@@ -60,6 +60,7 @@ func TestTimelineWhenContractExamples(t *testing.T) {
 		{"example-3.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:30:00", TimezoneKind: "omitted"}, new(1410), ""},
 		{"example-4.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, nil, ""},
 		{"example-5.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-09"}, nil, "2026-03-11"},
+		{"example-6.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "UTC", UTCKey: "2026-03-10T23:50:00.000000000Z"}, new(1190), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
@@ -76,6 +77,9 @@ func TestTimelineWhenContractExamples(t *testing.T) {
 			var got, want map[string]any
 			require.NoError(t, json.Unmarshal(actual, &got))
 			require.NoError(t, json.Unmarshal(fixture, &want))
+			// Docbank stores individual claims, not timed end instants.
+			delete(want, "end_at")
+			delete(want, "end_local")
 			want["placed_by"] = map[string]any{"source": string(tc.event.DateKind), "rule": "primary-rule/v1", "fallback": false, "event_id": "evt-55", "claim_basis": "source_asserted"}
 			require.Equal(t, want, got)
 		})
