@@ -112,6 +112,9 @@
   import { readPanelWidth, watchWidth } from "./panelWidth.js";
   import ResultName from "./ResultName.svelte";
   import { resultColumns } from "./resultColumns.js";
+  import DocumentFactCells from "./DocumentFactCells.svelte";
+  import { DocumentFacts } from "./documentFacts.svelte.js";
+  import { timelineZone } from "./timelineConfig.js";
   import ResultsPager from "./ResultsPager.svelte";
   import SnapshotActions, { type SnapshotActionChoice } from "./SnapshotActions.svelte";
   import TagRunNotice from "./TagRunNotice.svelte";
@@ -1390,8 +1393,37 @@
       ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
       : showingResults
         ? resultColumns(browserWidth, { match: activeQuery !== "", actions: similarAvailable })
-        : { modified: browserWidth >= 700, match: false, type: browserWidth >= 540, facts: browserWidth >= 900 },
+        : {
+            modified: browserWidth >= 700,
+            match: false,
+            type: browserWidth >= 540,
+            facts: resultColumns(browserWidth, { match: false, actions: similarAvailable }).facts,
+          },
   );
+  // The configured [web] timeline_timezone, served once with the page.
+  const zone = timelineZone();
+  // One dates-and-people owner per session and Documents view: a folder, a
+  // live result list, or one frozen page. Leaving the view disposes it, which
+  // aborts its reads and drops their late results.
+  const factsView = $derived(
+    !webSession || photoMode || docsPage
+      ? ""
+      : snapshotActive
+        ? `frozen:${snapshot.state.firstPage?.snapshot_id ?? ""}:${snapshot.state.offset}`
+        : `live:${directory?.id ?? ""}:${activeQuery}:${activeTagID}`,
+  );
+  let documentFacts = $state<DocumentFacts>();
+  $effect(() => {
+    const view = factsView;
+    const session = webSession;
+    if (!view) {
+      documentFacts = undefined;
+      return;
+    }
+    const owner = new DocumentFacts(session, (cause) => handleFailure(cause));
+    documentFacts = owner;
+    return () => owner.dispose();
+  });
   // Previous and Next walk the files of a live results list.
   const resultFiles = $derived(
     showingResults ? sortedRows.filter((row) => row.node.kind === "file") : [],
@@ -3128,6 +3160,16 @@
     }
   }
 
+  // A person chip searches for that person until the People page exists (P08).
+  function searchPerson(id: string): void {
+    void submitSnapshot(
+      parseQuery(
+        JSON.stringify({ v: 1, syntax: "advanced", mode: "lexical", text: `person:${id}` }),
+      ),
+      { page_size: 100 },
+    );
+  }
+
   function runSnapshotAgain(): void {
     if (!snapshot.state.query || !snapshot.state.options) return;
     void submitSnapshot(snapshot.state.query, snapshot.state.options, true);
@@ -4507,6 +4549,7 @@
             class:hide-modified={!columns.modified}
             class:hide-type={!columns.type}
             class:hide-match={!columns.match}
+            class:hide-facts={!columns.facts}
             aria-label="Vault browser"
             {@attach (element) => watchWidth(element, (width) => (browserWidth = width))}
           >
@@ -4612,6 +4655,8 @@
                               : null}
                             onsort={() => sortSnapshot("size")}
                           />
+                          <TableHeaderCell class="col-facts" label="Document date" />
+                          <TableHeaderCell class="col-facts" label="People" />
                           <TableHeaderCell
                             class="col-modified"
                             label="Modified"
@@ -4629,6 +4674,9 @@
                               tabindex="0"
                               data-snapshot-node={row.node_id}
                               aria-selected={row.node_id === snapshot.selectedID}
+                              {@attach documentFacts?.observeRow(
+                                columns.facts ? row.content_version_id : undefined,
+                              )}
                               onclick={(event) => {
                                 snapshot.selectedID = row.node_id;
                                 if (event.detail < 2) reportAction(webSession, "document_opened");
@@ -4677,6 +4725,11 @@
                                 >{fileTypeLabel("file", row.mime_type)}</td
                               >
                               <td class="numeric">{formatBytes(row.size)}</td>
+                              <DocumentFactCells
+                                versionID={columns.facts ? row.content_version_id : undefined}
+                                facts={documentFacts}
+                                {zone}
+                              />
                               <td class="date-cell col-modified">{formatDate(row.modified_at)}</td>
                             </tr>
                           {/each}
@@ -4904,6 +4957,8 @@
                       sortDirection={sortField === "size" ? sortDirection : null}
                       onsort={() => sortBy("size")}
                     />
+                    <TableHeaderCell class="col-facts" label="Document date" />
+                    <TableHeaderCell class="col-facts" label="People" />
                     <TableHeaderCell
                       class="col-modified"
                       label="Modified"
@@ -4924,6 +4979,11 @@
                         data-node-id={row.node.id}
                         tabindex="0"
                         aria-selected={row.node.id === selectedID}
+                        {@attach documentFacts?.observeRow(
+                          columns.facts && row.node.kind === "file"
+                            ? row.node.current_version_id
+                            : undefined,
+                        )}
                         ondblclick={() => activate(row, true)}
                         onclick={(event) => event.detail < 2 && openDocument(row.node.id)}
                         onkeydown={(event) => {
@@ -4979,6 +5039,13 @@
                         <td class="numeric"
                           >{row.node.kind === "dir" ? "—" : formatBytes(row.node.size)}</td
                         >
+                        <DocumentFactCells
+                          versionID={columns.facts && row.node.kind === "file"
+                            ? row.node.current_version_id
+                            : undefined}
+                          facts={documentFacts}
+                          {zone}
+                        />
                         <td class="date-cell col-modified">{formatDate(row.node.modified_at)}</td>
                         {#if activeQuery}
                           <td class="col-match">
@@ -5051,6 +5118,9 @@
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
                 onauthfailure={handleFailure}
+                facts={documentFacts}
+                timelineZone={zone}
+                onperson={searchPerson}
                 node={currentInspectorNode ?? undefined}
                 path={selectedSnapshot.path}
                 snapshot={selectedSnapshot}
@@ -5133,6 +5203,9 @@
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
                 onauthfailure={handleFailure}
+                facts={documentFacts}
+                timelineZone={zone}
+                onperson={searchPerson}
                 node={selected.node}
                 path={selected.path}
                 protected={membership?.protected}

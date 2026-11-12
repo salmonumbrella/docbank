@@ -730,10 +730,10 @@ dd {
     display: none;
   }
 
-  .browser th:nth-child(3),
-  .browser td:nth-child(3),
-  .browser th:nth-child(5),
-  .browser td:nth-child(5) {
+  /* Named, so the Document date and People columns never shift which ones hide. */
+  .browser .col-type,
+  .browser .col-modified,
+  .browser .col-facts {
     display: none;
   }
 
@@ -763,7 +763,8 @@ dd {
 }
 
 .browser.hide-modified .col-modified,
-.browser.hide-type .col-type {
+.browser.hide-type .col-type,
+.browser.hide-facts .col-facts {
   display: none;
 }
 
