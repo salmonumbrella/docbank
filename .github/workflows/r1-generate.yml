@@ -89,7 +89,7 @@ jobs:
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
         run: |
-          go test -tags fts5 ./internal/recordtype ./internal/store ./internal/api ./internal/daemonconn ./cmd/docbank -run 'TestContract|TestEffectiveStatus|TestRecord|TestEveryReleasedSchemaFixtureUpgrades|TestStorageSchema|TestBackendContractsSQLite/records|TestCommandGroups' -count=1
+          go test -tags fts5 ./internal/recordtype ./internal/store ./internal/api ./internal/daemonconn ./cmd/docbank -run 'TestContract|TestEffectiveStatus|TestRecord|TestEveryReleasedSchemaFixtureUpgrades|TestReleasedSchemaFixturesMatchVersions|TestReleasedStorageSchemasRequireAdapters|TestStorageSchema|TestBackendContractsSQLite/records|TestCommandGroups' -count=1
 
   postgres:
     if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
@@ -126,7 +126,7 @@ jobs:
       - name: PostgreSQL record contracts
         env:
           DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:${{ github.run_id }}@127.0.0.1:5432/docbank_test?sslmode=disable
-        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/records/' -count=1 -v
+        run: go test -tags fts5 ./internal/store -run '^TestBackendContractsPostgres/(records|schema)/' -count=1 -v
 
   docs:
     if: always() && needs.generate.result == 'success' && github.repository == 'salmonumbrella/docbank'
@@ -172,9 +172,9 @@ jobs:
         with:
           version: v2.15.0
           skip-cache: true
-      - name: Run repository lint
+      - name: Check workflow retries and timing suppressions
         if: always()
-        run: make lint
+        run: make lint-workflow-retries check-timing-suppressions
       - name: Check Huma contract
         if: always()
         run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...
