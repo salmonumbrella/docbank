@@ -95,6 +95,9 @@ func TestReportSelectionUsesResolvedWallClock(t *testing.T) {
 		{"gap first real instant", "America/New_York", "America/Phoenix", "2026-03-08T02:30:00", "2026-03-08"},
 		{"skipped source date", "Pacific/Apia", "Pacific/Apia", "2011-12-30T12:00:00", "2011-12-31"},
 		{"date stays literal", "Pacific/Apia", "Pacific/Apia", "2011-12-30", "2011-12-30"},
+		{"instant after date rollback", "UTC", "America/St_Johns", "2010-11-07T03:00:00Z", "2010-11-07"},
+		{"resolved clock after date rollback", "UTC", "America/St_Johns", "2010-11-07T03:00:00", "2010-11-07"},
+		{"instant before day starts", "UTC", "America/St_Johns", "2010-11-07T02:29:59Z", "2010-11-06"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			candidate := DateCandidate{ID: "created", Role: "created", SourceClass: "native", Value: tc.value}

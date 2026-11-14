@@ -5,6 +5,9 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // Reports also run in embedded hosts without a zone database.
+
+	"cloud.google.com/go/civil"
+	"go.kenn.io/kit/civiltime"
 )
 
 func loadReportZone(name string) (*time.Location, error) {
@@ -66,4 +69,17 @@ func resolveReportWallClock(wall time.Time, loc *time.Location) (time.Time, erro
 		return gap, nil
 	}
 	return time.Time{}, fmt.Errorf("cannot resolve wall clock %s in %s", wall.Format(time.RFC3339Nano), loc)
+}
+
+// reportDate keeps exact timestamps in the same day interval as timeline
+// queries, even when a midnight rollback briefly displays the previous date.
+func reportDate(at time.Time, loc *time.Location) string {
+	date := civil.DateOf(at.In(loc))
+	for {
+		_, end, _ := civiltime.DayBounds(date, loc)
+		if end.IsZero() || at.Before(end) {
+			return date.String()
+		}
+		date = date.AddDays(1)
+	}
 }

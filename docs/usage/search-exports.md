@@ -194,6 +194,11 @@ and optional controls are:
 | `terms` | 1–128 rows. Each has a unique positive `number`, nonempty `expression` of at most 8,192 Unicode characters, `syntax` (`simple` or `advanced`), and `dates.start` / `dates.end` in `YYYY-MM-DD` form. |
 | `date_choices` | Optional evidence-bound choices for captured documents. A reused history request omits these. |
 
+Exact timestamps belong to the calendar-day interval used by timeline searches.
+If a midnight clock rollback briefly displays the previous date after the new
+day has started, the report keeps the timestamp on the new day. Date-only
+values retain their written date.
+
 The same zone rules apply to `source_timezone` and `reviewed_timezone`. A
 timestamp without a usable source zone stays unresolved unless the request or
 a reviewed choice supplies one. When that zone repeats a wall clock, the report

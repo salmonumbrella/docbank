@@ -151,7 +151,7 @@ func normalizeCandidateDate(candidate DateCandidate, request Request, reportZone
 		return date.Format(time.DateOnly), nil
 	}
 	if stamp, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return stamp.In(reportZone).Format(time.DateOnly), nil
+		return reportDate(stamp, reportZone), nil
 	}
 	sourceZone := reviewedZone
 	if sourceZone == "" && candidate.Timezone != "" && candidate.Timezone != "omitted" {
@@ -174,7 +174,7 @@ func normalizeCandidateDate(candidate DateCandidate, request Request, reportZone
 			if err != nil {
 				return "", ErrUnusableDate
 			}
-			return stamp.In(reportZone).Format(time.DateOnly), nil
+			return reportDate(stamp, reportZone), nil
 		}
 	}
 	return "", ErrUnusableDate

@@ -3,6 +3,7 @@ module go.kenn.io/docbank
 go 1.27.4
 
 require (
+	cloud.google.com/go v0.123.0
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
@@ -41,7 +42,7 @@ require (
 	github.com/xdg-go/stringprep v1.0.4
 	github.com/yuin/goldmark/v2 v2.1.13
 	go.kenn.io/kata v0.23.0
-	go.kenn.io/kit v0.52.0
+	go.kenn.io/kit v0.53.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/image v0.47.0
 	golang.org/x/mod v0.42.0
