@@ -534,9 +534,9 @@ func (client *EmbeddingClient) decodeText(body []byte, want int) ([][]float32, e
 	}
 	// Voyage may echo each input as an optional text member. Its exact form is
 	// not part of the contract, so ordering relies on index and the echo is
-	// only type-checked before it is discarded.
+	// only type-checked before it is discarded. A null echo is also absent.
 	for _, item := range response.Data {
-		if len(item.Text) != 0 && item.Text.Kind() != '"' {
+		if len(item.Text) != 0 && item.Text.Kind() != '"' && item.Text.Kind() != 'n' {
 			return nil, &ProviderError{Kind: ErrMalformedResponse}
 		}
 	}

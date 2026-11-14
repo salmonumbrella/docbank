@@ -83,14 +83,16 @@ func TestVoyageRetainedTextDocumentAndQuery(t *testing.T) {
 	}
 }
 
-func TestVoyageTextAllowsOnlyOptionalStringText(t *testing.T) {
+func TestVoyageTextAllowsOptionalTextEcho(t *testing.T) {
 	for _, test := range []struct {
 		name, extra string
 		valid       bool
 	}{
-		{"text", `,"text":"document envelope: passage"`, true},
+		{"absent", ``, true}, {"text", `,"text":"document envelope: passage"`, true},
 		{"unknown", `,"unreviewed":"synthetic"`, false}, {"wrong type", `,"text":42`, false},
-		{"null text", `,"text":null`, false}, {"duplicate text", `,"text":"a","text":"b"`, false},
+		{"null text", `,"text":null`, true}, {"boolean", `,"text":true`, false},
+		{"array", `,"text":[]`, false}, {"object", `,"text":{}`, false},
+		{"duplicate text", `,"text":"a","text":"b"`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := string(voyageTextBody(t, voyage.TextModel, []int{0}, []int{1}))
@@ -102,15 +104,38 @@ func TestVoyageTextAllowsOnlyOptionalStringText(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write([]byte(body))
 				}))
-				_, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
+				result, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
 				if test.valid {
 					require.NoError(t, err)
+					require.Len(t, result.Vectors, 1)
+					assert.Equal(t, unitEmbedding(1), result.Vectors[0].Values)
 				} else {
 					require.ErrorIs(t, err, voyage.ErrMalformedResponse)
 				}
 			})
 		})
 	}
+}
+
+func TestVoyageLargeTextAcceptsNullEcho(t *testing.T) {
+	profile := voyageTextProfile(t, voyage.EmbeddingModeText)
+	profile.DeploymentEpoch = "synthetic-large-v1"
+	profile.Descriptor.Model = "voyage-4-large"
+	profile.Descriptor.ModelRevision = profile.DeploymentEpoch
+	profile.Descriptor.Dimension = 1024
+	profile.Descriptor.SupportsTextQuery = true
+	profile = refingerprintVoyageProfile(t, profile)
+	vector := make([]float32, 1024)
+	vector[0] = 1
+	provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": profile.Descriptor.Model,
+			"data": []map[string]any{{"object": "embedding", "index": 0, "embedding": vector, "text": nil}}}))
+	}))
+	result, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
+	require.NoError(t, err)
+	require.Len(t, result.Vectors, 1)
+	assert.Equal(t, vector, result.Vectors[0].Values)
 }
 
 func TestVoyageTextRetrievalIdentityAndNormalization(t *testing.T) {
