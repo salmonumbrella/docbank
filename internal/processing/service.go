@@ -1257,7 +1257,7 @@ func (service *Service) runRenditionJob(ctx context.Context, jobID, waiterID str
 		return renditionRun{}, err
 	}
 	for {
-		_, err := worker.RunJob(ctx, jobID)
+		_, err := worker.runJob(ctx, jobID, true)
 		current, statusErr := service.catalog.RenditionJobByID(ctx, jobID)
 		if statusErr != nil {
 			return renditionRun{}, errors.Join(err, statusErr)

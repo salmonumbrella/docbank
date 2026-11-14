@@ -2,6 +2,7 @@ package processing
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -53,6 +54,14 @@ func TestRenditionAdmissionBoundsProviderWork(t *testing.T) {
 		go func() { _, err := service.runRenditionJob(ctx, job, waiter); done <- err }()
 		return done
 	}
+	waiters := func(count int) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			registry.slots.mu.Lock()
+			defer registry.slots.mu.Unlock()
+			return len(registry.slots.waiters) == count
+		}, 10*time.Second, time.Millisecond, "workers must reach the admission queue")
+	}
 	done1 := run(t.Context(), job1.ID, waiter1.ID)
 	select {
 	case <-first.renderStarted:
@@ -61,11 +70,7 @@ func TestRenditionAdmissionBoundsProviderWork(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done2 := run(ctx, job2.ID, waiter2.ID)
-	select {
-	case <-second.renderStarted:
-		t.Fatal("second provider started while first was active")
-	case <-time.After(300 * time.Millisecond):
-	}
+	waiters(1)
 	current, err := fixture.catalog.RenditionJobByID(t.Context(), job2.ID)
 	require.NoError(t, err)
 	require.Equal(t, store.RenditionJobQueued, current.State)
@@ -80,22 +85,21 @@ func TestRenditionAdmissionBoundsProviderWork(t *testing.T) {
 	backgroundCtx, cancelBackground := context.WithCancel(t.Context())
 	backgroundDone := make(chan error, 1)
 	go func() { _, err := background.RunOne(backgroundCtx); backgroundDone <- err }()
-	select {
-	case <-second.renderStarted:
-		t.Fatal("background provider started while first was active")
-	case <-time.After(300 * time.Millisecond):
-	}
-	cancelBackground()
-	require.ErrorIs(t, <-backgroundDone, context.Canceled)
+	waiters(1)
 	duplicate := run(t.Context(), job1.ID, waiter1.ID)
+	waiters(2)
 	close(first.renderRelease)
 	require.NoError(t, <-done1)
-	require.NoError(t, <-duplicate)
-	done2 = run(t.Context(), job2.ID, waiter2.ID)
 	select {
 	case <-second.renderStarted:
 	case <-time.After(10 * time.Second):
-		t.Fatal("second provider did not start")
+		t.Fatal("background provider did not start")
+	}
+	select {
+	case err := <-duplicate:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("duplicate blocked behind unrelated provider after completion")
 	}
 	completed := run(t.Context(), job1.ID, waiter1.ID)
 	select {
@@ -105,5 +109,47 @@ func TestRenditionAdmissionBoundsProviderWork(t *testing.T) {
 		t.Fatal("completed result blocked behind active provider")
 	}
 	close(second.renderRelease)
-	require.NoError(t, <-done2)
+	require.NoError(t, <-backgroundDone)
+	cancelBackground()
+}
+
+func TestRenditionAdmissionRetryWaitAllowsOtherWork(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	first, second := newWorkerProvider(t), newWorkerProvider(t)
+	descriptor := second.descriptor
+	descriptor.ID = "synthetic.other-retry-v1"
+	var err error
+	second.descriptor, err = document.NewRenditionDescriptor(descriptor)
+	require.NoError(t, err)
+	first.renderErr, err = document.NewRenditionProviderError(document.RenditionErrorTransient, time.Minute, errors.New("synthetic retry"))
+	require.NoError(t, err)
+	registry := NewRenditionRuntimeRegistry()
+	require.NoError(t, registry.Register(first.descriptor.Fingerprint, workerRuntime{provider: first}))
+	require.NoError(t, registry.Register(second.descriptor.Fingerprint, workerRuntime{provider: second}))
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: t.Context(), RenditionRuntimes: registry})
+	require.NoError(t, err)
+	enqueue := func(provider *workerProvider) (store.RenditionJob, store.RenditionJobWaiter) {
+		request := workerJobRequest(fixture.versionID, workerProcessingProfile(t, provider.descriptor), provider.descriptor)
+		grantWorkerConsent(t, fixture.catalog, request)
+		job, waiter, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+		require.NoError(t, err)
+		return job, waiter
+	}
+	job1, waiter1 := enqueue(first)
+	job2, waiter2 := enqueue(second)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { _, err := service.runRenditionJob(ctx, job1.ID, waiter1.ID); done <- err }()
+	t.Cleanup(func() { cancel(); <-done })
+	require.Eventually(t, func() bool {
+		job, err := fixture.catalog.RenditionJobByID(t.Context(), job1.ID)
+		return err == nil && job.State == store.RenditionJobRetryWait
+	}, 10*time.Second, time.Millisecond)
+	readyCtx, cancelReady := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelReady()
+	_, err = service.runRenditionJob(readyCtx, job2.ID, waiter2.ID)
+	require.NoError(t, err)
+	current, err := fixture.catalog.RenditionJobByID(t.Context(), job1.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.RenditionJobRetryWait, current.State)
 }

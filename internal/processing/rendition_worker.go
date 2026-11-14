@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
-	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/vision"
@@ -62,13 +61,13 @@ type RenditionRuntimeRegistry struct {
 	runtimes map[string]RenditionRuntime
 	ready    chan struct{}
 	sealed   bool
-	slots    *semaphore.Weighted
+	slots    renditionAdmission
 }
 
 // NewRenditionRuntimeRegistry returns an empty process-local registry.
 func NewRenditionRuntimeRegistry() *RenditionRuntimeRegistry {
 	return &RenditionRuntimeRegistry{
-		runtimes: make(map[string]RenditionRuntime), ready: make(chan struct{}), slots: semaphore.NewWeighted(1),
+		runtimes: make(map[string]RenditionRuntime), ready: make(chan struct{}),
 	}
 }
 
@@ -391,12 +390,32 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 	processed bool, retErr error,
 ) {
+	return worker.runJob(ctx, jobID, false)
+}
+
+// runJob can return without a claim when admission is busy, allowing a
+// request to observe a shared job's terminal state while other work runs.
+func (worker *RenditionWorker) runJob(ctx context.Context, jobID string, checkStatus bool) (
+	processed bool, retErr error,
+) {
 	if worker == nil {
 		return false, errors.New("rendition worker is nil")
 	}
-	release, err := worker.admit(ctx)
+	admissionCtx := ctx
+	var cancel context.CancelFunc
+	if checkStatus {
+		admissionCtx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+	}
+	release, err := worker.admit(admissionCtx)
 	if err != nil {
+		if checkStatus && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			return false, nil
+		}
 		return false, err
+	}
+	if cancel != nil {
+		cancel() // The admission deadline must not limit provider execution.
 	}
 	defer release()
 	target, ok := worker.catalog.(targetedRenditionWorkerCatalog)
@@ -434,10 +453,75 @@ func (worker *RenditionWorker) admit(ctx context.Context) (func(), error) {
 	if !ok {
 		return func() {}, nil
 	}
-	if err := registry.slots.Acquire(ctx, 1); err != nil {
+	if err := registry.slots.acquire(ctx); err != nil {
 		return nil, err
 	}
-	return func() { registry.slots.Release(1) }, nil
+	return registry.slots.release, nil
+}
+
+// renditionAdmission queues workers before they hold any catalog gate. Its
+// explicit FIFO lets canceled waiters leave without consuming a slot.
+type renditionAdmission struct {
+	mu      sync.Mutex
+	active  bool
+	waiters []*renditionAdmissionWaiter
+}
+
+type renditionAdmissionWaiter struct {
+	ready   chan struct{}
+	granted bool
+}
+
+func (a *renditionAdmission) acquire(ctx context.Context) error {
+	a.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		a.mu.Unlock()
+		return err
+	}
+	if !a.active {
+		a.active = true
+		a.mu.Unlock()
+		return nil
+	}
+	w := &renditionAdmissionWaiter{ready: make(chan struct{})}
+	a.waiters = append(a.waiters, w)
+	a.mu.Unlock()
+	select {
+	case <-w.ready:
+		if err := ctx.Err(); err != nil {
+			a.release()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		a.mu.Lock()
+		if w.granted {
+			a.mu.Unlock()
+			a.release()
+		} else {
+			for i, queued := range a.waiters {
+				if queued == w {
+					a.waiters = slices.Delete(a.waiters, i, i+1)
+					break
+				}
+			}
+			a.mu.Unlock()
+		}
+		return ctx.Err()
+	}
+}
+
+func (a *renditionAdmission) release() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.waiters) == 0 {
+		a.active = false
+		return
+	}
+	w := a.waiters[0]
+	a.waiters = slices.Delete(a.waiters, 0, 1)
+	w.granted = true
+	close(w.ready)
 }
 
 // runOne gates each catalog or physical mutation independently. Provider
