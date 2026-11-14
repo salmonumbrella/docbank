@@ -187,12 +187,20 @@ and optional controls are:
 | `version` | Must be `1`. |
 | `all_documents`, `collection_ids`, `selected_documents` | Choose exactly one scope: `all_documents: true`, a nonempty collection ID list, or the selected-document object below. Use `all_documents: false` for either list scope. |
 | `profile` | Configured processing profile name. Required when several profiles exist. Omission returns `invalid_profile`. A sole configured profile is selected automatically. |
-| `timezone` | Required IANA timezone, such as `UTC` or `America/New_York`. `Local` is rejected. Cutoffs are literal calendar dates in this zone. |
+| `timezone` | Required `UTC` or IANA timezone with a slash, such as `America/New_York`. Host aliases (`Local`), abbreviations (`EST`, `GMT`, `CET`), offset strings, and `posix/` or `right/` aliases are rejected. Cutoffs are literal calendar dates in this zone. |
 | `source_timezone` | Optional source timezone for timestamps that omit one. |
 | `numeric_date_order` | Optional `MDY` or `DMY` interpretation of ambiguous numeric dates. Omit to leave ambiguity unresolved. |
 | `coverage_mode` | `strict` (default) rejects incomplete search or family coverage in the date ranges. `available_only` retains the gaps in coverage totals. |
 | `terms` | 1–128 rows. Each has a unique positive `number`, nonempty `expression` of at most 8,192 Unicode characters, `syntax` (`simple` or `advanced`), and `dates.start` / `dates.end` in `YYYY-MM-DD` form. |
 | `date_choices` | Optional evidence-bound choices for captured documents. A reused history request omits these. |
+
+The same zone rules apply to `source_timezone` and `reviewed_timezone`. A
+timestamp without a usable source zone stays unresolved unless the request or
+a reviewed choice supplies one. When that zone repeats a wall clock, the report
+uses its earlier occurrence. When a clock is skipped, it uses the first real
+instant after the gap. For example, `2026-09-06T00:30` in `America/Santiago`
+resolves to 01:00 on September 6, not the previous evening. Date-only values
+remain literal dates, including dates skipped by a zone.
 
 For selected documents, copy each current file's node ID, version ID, and
 content hash from the workspace/API. Replace the example request's all-document scope
