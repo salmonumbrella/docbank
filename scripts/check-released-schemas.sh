@@ -6,6 +6,12 @@
 # every later tag must declare one. Requires full tag history (fetch-depth: 0).
 set -euo pipefail
 
+# Forks do not inherit release tags. Validate against the upstream releases
+# without publishing those tags to the fork (which could run old publishers).
+if [[ ${GITHUB_ACTIONS:-} == true && -n ${GITHUB_REPOSITORY:-} && ${GITHUB_REPOSITORY} != kenn-io/docbank ]]; then
+	git fetch --no-tags https://github.com/kenn-io/docbank.git 'refs/tags/v*:refs/tags/v*'
+fi
+
 first_versioned_tag=v0.10.0
 
 repo_root=$(git rev-parse --show-toplevel)

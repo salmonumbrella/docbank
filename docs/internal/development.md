@@ -268,7 +268,10 @@ in `releasedSchemaFixtures`. Three checks enforce this:
 
 - `scripts/check-released-schemas.sh` runs in CI against every release tag. It
   fails when a tag's schema version is unlisted or its `schema.sql` has no
-  exact fixture.
+  exact fixture. Fork CI fetches upstream release tags into the runner because
+  forks do not inherit them; it does not publish tags or releases to the fork.
+  Local runs require the full release-tag history. Run
+  `bash scripts/check-released-schemas.test.sh` to test fork handling offline.
 - `TestReleasedSchemaFixturesMatchVersions` requires a bump when a released table,
   trigger, view, or index changes, or when a unique index is added.
   New non-unique indexes need no bump because startup creates them in place.

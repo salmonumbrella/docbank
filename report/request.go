@@ -147,13 +147,8 @@ func NormalizeSelectedDocuments(documents []Identity) (*SelectedDocuments, error
 }
 
 func validateTimezone(zone string) error {
-	if zone == "" || zone == "Local" || strings.TrimSpace(zone) != zone {
-		return fmt.Errorf("invalid timezone %q", zone)
-	}
-	if _, err := time.LoadLocation(zone); err != nil {
-		return fmt.Errorf("invalid timezone %q: %w", zone, err)
-	}
-	return nil
+	_, err := loadReportZone(zone)
+	return err
 }
 
 func parseISODate(value string) (time.Time, error) {
