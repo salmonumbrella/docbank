@@ -9,10 +9,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	processingjobs "go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
 func TestRenditionAdmissionBoundsProviderWork(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	first, second := newWorkerProvider(t), newWorkerProvider(t)
 	descriptor := second.descriptor
@@ -115,6 +117,7 @@ func TestRenditionAdmissionBoundsProviderWork(t *testing.T) {
 }
 
 func TestRenditionAdmissionRetryWaitAllowsOtherWork(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	first, second := newWorkerProvider(t), newWorkerProvider(t)
 	descriptor := second.descriptor
@@ -156,6 +159,7 @@ func TestRenditionAdmissionRetryWaitAllowsOtherWork(t *testing.T) {
 }
 
 func TestRenditionAdmissionPreservesFIFOAcrossStatusChecks(t *testing.T) {
+	t.Parallel()
 	var admission renditionAdmission
 	require.NoError(t, admission.acquire(t.Context(), nil))
 	polls := make(chan struct{}, 4)
@@ -223,6 +227,7 @@ func TestRenditionAdmissionPreservesFIFOAcrossStatusChecks(t *testing.T) {
 }
 
 func TestRenditionAdmissionSettledDuringGrantReleasesSlot(t *testing.T) {
+	t.Parallel()
 	var admission renditionAdmission
 	require.NoError(t, admission.acquire(t.Context(), nil))
 	entered, resume := make(chan struct{}), make(chan struct{})
@@ -264,6 +269,7 @@ func TestRenditionAdmissionSettledDuringGrantReleasesSlot(t *testing.T) {
 }
 
 func TestRenditionAdmissionTargetedFIFOAcrossPolls(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	providers := []*workerProvider{newWorkerProvider(t), newWorkerProvider(t), newWorkerProvider(t)}
 	registry := NewRenditionRuntimeRegistry()
@@ -326,7 +332,7 @@ func TestRenditionAdmissionTargetedFIFOAcrossPolls(t *testing.T) {
 	registry.slots.mu.Unlock()
 	// The lower-level test observes individual polls; this checks the service path
 	// retains the same entry for several real polling intervals.
-	time.Sleep(2*renditionAdmissionPollInterval + 50*time.Millisecond)
+	require.NoError(t, processingjobs.Wait(t.Context(), 2*renditionAdmissionPollInterval+50*time.Millisecond))
 	registry.slots.mu.Lock()
 	unchanged := len(registry.slots.waiters) == 1 && registry.slots.waiters[0] == bPosition
 	registry.slots.mu.Unlock()
