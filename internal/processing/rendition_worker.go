@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/vision"
@@ -61,12 +62,13 @@ type RenditionRuntimeRegistry struct {
 	runtimes map[string]RenditionRuntime
 	ready    chan struct{}
 	sealed   bool
+	slots    *semaphore.Weighted
 }
 
 // NewRenditionRuntimeRegistry returns an empty process-local registry.
 func NewRenditionRuntimeRegistry() *RenditionRuntimeRegistry {
 	return &RenditionRuntimeRegistry{
-		runtimes: make(map[string]RenditionRuntime), ready: make(chan struct{}),
+		runtimes: make(map[string]RenditionRuntime), ready: make(chan struct{}), slots: semaphore.NewWeighted(1),
 	}
 }
 
@@ -370,7 +372,12 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 	if worker == nil {
 		return false, errors.New("rendition worker is nil")
 	}
-	processed, err := worker.runOne(ctx)
+	release, err := worker.admit(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	processed, err = worker.runOne(ctx)
 	if err != nil && ctx.Err() == nil && !errors.Is(err, store.ErrRenditionJobFenced) &&
 		!isRenditionWorkerFatal(err) && !isRenditionWorkerRetryable(err) {
 		err = renditionWorkerFatal(err)
@@ -387,12 +394,17 @@ func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 	if worker == nil {
 		return false, errors.New("rendition worker is nil")
 	}
+	release, err := worker.admit(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
 	target, ok := worker.catalog.(targetedRenditionWorkerCatalog)
 	if !ok {
 		return false, errors.New("rendition catalog does not support targeted claims")
 	}
 	var claim store.RenditionJobClaim
-	err := worker.mutate(ctx, func() error {
+	err = worker.mutate(ctx, func() error {
 		return worker.catalogOnce(ctx, func() error {
 			var claimErr error
 			claim, claimErr = target.ClaimRenditionJob(ctx, jobID, worker.owner,
@@ -413,6 +425,19 @@ func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 		err = renditionWorkerFatal(err)
 	}
 	return processed, err
+}
+
+// admit shares capacity between request and background workers using the same
+// registry. It runs before any claim or operation gate and ends each attempt.
+func (worker *RenditionWorker) admit(ctx context.Context) (func(), error) {
+	registry, ok := worker.runtime.(*RenditionRuntimeRegistry)
+	if !ok {
+		return func() {}, nil
+	}
+	if err := registry.slots.Acquire(ctx, 1); err != nil {
+		return nil, err
+	}
+	return func() { registry.slots.Release(1) }, nil
 }
 
 // runOne gates each catalog or physical mutation independently. Provider

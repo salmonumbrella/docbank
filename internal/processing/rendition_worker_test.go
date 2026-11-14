@@ -568,9 +568,11 @@ func resubmitsDefinitiveTransientWithFreshSealedAuthority(t *testing.T) {
 	runtime := &countingWorkerRuntime{
 		provider: provider, prepareCalls: &prepareCalls, uploadCloseCalls: &uploadCloseCalls,
 	}
+	registry := NewRenditionRuntimeRegistry()
+	require.NoError(t, registry.Register(provider.Descriptor().Fingerprint, runtime))
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs,
-		Runtime: runtime, Gate: newTestOperationGate(),
+		Runtime: registry, Gate: newTestOperationGate(),
 		Owner: "rendition-worker-definitive-retry", LeaseDuration: time.Minute,
 		IdleDelay: time.Millisecond,
 	})

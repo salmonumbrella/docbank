@@ -137,6 +137,12 @@ ordinary mutating handlers from whole-run maintenance handlers and lets queued
 requests share one long-lived daemon safely. It is not the embedded lifecycle
 lock and is not acquired by embedded methods.
 
+Each processing service shares one rendition worker slot with its background
+workers, before claiming a job or preparing provider execution. Other jobs remain queued
+without holding the maintenance or backup gate. The slot is released between
+attempts, including retry waits. This limit is local to a service instance;
+separate services sharing a provider do not coordinate their capacity.
+
 ## Embedded lifecycle and mutation locking
 
 An embedded `Vault` has two separate in-process responsibilities. Its lifecycle
