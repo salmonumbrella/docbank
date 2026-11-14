@@ -36,8 +36,8 @@ func (*AmbiguousDateError) Unwrap() error { return ErrAmbiguousDate }
 // SelectDate applies the report-specific creation date policy to one frozen
 // document. A reviewed choice may deliberately select a different semantic role.
 func SelectDate(kind string, candidates []DateCandidate, choice *DateChoice, request Request) (DateSelection, error) {
-	zone, err := time.LoadLocation(request.Timezone)
-	if err != nil || request.Timezone == "" {
+	zone, err := loadReportZone(request.Timezone)
+	if err != nil {
 		return DateSelection{}, fmt.Errorf("invalid report timezone %q", request.Timezone)
 	}
 	if choice != nil {
@@ -151,7 +151,7 @@ func normalizeCandidateDate(candidate DateCandidate, request Request, reportZone
 		return date.Format(time.DateOnly), nil
 	}
 	if stamp, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return stamp.In(reportZone).Format(time.DateOnly), nil
+		return reportDate(stamp, reportZone), nil
 	}
 	sourceZone := reviewedZone
 	if sourceZone == "" && candidate.Timezone != "" && candidate.Timezone != "omitted" {
@@ -163,14 +163,18 @@ func normalizeCandidateDate(candidate DateCandidate, request Request, reportZone
 	if sourceZone == "" {
 		return "", ErrUnusableDate
 	}
-	location, err := time.LoadLocation(sourceZone)
+	location, err := loadReportZone(sourceZone)
 	if err != nil {
 		return "", ErrUnusableDate
 	}
 	for _, layout := range []string{"2006-01-02T15:04:05.999999999", "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05"} {
-		stamp, err := time.ParseInLocation(layout, value, location)
+		wall, err := time.Parse(layout, value)
 		if err == nil {
-			return stamp.In(reportZone).Format(time.DateOnly), nil
+			stamp, err := resolveReportWallClock(wall, location)
+			if err != nil {
+				return "", ErrUnusableDate
+			}
+			return reportDate(stamp, reportZone), nil
 		}
 	}
 	return "", ErrUnusableDate
