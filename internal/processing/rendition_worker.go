@@ -371,7 +371,7 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 	if worker == nil {
 		return false, errors.New("rendition worker is nil")
 	}
-	release, err := worker.admit(ctx)
+	release, err := worker.admit(ctx, nil)
 	if err != nil {
 		return false, err
 	}
@@ -390,32 +390,23 @@ func (worker *RenditionWorker) RunOne(ctx context.Context) (
 func (worker *RenditionWorker) RunJob(ctx context.Context, jobID string) (
 	processed bool, retErr error,
 ) {
-	return worker.runJob(ctx, jobID, false)
+	return worker.runJob(ctx, jobID, nil)
 }
 
 // runJob can return without a claim when admission is busy, allowing a
 // request to observe a shared job's terminal state while other work runs.
-func (worker *RenditionWorker) runJob(ctx context.Context, jobID string, checkStatus bool) (
+func (worker *RenditionWorker) runJob(ctx context.Context, jobID string, checkStatus func(context.Context) (bool, error)) (
 	processed bool, retErr error,
 ) {
 	if worker == nil {
 		return false, errors.New("rendition worker is nil")
 	}
-	admissionCtx := ctx
-	var cancel context.CancelFunc
-	if checkStatus {
-		admissionCtx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
-		defer cancel()
-	}
-	release, err := worker.admit(admissionCtx)
+	release, err := worker.admit(ctx, checkStatus)
 	if err != nil {
-		if checkStatus && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, errRenditionAdmissionSettled) {
 			return false, nil
 		}
 		return false, err
-	}
-	if cancel != nil {
-		cancel() // The admission deadline must not limit provider execution.
 	}
 	defer release()
 	target, ok := worker.catalog.(targetedRenditionWorkerCatalog)
@@ -448,12 +439,12 @@ func (worker *RenditionWorker) runJob(ctx context.Context, jobID string, checkSt
 
 // admit shares capacity between request and background workers using the same
 // registry. It runs before any claim or operation gate and ends each attempt.
-func (worker *RenditionWorker) admit(ctx context.Context) (func(), error) {
+func (worker *RenditionWorker) admit(ctx context.Context, checkStatus func(context.Context) (bool, error)) (func(), error) {
 	registry, ok := worker.runtime.(*RenditionRuntimeRegistry)
 	if !ok {
 		return func() {}, nil
 	}
-	if err := registry.slots.acquire(ctx); err != nil {
+	if err := registry.slots.acquire(ctx, checkStatus); err != nil {
 		return nil, err
 	}
 	return registry.slots.release, nil
@@ -472,7 +463,11 @@ type renditionAdmissionWaiter struct {
 	granted bool
 }
 
-func (a *renditionAdmission) acquire(ctx context.Context) error {
+var errRenditionAdmissionSettled = errors.New("rendition job settled while waiting for admission")
+
+const renditionAdmissionPollInterval = 200 * time.Millisecond
+
+func (a *renditionAdmission) acquire(ctx context.Context, checkStatus func(context.Context) (bool, error)) error {
 	a.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		a.mu.Unlock()
@@ -486,29 +481,51 @@ func (a *renditionAdmission) acquire(ctx context.Context) error {
 	w := &renditionAdmissionWaiter{ready: make(chan struct{})}
 	a.waiters = append(a.waiters, w)
 	a.mu.Unlock()
-	select {
-	case <-w.ready:
-		if err := ctx.Err(); err != nil {
-			a.release()
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-		a.mu.Lock()
-		if w.granted {
-			a.mu.Unlock()
-			a.release()
-		} else {
-			for i, queued := range a.waiters {
-				if queued == w {
-					a.waiters = slices.Delete(a.waiters, i, i+1)
-					break
-				}
-			}
-			a.mu.Unlock()
-		}
-		return ctx.Err()
+	var ticks <-chan time.Time
+	if checkStatus != nil {
+		ticker := time.NewTicker(renditionAdmissionPollInterval)
+		defer ticker.Stop()
+		ticks = ticker.C
 	}
+	for {
+		select {
+		case <-w.ready:
+			if err := ctx.Err(); err != nil {
+				a.release()
+				return err
+			}
+			return nil
+		case <-ctx.Done():
+			a.withdraw(w)
+			return ctx.Err()
+		case <-ticks:
+			settled, err := checkStatus(ctx)
+			if err != nil || settled {
+				a.withdraw(w)
+				if err != nil {
+					return err
+				}
+				return errRenditionAdmissionSettled
+			}
+		}
+	}
+}
+
+// withdraw also returns a slot granted while a status check was in flight.
+func (a *renditionAdmission) withdraw(w *renditionAdmissionWaiter) {
+	a.mu.Lock()
+	if w.granted {
+		a.mu.Unlock()
+		a.release()
+		return
+	}
+	for i, queued := range a.waiters {
+		if queued == w {
+			a.waiters = slices.Delete(a.waiters, i, i+1)
+			break
+		}
+	}
+	a.mu.Unlock()
 }
 
 func (a *renditionAdmission) release() {

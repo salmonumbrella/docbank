@@ -1257,7 +1257,14 @@ func (service *Service) runRenditionJob(ctx context.Context, jobID, waiterID str
 		return renditionRun{}, err
 	}
 	for {
-		_, err := worker.runJob(ctx, jobID, true)
+		_, err := worker.runJob(ctx, jobID, func(ctx context.Context) (bool, error) {
+			current, err := service.catalog.RenditionJobByID(ctx, jobID)
+			if err != nil {
+				return false, err
+			}
+			return current.State == store.RenditionJobCompleted || current.State == store.RenditionJobFailed ||
+				current.State == store.RenditionJobOperatorRequired, nil
+		})
 		current, statusErr := service.catalog.RenditionJobByID(ctx, jobID)
 		if statusErr != nil {
 			return renditionRun{}, errors.Join(err, statusErr)
