@@ -235,6 +235,8 @@ func (s *Store) SealPhotoExportPlan(ctx context.Context, owner string, r bundle.
 	if err := validatePhotoPlanRequest(&r); err != nil {
 		return bundle.Plan{}, err
 	}
+	var sourceRequest bundle.SourceRequest
+	var sourceLoaded bool
 	prepared := make(map[string]preparedExportRole, len(artifacts))
 	for _, a := range artifacts {
 		role, err := a.role()
@@ -242,13 +244,16 @@ func (s *Store) SealPhotoExportPlan(ctx context.Context, owner string, r bundle.
 			return bundle.Plan{}, err
 		}
 		prepared[a.Receipt.Source.VersionID] = preparedExportRole{SHA256: a.SHA256, Size: a.Size, Physical: a.Physical, Role: role, embedded: a.Receipt.EmbeddedPreview, check: func(ctx context.Context, tx *sql.Tx, m bundle.Member) (bundle.Document, error) {
-			source, err := loadExportSource(ctx, tx, owner, r.SourceID)
-			if err != nil {
-				return bundle.Document{}, err
-			}
-			sourceRequest, err := photoExportSourceRequest(ctx, tx, source)
-			if err != nil {
-				return bundle.Document{}, err
+			if !sourceLoaded {
+				source, err := loadExportSource(ctx, tx, owner, r.SourceID)
+				if err != nil {
+					return bundle.Document{}, err
+				}
+				sourceRequest, err = photoExportSourceRequest(ctx, tx, source)
+				if err != nil {
+					return bundle.Document{}, err
+				}
+				sourceLoaded = true
 			}
 			input, err := s.exportPhotoInput(ctx, tx, m, sourceRequest.Photos, r.PhotoRender.IncludeMetadata)
 			if err != nil {

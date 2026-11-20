@@ -2,6 +2,7 @@
 package okf
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 )
 
+const descriptionScanBytes = 64 << 10
 const maxHeaderBytes = 256 << 10
 const maxTags = 256
 const maxTagBytes = 16 << 10
@@ -102,6 +104,17 @@ func Render(h Header, body []byte) ([]byte, error) {
 
 // Description selects the first ordinary paragraph, folded and rune-bounded.
 func Description(body []byte) string {
+	if len(body) > descriptionScanBytes {
+		cut := descriptionScanBytes
+		if boundary := bytes.LastIndex(body[:cut], []byte("\n\n")); boundary >= 0 {
+			cut = boundary
+		} else {
+			for cut > 0 && !utf8.RuneStart(body[cut]) {
+				cut--
+			}
+		}
+		body = body[:cut]
+	}
 	root := parser.New(parser.WithExtensions(extension.NewGFMParser())).Parse(body)
 	for paragraph := root.FirstChild(); paragraph != nil; paragraph = paragraph.NextSibling() {
 		if paragraph.Kind() != ast.KindParagraph {

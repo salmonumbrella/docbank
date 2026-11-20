@@ -41,11 +41,16 @@ positive `revision`. Add the observed rendition selector:
 }
 ```
 
-Obtain these three identities from the rendition text receipt. Preview, start,
+Call the authenticated `POST /api/v1/renditions/text` endpoint with the selected
+node ID, revision, version ID, blob hash, size and processing profile. From its
+receipt, use `profile.fingerprint` as `profile_fingerprint`, together with
+`attachment_id` and `build_id`. Preview, start,
 download and release use the same commands as an original export. Preview
 freezes one `reference.md` concept and copies the retained Markdown body without
 changes. The header contains a title, an excerpt when available, committed
-tags, and a source link. The title uses the retained rendition title when
+tags, and a source link. The description uses the first 64 KiB of retained
+Markdown and is omitted when that portion has no usable prose. The title uses
+the retained rendition title when
 present, otherwise the document name. Exports refuse more than 256 tags or
 16 KiB of tag IDs and names; the header separately limits tag names to 16 KiB.
 When the retained execution snapshot, selected profile and processing receipt substantiate the producer, `generated` contains `process:<provider id>` and its completion time. Otherwise it is omitted; no package version is inferred.

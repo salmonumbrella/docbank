@@ -152,3 +152,33 @@ func TestReview3DescriptionAfterNonProse(t *testing.T) {
 		})
 	}
 }
+
+func TestDescriptionScanBound(t *testing.T) {
+	late := []byte(strings.Repeat("![image](https://example.invalid/i)\n\n", 2000) + "Late prose.\n")
+	if len(late) <= descriptionScanBytes {
+		t.Fatal("fixture must exceed scan bound")
+	}
+	if got := Description(late); got != "" {
+		t.Fatalf("description beyond scan bound = %q", got)
+	}
+	partial := []byte("![image](https://example.invalid/i)\n\n" + strings.Repeat("x", descriptionScanBytes))
+	if got := Description(partial); got != "" {
+		t.Fatalf("partial paragraph included = %q", got)
+	}
+	straddled := []byte("First paragraph.\n\n" + strings.Repeat("x", descriptionScanBytes))
+	if got := Description(straddled); got != "First paragraph." {
+		t.Fatalf("description before block boundary = %q", got)
+	}
+	multi := []byte(strings.Repeat("界", descriptionScanBytes/3+2))
+	if got := Description(multi); got != strings.Repeat("界", 280) {
+		t.Fatalf("multibyte description = %q", got)
+	}
+	rendered, err := Render(Header{Title: "Synthetic", Resource: "https://example.invalid"}, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := bytes.Index(rendered[4:], []byte("\n---\n"))
+	if end < 0 || !bytes.Equal(rendered[end+9:], late) {
+		t.Fatal("render changed body beyond scan bound")
+	}
+}
