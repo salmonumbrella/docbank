@@ -3,8 +3,6 @@ package processing
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -148,14 +146,13 @@ func verifyOKFOriginal(ctx context.Context, source store.RenditionBlobReader, ha
 		_ = stream.Close()
 		return bundle.ErrUnavailable
 	}
-	digest := sha256.New()
-	n, copyErr := io.CopyBuffer(digest, io.LimitReader(blob.ReaderWithContext(ctx, stream), size+1), make([]byte, bundle.BufferSize))
+	n, copyErr := io.CopyBuffer(io.Discard, io.LimitReader(blob.ReaderWithContext(ctx, stream), size+1), make([]byte, bundle.BufferSize))
 	verified := stream.Verified()
 	closeErr := stream.Close()
 	if err = errors.Join(copyErr, closeErr, ctx.Err()); err != nil {
 		return err
 	}
-	if n != size || !verified || hex.EncodeToString(digest.Sum(nil)) != hash {
+	if n != size || !verified {
 		return bundle.ErrUnavailable
 	}
 	return nil

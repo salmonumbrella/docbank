@@ -243,3 +243,14 @@ func TestReview4ListOnlyRenditionExcerpt(t *testing.T) {
 		}
 	}
 }
+
+func TestReview5InvisibleAndReference(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"\u200b\u200d\n\nVisible prose.\n", "Visible prose."},
+		{"Family 👩‍👩‍👦 text.\n", "Family 👩‍👩‍👦 text."},
+	} {
+		if got := Description([]byte(tc.body)); got != tc.want {
+			t.Errorf("%q: got %q want %q", tc.body, got, tc.want)
+		}
+	}
+}

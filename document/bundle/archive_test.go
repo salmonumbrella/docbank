@@ -122,7 +122,7 @@ func TestOKFPlanRejectsNullOption(t *testing.T) {
 	require.Error(t, json.Unmarshal([]byte(`{"okf":null}`), &request, json.RejectUnknownMembers(true)))
 }
 
-// olderPlan mirrors the main-branch archive reader's strict plan schema.
+// olderPlan mirrors the strict archive reader's plan schema at main a1e8c148b.
 type olderPlan struct {
 	EmbeddedPreviews int                 `json:"embedded_previews,omitzero"`
 	PhotoRender      *PhotoRenderProfile `json:"photo_render,omitzero"`

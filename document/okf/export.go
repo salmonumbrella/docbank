@@ -139,6 +139,7 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 	count := 0
 	space := false
 	hasHTML := false
+	visible := false
 	_ = ast.Walk(paragraph, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -170,6 +171,9 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 			if count >= 280 {
 				break
 			}
+			if !unicode.Is(unicode.Cf, r) {
+				visible = true
+			}
 			result.WriteRune(r)
 			count++
 		}
@@ -178,7 +182,7 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 		}
 		return ast.WalkContinue, nil
 	})
-	if hasHTML {
+	if hasHTML || !visible {
 		return ""
 	}
 	return strings.TrimSpace(result.String())

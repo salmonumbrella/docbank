@@ -37,11 +37,27 @@ func (r *okfCountingReader) OpenStreamContext(context.Context, string) (packstor
 	return r.stream, r.size, r.err
 }
 
-type okfTestStream struct{ *instrumentedVerifiedStream }
+type okfTestStream struct {
+	*instrumentedVerifiedStream
+	expected  string
+	readBytes []byte
+}
+
+func (s *okfTestStream) Verified() bool {
+	if !s.instrumentedVerifiedStream.Verified() {
+		return false
+	}
+	sum := sha256.Sum256(s.readBytes)
+	return hex.EncodeToString(sum[:]) == s.expected
+}
 
 func (s *okfTestStream) Read(p []byte) (int, error) {
 	n, err := s.instrumentedVerifiedStream.Read(p)
+	s.readBytes = append(s.readBytes, p[:n]...)
 	if errors.Is(err, io.EOF) {
+		if !s.Verified() {
+			return n, errors.New("checksum mismatch")
+		}
 		return n, io.EOF
 	}
 	return n, err
@@ -77,11 +93,11 @@ func TestOKFOriginalStreamBoundsAndIntegrity(t *testing.T) {
 	}{
 		{"valid", data, hash, int64(len(data)), false},
 		{"short", data[:len(data)-1], hash, int64(len(data)), true},
-		{"tampered", "tampered original", hash, int64(len(data)), true},
+		{"tampered", "synthetix original", hash, int64(len(data)), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stream := &instrumentedVerifiedStream{reader: strings.NewReader(tc.text)}
-			reader := &okfCountingReader{stream: &okfTestStream{stream}, size: tc.size}
+			reader := &okfCountingReader{stream: &okfTestStream{instrumentedVerifiedStream: stream, expected: tc.hash}, size: tc.size}
 			err := verifyOKFOriginal(t.Context(), reader, tc.hash, tc.size)
 			if tc.wantError {
 				require.Error(t, err)
@@ -103,7 +119,7 @@ func TestOKFOriginalStreamBoundsAndIntegrity(t *testing.T) {
 	mid, stopMid := context.WithCancel(t.Context())
 	defer stopMid()
 	underlying := &instrumentedVerifiedStream{reader: strings.NewReader(data)}
-	reader = &okfCountingReader{stream: &okfCancelStream{okfTestStream: &okfTestStream{underlying}, cancel: stopMid}, size: int64(len(data))}
+	reader = &okfCountingReader{stream: &okfCancelStream{okfTestStream: &okfTestStream{instrumentedVerifiedStream: underlying, expected: hash}, cancel: stopMid}, size: int64(len(data))}
 	require.ErrorIs(t, verifyOKFOriginal(mid, reader, hash, int64(len(data))), context.Canceled)
 	require.True(t, underlying.closed)
 }

@@ -61,7 +61,7 @@ ZIP's manifest and metadata CSV always disclose the original identity, name,
 path and SHA-256 regardless of that setting.
 
 A retry with the same operation IDs returns the frozen plan. Changes to the
-selected source or rendition before sealing cause a conflict. Failed preparation
+selected source or rendition before sealing cause a conflict. Very large originals on slow storage can exceed the five-minute preparation deadline. Failed preparation
 removes its newly created unreferenced output; if the process crashes between
 writing and sealing, ordinary garbage collection reclaims the interrupted write.
 Legacy renditions without the supported native envelope must be reprocessed.
