@@ -24,7 +24,7 @@ separate owners. Restarting an MCP process grants no independent allowance.
 
 ## Exact selection and preview
 
-MCP previews create an explicit source, then an originals-only plan. CLI previews also accept a photo rendering profile and a Photos scope.
+MCP previews create an explicit source, then an originals-only plan. CLI previews also accept a photo rendering profile and a Photos scope, or one `okf_markdown` role with an exact rendition selector.
 They accept up to 1,000 node/version pairs without expanding folders,
 attachments, or families. Multiple retained versions of one node are valid;
 duplicate pairs are not. Historical versions need not be current, but the node

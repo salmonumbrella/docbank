@@ -271,5 +271,13 @@ func TestOKFExportRequestAndPreview(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, writeExportPreview(&out, bundle.Plan{OKF: request.OKF, Total: 1}))
 	require.Contains(t, out.String(), "1 OKF concept")
-	require.Contains(t, out.String(), "source digest disclosed: no")
+	require.Contains(t, out.String(), "header source SHA-256 disclosed: no")
+}
+
+func TestOKFNullPreviewDoesNotSelectOriginal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "request.json")
+	raw := fmt.Sprintf(`{"source_operation_id":%q,"plan_operation_id":%q,"members":[{"node_id":1,"version_id":%q,"sha256":%q,"size":1}],"okf":null}`, uuid.New().String(), uuid.New().String(), uuid.New().String(), strings.Repeat("a", 64))
+	require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
+	_, err := readExportRequest(path)
+	require.Error(t, err)
 }

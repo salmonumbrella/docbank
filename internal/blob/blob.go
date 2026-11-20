@@ -626,6 +626,17 @@ func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, e
 // representation. The caller holds a mutation lease across the subsequent
 // metadata transaction.
 func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteReceipt, error) {
+	receipt, err := s.WriteDetailedWithPublicationContext(ctx, r)
+	if err != nil {
+		return WriteReceipt{}, err
+	}
+	return receipt, nil
+}
+
+// WriteDetailedWithPublicationContext reports a newly published loose object even
+// when its durability sync fails. On error, the receipt is only for cleanup;
+// callers must not treat the write as successful or publish it in metadata.
+func (s *Store) WriteDetailedWithPublicationContext(ctx context.Context, r io.Reader) (WriteReceipt, error) {
 	if err := ctx.Err(); err != nil {
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
@@ -649,6 +660,9 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 		}
 		result, err := s.loose.WriteBytes(ctx, head, opts)
 		if err != nil {
+			if result.Created {
+				return writeReceipt(result), fmt.Errorf("writing blob: %w", err)
+			}
 			return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 		}
 		receipt := writeReceipt(result)
@@ -662,6 +676,9 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
 	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), opts)
 	if err != nil {
+		if result.Created {
+			return writeReceipt(result), fmt.Errorf("writing blob: %w", err)
+		}
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
 	receipt := writeReceipt(result)

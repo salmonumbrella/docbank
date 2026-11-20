@@ -681,3 +681,34 @@ func TestWriteRefusesInvalidExistingObject(t *testing.T) {
 	_, _, err = bs.WriteContext(t.Context(), strings.NewReader(content))
 	require.Error(t, err)
 }
+
+func TestWriteDetailedPublicationReceiptOnSyncFailure(t *testing.T) {
+	for _, content := range []string{"synthetic small", strings.Repeat("synthetic streamed ", 5000)} {
+		t.Run(fmt.Sprintf("bytes-%d", len(content)), func(t *testing.T) {
+			bs := newTestBlobStore(t)
+			sum := sha256.Sum256([]byte(content))
+			hash := hex.EncodeToString(sum[:])
+			require.NoError(t, os.MkdirAll(filepath.Join(bs.dir, hash[:2]), 0700))
+			original := pack.SyncDir
+			pack.SyncDir = func(path string) error {
+				if path == filepath.Join(bs.dir, hash[:2]) {
+					return errors.New("synthetic sync failure")
+				}
+				return original(path)
+			}
+			t.Cleanup(func() { pack.SyncDir = original })
+			receipt, err := bs.WriteDetailedWithPublicationContext(t.Context(), strings.NewReader(content))
+			require.ErrorContains(t, err, "sync")
+			require.True(t, receipt.Created)
+			require.Equal(t, hash, receipt.Hash)
+			require.EqualValues(t, len(content), receipt.Size)
+			legacy, err := bs.WriteDetailedContext(t.Context(), strings.NewReader(content))
+			require.ErrorContains(t, err, "sync")
+			require.Equal(t, WriteReceipt{}, legacy)
+			retry, err := bs.WriteDetailedWithPublicationContext(t.Context(), strings.NewReader(content))
+			require.ErrorContains(t, err, "sync")
+			require.False(t, retry.Created)
+			require.Empty(t, retry.Hash)
+		})
+	}
+}

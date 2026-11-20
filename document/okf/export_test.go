@@ -9,7 +9,7 @@ import (
 )
 
 func TestRenderOKFBodyAndStrings(t *testing.T) {
-	body := []byte("# Heading\r\n\r\nRevenue was 120 units.  \r\n---\r\n")
+	body := []byte("# Heading\r\n\r\nRevenue was 120 units.  \r\n\r\n---\r\n")
 	got, err := Render(Header{Title: "true", Resource: "https://example.invalid/original", SourceTitle: "0012", Tags: []string{"null", "<b>"}}, body)
 	if err != nil {
 		t.Fatal(err)
@@ -68,5 +68,63 @@ func TestDescriptionSkipsHTMLBlock(t *testing.T) {
 	body := []byte("<div>\nnot prose\n</div>\n\nReal   paragraph\ncontinues here.\n")
 	if got := Description(body); got != "Real paragraph continues here." {
 		t.Fatalf("description = %q", got)
+	}
+}
+
+func TestDescriptionMarkdownProse(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{"````\n```\nsecret code\n````\n\nActual **prose** with [link](https://example.invalid) &amp; escape\\.\n", "Actual prose with link & escape."},
+		{"    indented code\n\nOrdinary text\n", "Ordinary text"},
+		{"````\n```\ncode\n````\n", ""},
+	}
+	for _, tc := range cases {
+		if got := Description([]byte(tc.body)); got != tc.want {
+			t.Errorf("got %q want %q", got, tc.want)
+		}
+	}
+}
+
+func TestOKFEmptyAndEscaping(t *testing.T) {
+	h := Header{Title: "<b>", Resource: "https://example.invalid", Tags: []string{"true", "null", "0012", "1e3", ": x"}, Generated: &Generated{By: "producer/version", At: "2026-01-01T00:00:00Z"}}
+	got, err := Render(h, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := bytes.Index(got[4:], []byte("\n---\n"))
+	if end < 0 {
+		t.Fatal("missing delimiter")
+	}
+	end += 4
+	if len(got[end+5:]) != 0 {
+		t.Fatal("empty body changed")
+	}
+	var value yaml.Node
+	if err := yaml.Unmarshal(got[4:end], &value); err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Content) != 1 || value.Content[0].Kind != yaml.MappingNode {
+		t.Fatal("not a mapping")
+	}
+	seen := map[string]bool{}
+	for i := 0; i < len(value.Content[0].Content); i += 2 {
+		k := value.Content[0].Content[i].Value
+		if seen[k] {
+			t.Fatalf("duplicate %q", k)
+		}
+		seen[k] = true
+	}
+	if !strings.Contains(string(got), `by: "producer/version"`) {
+		t.Fatal("actor missing")
+	}
+}
+
+func TestOKFTagNameByteLimit(t *testing.T) {
+	h := Header{Title: "Synthetic", Resource: "https://example.invalid", Tags: []string{strings.Repeat("x", 16<<10)}}
+	if _, err := Render(h, nil); err != nil {
+		t.Fatal(err)
+	}
+	h.Tags[0] += "x"
+	if _, err := Render(h, nil); err == nil || !strings.Contains(err.Error(), "tag names") {
+		t.Fatalf("error = %v", err)
 	}
 }

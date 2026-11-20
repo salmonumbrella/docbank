@@ -1,10 +1,13 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,7 +16,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -180,7 +187,62 @@ func TestOKFExportPlanSchema(t *testing.T) {
 	option := map[string]any{"profile_fingerprint": strings.Repeat("a", 64), "attachment_id": strings.Repeat("b", 64), "build_id": strings.Repeat("c", 64)}
 	properties := retainedExportPlanSchema()["properties"].(schema)
 	assertSchemaAccepts(t, properties["okf"], option)
+	option["extra"] = true
+	assertSchemaRejects(t, properties["okf"], option)
+	delete(option, "extra")
 	delete(option, "build_id")
 	assertSchemaRejects(t, properties["okf"], option)
 	assertSchemaAccepts(t, exportRoleSchema(), "okf_markdown")
+}
+
+//nolint:paralleltest // PDFium uses process-wide resources.
+func TestOKFExportPlanInspectionFromAPI(t *testing.T) {
+	f := newNativeExportFixture(t)
+	gate := api.NewOperationGate()
+	name, profile, err := processing.NewPDFTextProfile()
+	require.NoError(t, err)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "spool"), 0700))
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: gate, SpoolDirectory: filepath.Join(root, "spool"), Profiles: map[string]processing.ProfileConfig{name: profile}})
+	require.NoError(t, err)
+	t.Cleanup(service.Stop)
+	runner := &processing.PDFTextRunner{Service: service}
+	require.NoError(t, runner.Initialize(t.Context()))
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-export-key"
+	cfg.Web.PublicOrigin = "https://archive.example.invalid"
+	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs, VaultRoot: root, Cfg: cfg, Gate: gate, Processing: service, PDFText: runner})
+	t.Cleanup(daemon.Close)
+	httpServer := httptest.NewServer(daemon.Handler())
+	t.Cleanup(httpServer.Close)
+	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	data, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
+	require.NoError(t, err)
+	hash, size, err := f.blobs.WriteContext(t.Context(), bytes.NewReader(data))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "synthetic.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name}
+	processingPlan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: processingPlan.Fingerprint})
+	require.NoError(t, err)
+	versionID, err := uuid.Parse(node.CurrentVersionID)
+	require.NoError(t, err)
+	observed, err := connection.API().ResolveRenditionText(t.Context(), &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.RenditionTextRequest{NodeID: node.ID, Revision: node.Revision, VersionID: versionID, BlobHash: hash, Size: size, Profile: &name}})
+	require.NoError(t, err)
+	member := bundle.Member{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: hash, Size: size, Revision: node.Revision}
+	source, err := connection.API().CreateExportSource(t.Context(), &apiclient.CreateExportSourceRequestOptions{Body: &bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}})
+	require.NoError(t, err)
+	plan, err := connection.API().CreateExportPlan(t.Context(), &apiclient.CreateExportPlanRequestOptions{Body: &bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: observed.Profile.Fingerprint, AttachmentID: observed.AttachmentID, BuildID: observed.BuildID}}})
+	require.NoError(t, err)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
+	output := exportCall(t, server, "get_export_plan", map[string]any{"plan_id": plan.ID})
+	raw, err := json.Marshal(output["plan"])
+	require.NoError(t, err)
+	var got bundle.Plan
+	require.NoError(t, json.Unmarshal(raw, &got))
+	require.Equal(t, *plan, got)
+	require.Equal(t, "private", output["cacheScope"])
 }

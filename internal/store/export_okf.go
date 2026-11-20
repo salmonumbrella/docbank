@@ -103,7 +103,7 @@ func (s *Store) exportOKFInput(ctx context.Context, q metadataQuerier, m bundle.
 		}
 		bytes += len(tag.ID) + len(tag.Name)
 		if len(input.Tags) >= 256 || bytes > 16<<10 {
-			return bundle.ErrLimit
+			return fmt.Errorf("%w: OKF tags exceed 256 entries or 16 KiB of tag IDs and names", bundle.ErrLimit)
 		}
 		input.Tags = append(input.Tags, tag)
 		return nil

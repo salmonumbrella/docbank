@@ -120,3 +120,15 @@ func TestOKFPlanRejectsNullOption(t *testing.T) {
 	var request PlanRequest
 	require.Error(t, json.Unmarshal([]byte(`{"okf":null}`), &request, json.RejectUnknownMembers(true)))
 }
+
+func TestOKFOlderStrictReaderRejectsPlan(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	p := Plan{OKF: &OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}}
+	raw, err := json.Marshal(p)
+	require.NoError(t, err)
+	type olderPlan struct {
+		Format string `json:"format"`
+	}
+	var old olderPlan
+	require.Error(t, json.Unmarshal(raw, &old, json.RejectUnknownMembers(true)))
+}

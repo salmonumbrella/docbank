@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -44,6 +45,13 @@ func readExportRequest(path string) (exportPreviewRequest, error) {
 	}
 	if len(raw) > 1<<20 {
 		return request, usageError(errors.New("request JSON exceeds 1 MiB"))
+	}
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return request, usageError(fmt.Errorf("invalid export request JSON: %w", err))
+	}
+	if value, ok := fields["okf"]; ok && value.Kind() == 'n' {
+		return request, usageError(errors.New("okf must not be null"))
 	}
 	if err := json.Unmarshal(raw, &request, json.RejectUnknownMembers(true)); err != nil {
 		return request, usageError(fmt.Errorf("invalid export request JSON: %w", err))

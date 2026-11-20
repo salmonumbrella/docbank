@@ -61,46 +61,21 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 		return plan, fmt.Errorf("%w: retained artifact cannot be verified", bundle.ErrUnavailable)
 	}
 	front, body, err := document.ParseRenditionFrontMatterV1(artifact)
-	if len(artifact) == 0 && len(input.Build.LexicalSegments) == 0 && input.MediaType == "application/pdf" {
-		body = artifact
-		err = nil
-		front.Source.SHA256 = input.Member.SHA256
-		front.Rendition.BuildID = request.OKF.BuildID
-		front.Rendition.RenditionRequestFingerprint = input.Build.RenditionRequestFingerprint
-		front.Rendition.EvidenceLexicalFingerprint = input.Build.EvidenceLexicalFingerprint
-	}
 	if err != nil {
 		return plan, fmt.Errorf("%w: reprocess to export OKF", bundle.ErrUnavailable)
 	}
 	if front.Source.SHA256 != input.Member.SHA256 || front.Rendition.BuildID != request.OKF.BuildID || front.Rendition.RenditionRequestFingerprint != input.Build.RenditionRequestFingerprint || front.Rendition.EvidenceLexicalFingerprint != input.Build.EvidenceLexicalFingerprint {
 		return plan, bundle.ErrConflict
 	}
-	if input.Member.Size < 0 || input.Member.Size > bundle.MaxRoleBytes {
-		return plan, bundle.ErrLimit
-	}
-	stream, size, err := blobs.OpenStreamContext(ctx, input.Member.SHA256)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return plan, err
-		}
-		return plan, fmt.Errorf("%w: original cannot be verified", bundle.ErrUnavailable)
-	}
-	if size != input.Member.Size {
-		_ = stream.Close()
-		return plan, bundle.ErrUnavailable
-	}
-	digest := sha256.New()
-	n, copyErr := io.CopyBuffer(digest, io.LimitReader(stream, size+1), make([]byte, bundle.BufferSize))
-	verified := stream.Verified()
-	closeErr := stream.Close()
-	if err = errors.Join(copyErr, closeErr, ctx.Err()); err != nil {
+	if err := verifyOKFOriginal(ctx, blobs, input.Member.SHA256, input.Member.Size); err != nil {
 		return plan, err
 	}
-	if n != size || !verified || hex.EncodeToString(digest.Sum(nil)) != input.Member.SHA256 {
-		return plan, bundle.ErrUnavailable
-	}
 	resource := fmt.Sprintf("%s/api/v1/versions/%s/content", origin, input.Member.VersionID)
-	header := okf.Header{Title: input.Name, SourceTitle: input.Name, Resource: resource}
+	title := input.Name
+	if front.Document.Title != "" {
+		title = front.Document.Title
+	}
+	header := okf.Header{Title: title, SourceTitle: input.Name, Resource: resource}
 	tags := make([]string, 0, len(input.Tags))
 	for _, tag := range input.Tags {
 		tags = append(tags, tag.Name)
@@ -152,12 +127,12 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 			if _, e := stage.File.Seek(0, io.SeekStart); e != nil {
 				return e
 			}
-			written, e := blobs.WriteDetailedContext(ctx, stage.File)
+			written, e := blobs.WriteDetailedWithPublicationContext(ctx, stage.File)
+			created = written.Created
+			a.SHA256, a.Size = written.Hash, written.Size
 			if e != nil {
 				return e
 			}
-			created = written.Created
-			a.SHA256, a.Size = written.Hash, written.Size
 			encoding, e := written.EncodingName()
 			if e != nil {
 				return e
@@ -185,4 +160,35 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 		err = errors.Join(err, cleanupErr)
 	}
 	return plan, err
+}
+
+func verifyOKFOriginal(ctx context.Context, source store.RenditionBlobReader, hash string, size int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if size < 0 || size > bundle.MaxRoleBytes {
+		return bundle.ErrLimit
+	}
+	stream, actualSize, err := source.OpenStreamContext(ctx, hash)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("%w: original cannot be verified", bundle.ErrUnavailable)
+	}
+	if actualSize != size {
+		_ = stream.Close()
+		return bundle.ErrUnavailable
+	}
+	digest := sha256.New()
+	n, copyErr := io.CopyBuffer(digest, io.LimitReader(blob.ReaderWithContext(ctx, stream), size+1), make([]byte, bundle.BufferSize))
+	verified := stream.Verified()
+	closeErr := stream.Close()
+	if err = errors.Join(copyErr, closeErr, ctx.Err()); err != nil {
+		return err
+	}
+	if n != size || !verified || hex.EncodeToString(digest.Sum(nil)) != hash {
+		return bundle.ErrUnavailable
+	}
+	return nil
 }

@@ -2,11 +2,14 @@
 package okf
 
 import (
-	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
@@ -30,15 +33,21 @@ func quote(s string) string { return yamlEscaper.Replace(strconv.Quote(s)) }
 
 // Render emits one YAML header followed by the exact retained body bytes.
 func Render(h Header, body []byte) ([]byte, error) {
-	if len(body) > document.MaxRenditionMarkdownBytes || len(h.Tags) > maxTags {
+	if len(body) > document.MaxRenditionMarkdownBytes {
 		return nil, bundle.ErrLimit
+	}
+	if len(h.Tags) > maxTags {
+		return nil, fmt.Errorf("%w: OKF tags exceed 256 entries", bundle.ErrLimit)
 	}
 	size := len(h.Title) + len(h.Resource) + len(h.SourceTitle) + len(h.SourceSHA256)
 	tagBytes := 0
 	for _, tag := range h.Tags {
 		tagBytes += len(tag)
 	}
-	if tagBytes > maxTagBytes || size+tagBytes > maxHeaderBytes {
+	if tagBytes > maxTagBytes {
+		return nil, fmt.Errorf("%w: OKF tag names exceed 16 KiB", bundle.ErrLimit)
+	}
+	if size+tagBytes > maxHeaderBytes {
 		return nil, bundle.ErrLimit
 	}
 	if h.Title == "" || h.Resource == "" || !utf8.ValidString(h.Title) || !utf8.ValidString(h.Resource) {
@@ -93,82 +102,65 @@ func Render(h Header, body []byte) ([]byte, error) {
 
 // Description selects the first ordinary paragraph, folded and rune-bounded.
 func Description(body []byte) string {
+	root := parser.New(parser.WithExtensions(extension.NewGFMParser())).Parse(body)
+	var paragraph ast.Node
+	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
+		if n.Kind() == ast.KindParagraph {
+			hasHTML := false
+			_ = ast.Walk(n, func(child ast.Node, entering bool) (ast.WalkStatus, error) {
+				if entering && child.Kind() == ast.KindRawHTML {
+					hasHTML = true
+					return ast.WalkStop, nil
+				}
+				return ast.WalkContinue, nil
+			})
+			if !hasHTML {
+				paragraph = n
+				break
+			}
+		}
+	}
+	if paragraph == nil {
+		return ""
+	}
 	var result strings.Builder
-	var count int
-	var pendingSpace, html bool
-	fence := ""
-	started := false
-	for len(body) > 0 {
-		line := body
-		if n := bytes.IndexByte(body, '\n'); n >= 0 {
-			line, body = body[:n], body[n+1:]
-		} else {
-			body = nil
+	count := 0
+	space := false
+	_ = ast.Walk(paragraph, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
 		}
-		line = bytes.TrimSpace(line)
-		if html {
-			if len(line) == 0 {
-				html = false
-			}
-			continue
+		switch n.Kind() {
+		case ast.KindRawHTML, ast.KindCodeSpan, ast.KindImage:
+			return ast.WalkSkipChildren, nil
 		}
-		if fence != "" {
-			if bytes.HasPrefix(line, []byte(fence)) {
-				fence = ""
-			}
-			continue
+		value, ok := n.(*ast.Text)
+		if !ok {
+			return ast.WalkContinue, nil
 		}
-		if len(line) == 0 {
-			if started {
-				break
-			}
-			continue
-		}
-		if bytes.HasPrefix(line, []byte("```")) || bytes.HasPrefix(line, []byte("~~~")) {
-			if started {
-				break
-			}
-			fence = string(line[:3])
-			continue
-		}
-		if line[0] == '<' {
-			if started {
-				break
-			}
-			html = true
-			continue
-		}
-		if line[0] == '#' || line[0] == '|' || bytes.HasPrefix(line, []byte("---")) {
-			if started {
-				break
-			}
-			continue
-		}
-		if started {
-			pendingSpace = true
-		}
-		started = true
-		for len(line) > 0 {
-			r, n := utf8.DecodeRune(line)
-			line = line[n:]
+		for _, r := range value.Value.Value(body) {
 			if unicode.IsSpace(r) {
-				pendingSpace = true
+				space = true
 				continue
 			}
-			if pendingSpace && count > 0 {
-				if count == 280 {
-					return result.String()
+			if space && count > 0 {
+				if count >= 280 {
+					return ast.WalkStop, nil
 				}
 				result.WriteByte(' ')
 				count++
 			}
-			pendingSpace = false
-			if count == 280 {
-				return strings.TrimSpace(result.String())
+			space = false
+			if count >= 280 {
+				return ast.WalkStop, nil
 			}
 			result.WriteRune(r)
 			count++
 		}
-	}
+		if value.SoftLineBreak() || value.HardLineBreak() {
+			space = true
+		}
+		return ast.WalkContinue, nil
+	})
 	return strings.TrimSpace(result.String())
 }

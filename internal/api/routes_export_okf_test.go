@@ -4,23 +4,33 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+	"unicode/utf8"
 
+	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/pack"
 	"uuid"
 )
 
@@ -49,14 +59,20 @@ func TestOKFExportSyntheticPDF(t *testing.T) {
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		runner = configureAutomaticPDFText(t, d)
 		d.Cfg.Web.PublicOrigin = "https://archive.example.invalid"
+		d.Cfg.Web.BasePath = "/archive"
 		d.Gate = api.NewOperationGate()
 		var err error
 		worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, d.Gate)
 		require.NoError(t, err)
 		d.Exports = worker
 	})
-	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
-	require.NoError(t, err)
+	syntheticPDF := fpdf.New("P", "pt", "Letter", "")
+	syntheticPDF.SetFont("Helvetica", "", 12)
+	syntheticPDF.AddPage()
+	syntheticPDF.Text(40, 60, "Synthetic caf\xe9 citation")
+	var pdfBuffer bytes.Buffer
+	require.NoError(t, syntheticPDF.Output(&pdfBuffer))
+	pdf := pdfBuffer.Bytes()
 	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
@@ -76,13 +92,40 @@ func TestOKFExportSyntheticPDF(t *testing.T) {
 		Build      string `json:"build_id"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &observed))
+	buildBefore, err := s.RenditionBuild(t.Context(), observed.Build)
+	require.NoError(t, err)
+	var nativeHash string
+	for _, a := range buildBefore.Artifacts {
+		if a.Role == "sanitized_markdown" {
+			nativeHash = a.BlobHash
+		}
+	}
+	require.NotEmpty(t, nativeHash)
+	nativeReader, _, err := s.Blobs.OpenStreamContext(t.Context(), nativeHash)
+	require.NoError(t, err)
+	nativeBefore, err := io.ReadAll(nativeReader)
+	require.NoError(t, err)
+	require.NoError(t, nativeReader.Close())
+	prefix, _, foundCitation := strings.Cut(string(nativeBefore), "é")
+	require.True(t, foundCitation, "synthetic rendition must contain multibyte text")
+	vaultID, err := uuid.Parse(s.VaultID())
+	require.NoError(t, err)
+	versionID, err := uuid.Parse(node.CurrentVersionID)
+	require.NoError(t, err)
+	start := utf8.RuneCountInString(prefix)
+	citation := document.TextCitation{Version: 1, VaultUID: vaultID, NodeID: node.ID, ContentVersionID: versionID, ContentSHA256: hash, RenditionAttachmentID: observed.Attachment, BuildID: observed.Build, RenditionSHA256: nativeHash, Start: start, End: start + 1}
+	citationResponse, citationBefore := do(t, ts, http.MethodPost, citationPath, nil, citation)
+	require.Equal(t, http.StatusOK, citationResponse.StatusCode, citationBefore)
+	var resolved document.ResolvedTextCitation
+	require.NoError(t, json.Unmarshal([]byte(citationBefore), &resolved))
+	require.Equal(t, "é", resolved.Text)
 	member := bundle.Member{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: hash, Size: size, Revision: node.Revision}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil, bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var source bundle.Source
 	require.NoError(t, json.Unmarshal([]byte(body), &source))
 	request := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: observed.Profile.Fingerprint, AttachmentID: observed.Attachment, BuildID: observed.Build}}
-	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, request)
+	response, body = do(t, ts, http.MethodPost, "/archive/api/v1/exports/plans", map[string]string{"Forwarded": "host=attacker.invalid", "X-Forwarded-Host": "attacker.invalid"}, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var plan bundle.Plan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
@@ -98,6 +141,16 @@ func TestOKFExportSyntheticPDF(t *testing.T) {
 	require.Contains(t, string(data), "type: \"Reference\"")
 	build, err := s.RenditionBuild(t.Context(), observed.Build)
 	require.NoError(t, err)
+	var frozen bundle.OKFReceipt
+	require.NoError(t, json.Unmarshal(docs[0].Roles[0].Recipe, &frozen))
+	require.NotNil(t, frozen.Generated)
+	require.Equal(t, "process:"+document.PDFTextProviderID, frozen.Generated.By)
+	generatedAt, err := time.Parse(time.RFC3339, frozen.Generated.At)
+	require.NoError(t, err)
+	completedAt, err := time.Parse(time.RFC3339, build.CompletedAt)
+	require.NoError(t, err)
+	require.True(t, generatedAt.Equal(completedAt))
+	require.NotContains(t, string(data), "x-docbank-sha256")
 	var artifact string
 	for _, a := range build.Artifacts {
 		if a.Role == "sanitized_markdown" {
@@ -115,8 +168,31 @@ func TestOKFExportSyntheticPDF(t *testing.T) {
 	end := bytes.Index(data[4:], []byte("\n---\n"))
 	require.GreaterOrEqual(t, end, 0)
 	require.Equal(t, nativeBody, data[end+9:])
+	require.Equal(t, nativeBefore, native)
+	citationResponse, citationAfter := do(t, ts, http.MethodPost, citationPath, nil, citation)
+	require.Equal(t, http.StatusOK, citationResponse.StatusCode, citationAfter)
+	require.JSONEq(t, citationBefore, citationAfter)
 
-	require.Contains(t, string(data), "https://archive.example.invalid/api/v1/versions/"+node.CurrentVersionID+"/content")
+	require.Contains(t, string(data), "https://archive.example.invalid/archive/api/v1/versions/"+node.CurrentVersionID+"/content")
+	disclosed := request
+	disclosed.OperationID = uuid.New().String()
+	copyOption := *request.OKF
+	copyOption.IncludeSourceSHA256 = true
+	disclosed.OKF = &copyOption
+	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, disclosed)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var disclosedPlan bundle.Plan
+	require.NoError(t, json.Unmarshal([]byte(body), &disclosedPlan))
+	require.NoError(t, s.WalkExportDocuments(t.Context(), disclosedPlan.ID, func(d bundle.Document) error {
+		r, _, e := s.Blobs.OpenStreamContext(t.Context(), d.Roles[0].SHA256)
+		require.NoError(t, e)
+		content, e := io.ReadAll(r)
+		require.NoError(t, e)
+		require.NoError(t, r.Close())
+		require.Contains(t, string(content), "x-docbank-sha256: \""+hash+"\"")
+		return nil
+	}))
+
 	client := daemonconn.New(ts.URL, testAPIKey).API()
 	job, err := client.CreateExportJob(t.Context(), &apiclient.CreateExportJobRequestOptions{Body: &bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint}})
 	require.NoError(t, err)
@@ -154,7 +230,7 @@ func TestOKFExportSyntheticPDF(t *testing.T) {
 	require.True(t, found)
 	newHash, newSize, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("new synthetic version")))
 	require.NoError(t, err)
-	_, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, newHash, newSize, "application/pdf")
+	updated, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision, newHash, newSize, "application/pdf")
 	require.NoError(t, err)
 	unauth, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/api/v1/versions/"+node.CurrentVersionID+"/content", nil)
 	require.NoError(t, err)
@@ -168,6 +244,19 @@ func TestOKFExportSyntheticPDF(t *testing.T) {
 	require.NotEmpty(t, response.Trailer.Get("Content-Digest"))
 	_, err = client.ReleaseExportJob(t.Context(), &apiclient.ReleaseExportJobRequestOptions{PathParams: &apiclient.ReleaseExportJobPath{ID: job.ID}})
 	require.NoError(t, err)
+	gate := api.NewOperationGate()
+	request.OperationID = uuid.New().String()
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = processing.PrepareOKFExportPlan(canceled, s.Store, s.Blobs, t.TempDir(), "master", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	require.ErrorIs(t, err, context.Canceled)
+	member.Revision = updated.Revision
+	freshSource, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
+	require.NoError(t, err)
+	request.SourceID, request.MemberHash = freshSource.ID, freshSource.MemberHash
+	require.NoError(t, s.Blobs.Remove(hash))
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, t.TempDir(), "master", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	require.ErrorIs(t, err, bundle.ErrUnavailable)
 
 }
 
@@ -213,8 +302,101 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		}))
 		return out
 	}
-	before := files()
 	spool := t.TempDir()
+	passthrough := func(_ context.Context, fn func() error) error { return fn() }
+	before := files()
+	injected := errors.New("synthetic publish failure")
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", request, "https://failure.example.invalid", func(context.Context, func() error) error { return injected }, passthrough)
+	require.ErrorIs(t, err, injected)
+	require.Equal(t, before, files())
+	entries, err := os.ReadDir(spool)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+	interrupted, stop := context.WithCancel(t.Context())
+	_, err = processing.PrepareOKFExportPlan(interrupted, s.Store, s.Blobs, spool, "owner", request, "https://failure.example.invalid", func(_ context.Context, fn func() error) error { stop(); return fn() }, passthrough)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, before, files())
+	entries, err = os.ReadDir(spool)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+	syncFailure := errors.New("synthetic shard sync failure")
+	originalSync := pack.SyncDir
+	writeFail := func(_ context.Context, fn func() error) error {
+		stages, e := os.ReadDir(spool)
+		require.NoError(t, e)
+		require.Len(t, stages, 1)
+		output, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
+		require.NoError(t, e)
+		digest := sha256.Sum256(output)
+		hash := hex.EncodeToString(digest[:])
+		shard := filepath.Join(s.BlobsDir, hash[:2])
+		require.NoError(t, os.MkdirAll(shard, 0700))
+		pack.SyncDir = func(path string) error {
+			if path == shard {
+				return syncFailure
+			}
+			return originalSync(path)
+		}
+		defer func() { pack.SyncDir = originalSync }()
+		return fn()
+	}
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", request, "https://failed-sync.example.invalid", writeFail, passthrough)
+	require.ErrorIs(t, err, syncFailure)
+	require.Equal(t, before, files(), "failed durable write must not leave a new loose blob")
+	entries, err = os.ReadDir(spool)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+	replayRequest := request
+	replayRequest.OperationID = uuid.New().String()
+	entered, release := make(chan struct{}), make(chan struct{})
+	type outcome struct {
+		plan bundle.Plan
+		err  error
+	}
+	outcomes := make(chan outcome, 2)
+	var publications atomic.Int32
+	firstSpool, secondSpool := t.TempDir(), t.TempDir()
+	firstPublish := func(_ context.Context, fn func() error) error {
+		publications.Add(1)
+		close(entered)
+		<-release
+		return fn()
+	}
+	secondPublish := func(_ context.Context, fn func() error) error { publications.Add(1); return fn() }
+	go func() {
+		p, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, firstSpool, "owner", replayRequest, "https://replay.example.invalid", firstPublish, passthrough)
+		outcomes <- outcome{p, e}
+	}()
+	<-entered
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		p, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, secondSpool, "owner", replayRequest, "https://replay.example.invalid", secondPublish, passthrough)
+		outcomes <- outcome{p, e}
+	}()
+	<-started
+	close(release)
+	first, second := <-outcomes, <-outcomes
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.Equal(t, first.plan, second.plan)
+	require.EqualValues(t, 1, publications.Load())
+	existingRequest := request
+	existingRequest.OperationID = uuid.New().String()
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", existingRequest, "https://existing.example.invalid", passthrough, passthrough)
+	require.NoError(t, err)
+	existing := files()
+	retry := request
+	retry.OperationID = uuid.New().String()
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", retry, "https://existing.example.invalid", func(_ context.Context, fn func() error) error {
+		if e := fn(); e != nil {
+			return e
+		}
+		return injected
+	}, passthrough)
+	require.ErrorIs(t, err, injected)
+	require.Equal(t, existing, files(), "a previously rooted identical blob must survive")
+	before = files()
 	publish := func(ctx context.Context, fn func() error) error {
 		_, _, e := s.Move(ctx, node.ID, s.RootID(), "renamed.pdf", node.Revision)
 		if e != nil {
@@ -226,7 +408,148 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", request, "https://archive.example.invalid", publish, maintain)
 	require.ErrorIs(t, err, bundle.ErrConflict)
 	require.Equal(t, before, files())
-	entries, err := os.ReadDir(spool)
+	entries, err = os.ReadDir(spool)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+	current, err := s.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	member.Revision = current.Revision
+	rootSource, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
+	require.NoError(t, err)
+	rootRequest := request
+	rootRequest.OperationID, rootRequest.SourceID, rootRequest.MemberHash = uuid.New().String(), rootSource.ID, rootSource.MemberHash
+	var rootedHash string
+	competingPublish := func(ctx context.Context, fn func() error) error {
+		stages, e := os.ReadDir(spool)
+		require.NoError(t, e)
+		require.Len(t, stages, 1)
+		output, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
+		require.NoError(t, e)
+		_, _, e = s.Move(ctx, current.ID, s.RootID(), "renamed-again.pdf", current.Revision)
+		require.NoError(t, e)
+		sealErr := fn()
+		require.ErrorIs(t, sealErr, bundle.ErrConflict)
+		require.NoError(t, s.Blobs.WithMutation(ctx, func() error {
+			written, writeErr := s.Blobs.WriteDetailedContext(ctx, bytes.NewReader(output))
+			if writeErr != nil {
+				return writeErr
+			}
+			rootedHash = written.Hash
+			encoding, encodingErr := written.EncodingName()
+			if encodingErr != nil {
+				return encodingErr
+			}
+			_, e = s.CreateFile(ctx, s.RootID(), "concurrent-original.md", written.Hash, written.Size, "text/markdown", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created})
+			return e
+		}))
+		return sealErr
+	}
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", rootRequest, "https://concurrent.example.invalid", competingPublish, passthrough)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.NotEmpty(t, rootedHash)
+	rooted, _, err := s.Blobs.OpenStreamContext(t.Context(), rootedHash)
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, rooted)
+	require.NoError(t, err)
+	require.NoError(t, rooted.Close())
+	current, err = s.NodeByID(t.Context(), node.ID)
+	require.NoError(t, err)
+	replacementHash, replacementSize, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic replacement"))
+	require.NoError(t, err)
+	current, _, err = s.ReplaceContent(t.Context(), current.ID, current.Revision, replacementHash, replacementSize, "application/pdf")
+	require.NoError(t, err)
+	member.Revision = current.Revision
+	oldSource, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
+	require.NoError(t, err)
+	pruneRequest := request
+	pruneRequest.OperationID, pruneRequest.SourceID, pruneRequest.MemberHash = uuid.New().String(), oldSource.ID, oldSource.MemberHash
+	attempted := false
+	prune := func(ctx context.Context, fn func() error) error {
+		_, e := s.PruneContentVersions(ctx, node.ID, current.Revision, store.VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, true)
+		require.ErrorIs(t, e, bundle.ErrRetained)
+		attempted = true
+		return fn()
+	}
+	retainedPlan, err := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", pruneRequest, "https://prune.example.invalid", prune, passthrough)
+	require.NoError(t, err)
+	require.True(t, attempted)
+	retained, err := s.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, hash, retained.BlobHash)
+	var docs []bundle.Document
+	require.NoError(t, s.WalkExportDocuments(t.Context(), retainedPlan.ID, func(d bundle.Document) error { docs = append(docs, d); return nil }))
+	require.Len(t, docs, 1)
+	require.Equal(t, member, docs[0].Member)
+	entries, err = os.ReadDir(spool)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+//nolint:paralleltest // PDFium uses process-wide resources.
+func TestOKFBlankPDF(t *testing.T) {
+	var runner *processing.PDFTextRunner
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		runner = configureAutomaticPDFText(t, d)
+		d.Cfg.Web.PublicOrigin = "https://archive.example.invalid"
+	})
+	pdf, err := os.ReadFile("../../document/testdata/scanassessment/blank.pdf")
+	require.NoError(t, err)
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "blank.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
+	p, err := runner.Service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = runner.Service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: p.Fingerprint})
+	require.NoError(t, err)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "profile": processing.PDFTextProfileName})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var observed struct {
+		State   string `json:"state"`
+		Profile struct {
+			Fingerprint string `json:"fingerprint"`
+		} `json:"profile"`
+		Attachment string `json:"attachment_id"`
+		Build      string `json:"build_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &observed))
+	require.Equal(t, "verified_empty", observed.State)
+	member := bundle.Member{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: hash, Size: size, Revision: node.Revision}
+	source, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
+	require.NoError(t, err)
+	request := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: observed.Profile.Fingerprint, AttachmentID: observed.Attachment, BuildID: observed.Build}}
+	gate := api.NewOperationGate()
+	plan, err := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, t.TempDir(), "owner", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	require.NoError(t, err)
+	require.NoError(t, s.WalkExportDocuments(t.Context(), plan.ID, func(d bundle.Document) error {
+		stream, _, e := s.Blobs.OpenStreamContext(t.Context(), d.Roles[0].SHA256)
+		require.NoError(t, e)
+		data, e := io.ReadAll(stream)
+		require.NoError(t, e)
+		require.NoError(t, stream.Close())
+		end := bytes.Index(data[4:], []byte("\n---\n"))
+		require.GreaterOrEqual(t, end, 0)
+		require.Empty(t, data[end+9:])
+		return nil
+	}))
+}
+
+func TestOKFRejectsLegacyUnenvelopedRendition(t *testing.T) {
+	var cfg config.Config
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
+		cfg = d.Cfg
+		d.Cfg.Web.PublicOrigin = "https://archive.example.invalid"
+	})
+	node := createFileWithContent(t, ts, s, "/legacy.pdf", "%PDF-1.4 synthetic")
+	fixture := publishRenditionTextSourceFixture(t, s, cfg, node, "Legacy text")
+	member := bundle.Member{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: node.Size, Revision: node.Revision}
+	source, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
+	require.NoError(t, err)
+	request := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: fixture.profile.Fingerprint, AttachmentID: fixture.attachment, BuildID: fixture.build}}
+	gate := api.NewOperationGate()
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, t.TempDir(), "owner", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	require.ErrorIs(t, err, bundle.ErrUnavailable)
+	require.ErrorContains(t, err, "reprocess")
 }

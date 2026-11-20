@@ -37,7 +37,8 @@ For rendered photos, add photo_render with format (jpeg or png), JPEG quality
 Choose up to 16 exact members or replace members with photos containing query,
 hidden, and optional asset_ids for selected photos.
 For one retained rendition, select one member with revision and add okf with
-profile_fingerprint, attachment_id, build_id, and optional include_source_sha256.
+profile_fingerprint, attachment_id, and build_id. Optionally set
+include_source_sha256.
 Typical flow: preview --request sel.json (plan ID and fingerprint) ->
 start <plan-id> --fingerprint F --operation-id <new-uuidv4> -> status <job-id>
 -> download <job-id> out.zip -> release <job-id>.
@@ -128,7 +129,7 @@ func writeExportPreview(w io.Writer, plan bundle.Plan) error {
 		if plan.OKF.IncludeSourceSHA256 {
 			disclosure = "yes"
 		}
-		note = fmt.Sprintf("source digest disclosed: %s; body copied unchanged", disclosure)
+		note = fmt.Sprintf("header source SHA-256 disclosed: %s; body copied unchanged\nZIP manifest and metadata disclose the original identity, name, path, and SHA-256", disclosure)
 	} else if p := plan.PhotoRender; p != nil {
 		byteLabel, memberLabel = "output bytes", "photos"
 		quality := ""
