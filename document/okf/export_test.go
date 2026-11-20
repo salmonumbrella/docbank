@@ -128,3 +128,27 @@ func TestOKFTagNameByteLimit(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestReview3DescriptionAfterNonProse(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"![alt](https://example.invalid/image)\n\nMeaningful prose.\n", "Meaningful prose."},
+		{"`code only`\n\nMeaningful prose.\n", "Meaningful prose."},
+		{"![alt](https://example.invalid/image)\n\n`code`\n\n" + strings.Repeat("界", 300), strings.Repeat("界", 280)},
+		{"![alt](https://example.invalid/image)\n\n`code`\n", ""},
+	} {
+		t.Run(tc.body[:min(len(tc.body), 16)], func(t *testing.T) {
+			body := []byte(tc.body)
+			if got := Description(body); got != tc.want {
+				t.Errorf("description = %q", got)
+			}
+			rendered, err := Render(Header{Title: "Synthetic", Resource: "https://example.invalid"}, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			end := bytes.Index(rendered[4:], []byte("\n---\n"))
+			if end < 0 || !bytes.Equal(rendered[end+9:], body) {
+				t.Fatalf("body changed: %q", rendered)
+			}
+		})
+	}
+}
