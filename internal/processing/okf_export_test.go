@@ -476,4 +476,35 @@ func TestReviewOKFCleanupFailureAfterSuccessfulSeal(t *testing.T) {
 	_, found, rerr := f.catalog.ExportPlanReplay(t.Context(), "owner", req)
 	t.Logf("plan sealed=%v %v", found, rerr)
 	require.NoError(t, err, "successful seal must not fail because of cleanup")
+	release, err := f.catalog.AcquirePhotoExportPreparation(t.Context())
+	require.NoError(t, err)
+	defer release()
+	replayed, err := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, "owner", req, "", nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, plan, replayed)
+}
+
+func TestOKFMissingOriginDoesNotWaitForPreparationSlot(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newPublicationFixture(t)
+		release, err := f.catalog.AcquirePhotoExportPreparation(t.Context())
+		require.NoError(t, err)
+		hash := strings.Repeat("a", 64)
+		request := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: uuid.New().String(), MemberHash: hash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}}
+		result := make(chan error, 1)
+		go func() {
+			_, e := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, "owner", request, "", nil, nil)
+			result <- e
+		}()
+		synctest.Wait()
+		var got error
+		select {
+		case got = <-result:
+		default:
+			got = errors.New("blocked on preparation slot")
+		}
+		release()
+		require.ErrorIs(t, got, ErrOKFOriginUnavailable)
+	})
 }

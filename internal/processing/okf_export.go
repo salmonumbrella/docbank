@@ -26,6 +26,9 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	if p, found, err := catalog.ExportPlanReplay(ctx, owner, request); found || err != nil {
 		return p, err
 	}
+	if origin == "" {
+		return plan, ErrOKFOriginUnavailable
+	}
 	release, err := catalog.AcquirePhotoExportPreparation(ctx)
 	if err != nil {
 		return plan, err
@@ -33,9 +36,6 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	defer release()
 	if p, found, err := catalog.ExportPlanReplay(ctx, owner, request); found || err != nil {
 		return p, err
-	}
-	if origin == "" {
-		return plan, ErrOKFOriginUnavailable
 	}
 	if blobs == nil {
 		return plan, errors.New("OKF export blob store unavailable")
