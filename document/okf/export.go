@@ -29,10 +29,6 @@ type Header struct {
 	Generated                                  *Generated
 }
 
-var yamlEscaper = strings.NewReplacer("<", `\u003c`, ">", `\u003e`, "&", `\u0026`)
-
-func quote(s string) string { return yamlEscaper.Replace(strconv.Quote(s)) }
-
 // Render emits one YAML header followed by the exact retained body bytes.
 func Render(h Header, body []byte) ([]byte, error) {
 	if len(body) > document.MaxRenditionMarkdownBytes {
@@ -57,39 +53,39 @@ func Render(h Header, body []byte) ([]byte, error) {
 	}
 	var b strings.Builder
 	b.WriteString("---\ntype: \"Reference\"\ntitle: ")
-	b.WriteString(quote(h.Title))
+	b.WriteString(strconv.Quote(h.Title))
 	b.WriteByte('\n')
 	if d := Description(body); d != "" {
 		b.WriteString("description: ")
-		b.WriteString(quote(d))
+		b.WriteString(strconv.Quote(d))
 		b.WriteByte('\n')
 	}
 	if len(h.Tags) > 0 {
 		b.WriteString("tags:\n")
 		for _, tag := range h.Tags {
 			b.WriteString("  - ")
-			b.WriteString(quote(tag))
+			b.WriteString(strconv.Quote(tag))
 			b.WriteByte('\n')
 		}
 	}
 	if h.Generated != nil {
 		b.WriteString("generated:\n  by: ")
-		b.WriteString(quote(h.Generated.By))
+		b.WriteString(strconv.Quote(h.Generated.By))
 		b.WriteString("\n  at: ")
-		b.WriteString(quote(h.Generated.At))
+		b.WriteString(strconv.Quote(h.Generated.At))
 		b.WriteByte('\n')
 	}
 	b.WriteString("sources:\n  - id: \"original\"\n    resource: ")
-	b.WriteString(quote(h.Resource))
+	b.WriteString(strconv.Quote(h.Resource))
 	b.WriteByte('\n')
 	if h.SourceTitle != "" {
 		b.WriteString("    title: ")
-		b.WriteString(quote(h.SourceTitle))
+		b.WriteString(strconv.Quote(h.SourceTitle))
 		b.WriteByte('\n')
 	}
 	if h.SourceSHA256 != "" {
 		b.WriteString("    x-docbank-sha256: ")
-		b.WriteString(quote(h.SourceSHA256))
+		b.WriteString(strconv.Quote(h.SourceSHA256))
 		b.WriteByte('\n')
 	}
 	b.WriteString("---\n")

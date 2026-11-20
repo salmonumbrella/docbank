@@ -182,3 +182,42 @@ func TestDescriptionScanBound(t *testing.T) {
 		t.Fatal("render changed body beyond scan bound")
 	}
 }
+
+func TestRenderYAMLScalarRoundTrip(t *testing.T) {
+	value := "<tag>& punctuation\x00\x01\n\t\\\" 世界"
+	body := []byte("# Synthetic\r\n\r\nExact body.\n")
+	got, err := Render(Header{Title: value, Resource: "https://example.invalid/?a=1&b=2", SourceTitle: value, Tags: []string{value}}, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := bytes.Index(got[4:], []byte("\n---\n"))
+	if end < 0 || !bytes.Equal(got[end+9:], body) {
+		t.Fatal("body changed")
+	}
+	var parsed struct {
+		Title   string                             `yaml:"title"`
+		Tags    []string                           `yaml:"tags"`
+		Sources []struct{ Title, Resource string } `yaml:"sources"`
+	}
+	if err := yaml.Unmarshal(got[4:end+4], &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Title != value || len(parsed.Tags) != 1 || parsed.Tags[0] != value || len(parsed.Sources) != 1 || parsed.Sources[0].Title != value || parsed.Sources[0].Resource != "https://example.invalid/?a=1&b=2" {
+		t.Fatalf("YAML round trip = %+v", parsed)
+	}
+	if !strings.Contains(string(got), `<tag>& punctuation`) || !strings.Contains(string(got), `?a=1&b=2`) {
+		t.Fatalf("markup escaped in header: %s", got[:end+9])
+	}
+}
+
+func TestRenderYAMLLiteralMarkupGolden(t *testing.T) {
+	body := []byte("Visible prose.\n")
+	got, err := Render(Header{Title: "<b>&", Resource: "https://example.invalid/?a=1&b=2", Tags: []string{"<tag>&"}}, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "---\ntype: \"Reference\"\ntitle: \"<b>&\"\ndescription: \"Visible prose.\"\ntags:\n  - \"<tag>&\"\nsources:\n  - id: \"original\"\n    resource: \"https://example.invalid/?a=1&b=2\"\n---\n" + string(body)
+	if string(got) != want {
+		t.Fatalf("got %q; want %q", got, want)
+	}
+}
