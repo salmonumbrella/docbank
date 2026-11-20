@@ -828,6 +828,7 @@ var backendSuites = []backendSuite{
 		{"ExportRestartRevocationAndCleanup", func(t *testing.T) { t.Helper(); checkExportRestartRevocationAndCleanup(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportRestartRevocationAndCleanup(t, newPostgresQueryStore) }},
 		{"ExportFailedResolutionKeepsReservation", func(t *testing.T) { t.Helper(); checkExportFailedResolutionKeepsReservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportFailedResolutionKeepsReservation(t, newPostgresQueryStore) }},
 		{"ExportPlanRollback", nil, checkExportPlanRollbackPostgres},
+		{"ExportOKFPlanSealAndReplay", func(t *testing.T) { t.Helper(); checkExportOKFPlanSealAndReplay(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportOKFPlanSealAndReplay(t, newPostgresQueryStore) }},
 		{"ExportReadSnapshots", nil, checkExportReadSnapshotsPostgres},
 		{"ExportChunksSealExactVersionsAndRejectChangedRetries", func(t *testing.T) {
 			t.Helper()

@@ -8,7 +8,7 @@ description: Download document versions, verified email PDFs, and attachment set
 
 Use the web app or authenticated HTTP API to export document versions,
 retained email PDFs, rendered photos, attachment originals, Markdown text, and page images.
-Use `docbank export` for originals or rendered photos. The [native MCP export tools](mcp.md#native-export-jobs) select original files by exact document-version identity.
+Use `docbank export` for originals, rendered photos, or one retained rendition as OKF Markdown. The [native MCP export tools](mcp.md#native-export-jobs) select original files by exact document-version identity.
 
 Docbank freezes the selection and role receipts before writing the archive. A
 later edit to a saved query, tag, document head, or processing result does not
@@ -20,6 +20,44 @@ Review the frozen counts, start the export, then download its verified ZIP.
 Closing the drawer does not cancel an admitted job. Reopen it in the same
 browser session to reconnect. Original files keep their original bytes. The
 bundle does not redact or sanitize them.
+
+## Export a rendition as OKF Markdown
+
+Set `[web] public_origin` to the stable address readers use and set
+`[web] base_path` when a proxy mounts Docbank beneath a subpath. Restart the
+daemon after changing either setting. Readers need Docbank credentials to open
+the link. The link names the exact original version, even if a newer version is
+added later.
+
+Use the original export request below with exactly one member and include its
+positive `revision`. Add the observed rendition selector:
+
+```json
+"okf": {
+  "profile_fingerprint": "<64 lowercase hexadecimal characters>",
+  "attachment_id": "<64 lowercase hexadecimal characters>",
+  "build_id": "<64 lowercase hexadecimal characters>",
+  "include_source_sha256": false
+}
+```
+
+Obtain these three identities from the rendition text receipt. Preview, start,
+download and release use the same commands as an original export. Preview
+freezes one `reference.md` concept and copies the retained Markdown body without
+changes. The header contains a title, an excerpt when available, committed
+tags, and a source link. A bound processing receipt can supply `generated` with
+`process:<provider id>` and its completion time; no package version is inferred.
+The header does not claim review, status, freshness, authorship, modification
+time, embedded metadata, or format-specific fidelity. Set
+`include_source_sha256` to disclose the original digest in the header. The
+ZIP's manifest and metadata CSV always disclose the original identity, name,
+path and SHA-256 regardless of that setting.
+
+A retry with the same operation IDs returns the frozen plan. Changes to the
+selected source or rendition before sealing cause a conflict. Failed preparation
+removes its newly created unreferenced output; if the process crashes between
+writing and sealing, ordinary garbage collection reclaims the interrupted write.
+Legacy renditions without the supported native envelope must be reprocessed.
 
 ## Export original files from the CLI
 

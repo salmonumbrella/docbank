@@ -36,6 +36,8 @@ For rendered photos, add photo_render with format (jpeg or png), JPEG quality
 (1 to 100), long_edge (0 keeps original size), include_metadata, and remove_gps.
 Choose up to 16 exact members or replace members with photos containing query,
 hidden, and optional asset_ids for selected photos.
+For one retained rendition, select one member with revision and add okf with
+profile_fingerprint, attachment_id, build_id, and optional include_source_sha256.
 Typical flow: preview --request sel.json (plan ID and fingerprint) ->
 start <plan-id> --fingerprint F --operation-id <new-uuidv4> -> status <job-id>
 -> download <job-id> out.zip -> release <job-id>.
@@ -62,6 +64,8 @@ var exportPreviewCmd = &cobra.Command{
 		role := "original"
 		if request.PhotoRender != nil {
 			role = "photo_rendered"
+		} else if request.OKF != nil {
+			role = "okf_markdown"
 		}
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -96,10 +100,10 @@ var exportPreviewCmd = &cobra.Command{
 		}
 		planRequest := &apiclient.CreateExportPlanRequestOptions{Body: &bundle.PlanRequest{
 			OperationID: request.PlanOperationID, SourceID: source.ID,
-			MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: role}}, PhotoRender: request.PhotoRender,
+			MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: role}}, PhotoRender: request.PhotoRender, OKF: request.OKF,
 		}}
 		plan, err := connection.API().CreateExportPlan(cmd.Context(), planRequest, withCookie)
-		if request.PhotoRender != nil && cookie == "" && errors.Is(err, store.ErrHiddenLocked) {
+		if (request.PhotoRender != nil || request.OKF != nil) && cookie == "" && errors.Is(err, store.ErrHiddenLocked) {
 			if err := unlock(); err != nil {
 				return err
 			}
@@ -118,7 +122,14 @@ var exportPreviewCmd = &cobra.Command{
 func writeExportPreview(w io.Writer, plan bundle.Plan) error {
 	note := "Original contents are included without redaction or sanitization."
 	byteLabel, memberLabel := "original bytes", "document versions"
-	if p := plan.PhotoRender; p != nil {
+	if plan.OKF != nil {
+		byteLabel, memberLabel = "output bytes", "OKF concept (reference.md)"
+		disclosure := "no"
+		if plan.OKF.IncludeSourceSHA256 {
+			disclosure = "yes"
+		}
+		note = fmt.Sprintf("source digest disclosed: %s; body copied unchanged", disclosure)
+	} else if p := plan.PhotoRender; p != nil {
 		byteLabel, memberLabel = "output bytes", "photos"
 		quality := ""
 		if p.Format == "jpeg" {

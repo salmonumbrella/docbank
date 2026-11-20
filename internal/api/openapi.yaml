@@ -10590,6 +10590,26 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/processing
         name: processing
+    OKFExport:
+      additionalProperties: false
+      properties:
+        attachment_id:
+          type: string
+        build_id:
+          type: string
+        include_source_sha256:
+          type: boolean
+        profile_fingerprint:
+          type: string
+      required:
+        - profile_fingerprint
+        - attachment_id
+        - build_id
+      type: object
+      x-go-type: bundle.OKFExport
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     OriginalDownloadSelection:
       additionalProperties: false
       properties:
@@ -16292,6 +16312,8 @@ components:
         metadata_bytes:
           format: int64
           type: integer
+        okf:
+          $ref: "#/components/schemas/OKFExport"
         photo_render:
           $ref: "#/components/schemas/PhotoRenderProfile"
         role_bytes:
@@ -16385,6 +16407,8 @@ components:
           type: string
         member_hash:
           type: string
+        okf:
+          $ref: "#/components/schemas/OKFExport"
         operation_id:
           type: string
         photo_render:

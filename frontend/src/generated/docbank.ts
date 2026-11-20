@@ -4695,6 +4695,13 @@ export interface NumberedReservationRequest {
   start_at: number;
 }
 
+export interface OKFExport {
+  attachment_id: string;
+  build_id: string;
+  include_source_sha256?: boolean;
+  profile_fingerprint: string;
+}
+
 export interface OriginalDownloadSelection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7280,6 +7287,7 @@ export interface Plan {
   format: string;
   id: string;
   metadata_bytes: number;
+  okf?: OKFExport;
   photo_render?: PhotoRenderProfile;
   role_bytes: number;
   role_entries: number;
@@ -7322,6 +7330,7 @@ export interface PlanRequest {
   readonly $schema?: string;
   duplicate_policy?: string;
   member_hash: string;
+  okf?: OKFExport;
   operation_id: string;
   photo_render?: PhotoRenderProfile;
   publications?: PublicationSelection[];

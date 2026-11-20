@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -68,4 +70,53 @@ func TestArchiveDeterministicReadbackAndTamperRefusal(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, second.Close())
 	require.Equal(t, receipt, again)
+}
+
+func TestOKFOptionStrict(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	valid := `{"profile_fingerprint":"` + hash + `","attachment_id":"` + hash + `","build_id":"` + hash + `"}`
+	var option OKFExport
+	if err := json.Unmarshal([]byte(valid), &option); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{`{}`, `{"profile_fingerprint":null}`, strings.Replace(valid, hash, strings.Repeat("A", 64), 1), strings.TrimSuffix(valid, "}") + `,"unknown":true}`} {
+		if err := json.Unmarshal([]byte(raw), &option); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+}
+
+func TestOKFRoleValidation(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	option := OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}
+	m := Member{NodeID: 1, VersionID: "22222222-2222-4222-8222-222222222222", SHA256: hash, Size: 5, Revision: 1}
+	receipt := OKFReceipt{Version: 1, Source: m, NodeRevision: 1, Option: option, ArtifactSHA256: hash, ArtifactSize: 10, Resource: "https://example.invalid/content"}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{OKF: &option, Roles: []RolePolicy{{Role: "okf_markdown"}}}
+	doc := Document{Member: m, Roles: []Role{{Role: "okf_markdown", Status: "available", Path: OKFPath(m), SHA256: hash, Size: 10, MediaType: "text/markdown; charset=utf-8", Recipe: raw}}}
+	if err := validateOKFRoles(plan, doc); err != nil {
+		t.Fatal(err)
+	}
+	doc.Roles = append(doc.Roles, Role{Role: "text"})
+	if err := validateOKFRoles(plan, doc); err == nil {
+		t.Fatal("accepted mixed roles")
+	}
+	doc.Roles = doc.Roles[:1]
+	doc.Roles[0].Recipe = []byte(`{"unknown":true}`)
+	if err := validateOKFRoles(plan, doc); err == nil {
+		t.Fatal("accepted invalid receipt")
+	}
+	doc.Roles[0].Recipe = raw
+	doc.Roles[0].Path = "wrong"
+	if err := validateOKFRoles(plan, doc); err == nil {
+		t.Fatal("accepted wrong path")
+	}
+}
+
+func TestOKFPlanRejectsNullOption(t *testing.T) {
+	var request PlanRequest
+	require.Error(t, json.Unmarshal([]byte(`{"okf":null}`), &request, json.RejectUnknownMembers(true)))
 }

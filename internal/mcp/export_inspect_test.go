@@ -175,3 +175,12 @@ func TestExportInspectionQueryPlans(t *testing.T) {
 		})
 	}
 }
+
+func TestOKFExportPlanSchema(t *testing.T) {
+	option := map[string]any{"profile_fingerprint": strings.Repeat("a", 64), "attachment_id": strings.Repeat("b", 64), "build_id": strings.Repeat("c", 64)}
+	properties := retainedExportPlanSchema()["properties"].(schema)
+	assertSchemaAccepts(t, properties["okf"], option)
+	delete(option, "build_id")
+	assertSchemaRejects(t, properties["okf"], option)
+	assertSchemaAccepts(t, exportRoleSchema(), "okf_markdown")
+}

@@ -261,3 +261,15 @@ func TestPhotoExportCLIHiddenAuthentication(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+func TestOKFExportRequestAndPreview(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	request := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), Members: []bundle.Member{{NodeID: 1, VersionID: uuid.New().String(), SHA256: hash, Size: 1, Revision: 1}}, OKF: &bundle.OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}}
+	require.NoError(t, validateExportRequest(request))
+	request.Members[0].Revision = 0
+	require.Error(t, validateExportRequest(request))
+	var out bytes.Buffer
+	require.NoError(t, writeExportPreview(&out, bundle.Plan{OKF: request.OKF, Total: 1}))
+	require.Contains(t, out.String(), "1 OKF concept")
+	require.Contains(t, out.String(), "source digest disclosed: no")
+}

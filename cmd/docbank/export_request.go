@@ -13,6 +13,7 @@ import (
 )
 
 type exportPreviewRequest struct {
+	OKF               *bundle.OKFExport            `json:"okf,omitzero"`
 	PhotoRender       *bundle.PhotoRenderProfile   `json:"photo_render,omitzero"`
 	Photos            *bundle.PhotoExportSelection `json:"photos,omitzero"`
 	SourceOperationID string                       `json:"source_operation_id"`
@@ -56,6 +57,12 @@ func validateExportRequest(request exportPreviewRequest) error {
 	}
 	if err := validateExportID("plan_operation_id", request.PlanOperationID); err != nil {
 		return err
+	}
+	if request.OKF != nil {
+		o := request.OKF
+		if request.PhotoRender != nil || request.Photos != nil || len(request.Members) != 1 || request.Members[0].Revision < 1 || !canonical.IsSHA256Hex(o.ProfileFingerprint) || !canonical.IsSHA256Hex(o.AttachmentID) || !canonical.IsSHA256Hex(o.BuildID) {
+			return usageError(errors.New("okf requires one revision-pinned member and an exact rendition selector; photos are excluded"))
+		}
 	}
 	if request.PhotoRender != nil {
 		if len(request.Members) > bundle.MaxPhotoExportMembers {

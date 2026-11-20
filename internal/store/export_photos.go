@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -231,10 +232,40 @@ func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.Pl
 
 // SealPhotoExportPlan accepts artifacts only from the in-process renderer.
 func (s *Store) SealPhotoExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, artifacts []PreparedPhotoExport) (bundle.Plan, error) {
-	prepared := make(map[string]PreparedPhotoExport, len(artifacts))
-	for _, a := range artifacts {
-		prepared[a.Receipt.Source.VersionID] = a
+	if err := validatePhotoPlanRequest(&r); err != nil {
+		return bundle.Plan{}, err
 	}
+	prepared := make(map[string]preparedExportRole, len(artifacts))
+	for _, a := range artifacts {
+		role, err := a.role()
+		if err != nil {
+			return bundle.Plan{}, err
+		}
+		prepared[a.Receipt.Source.VersionID] = preparedExportRole{SHA256: a.SHA256, Size: a.Size, Physical: a.Physical, Role: role, embedded: a.Receipt.EmbeddedPreview, check: func(ctx context.Context, tx *sql.Tx, m bundle.Member) (bundle.Document, error) {
+			source, err := loadExportSource(ctx, tx, owner, r.SourceID)
+			if err != nil {
+				return bundle.Document{}, err
+			}
+			sourceRequest, err := photoExportSourceRequest(ctx, tx, source)
+			if err != nil {
+				return bundle.Document{}, err
+			}
+			input, err := s.exportPhotoInput(ctx, tx, m, sourceRequest.Photos, r.PhotoRender.IncludeMetadata)
+			if err != nil {
+				return bundle.Document{}, err
+			}
+			frozen, err := canonical.Marshal(a.Input)
+			if err != nil {
+				return bundle.Document{}, err
+			}
+			current, err := canonical.Marshal(input)
+			if err != nil || !bytes.Equal(current, frozen) || a.Receipt.Source != m || a.Receipt.Profile != *r.PhotoRender {
+				return bundle.Document{}, fmt.Errorf("%w: photo %d (%s) changed during preparation", bundle.ErrConflict, m.NodeID, input.Name)
+			}
+			return bundle.Document{Member: m, Name: input.Name, MediaType: input.MediaType}, nil
+		}}
+	}
+
 	return s.createExportPlan(ctx, owner, r, prepared)
 }
 

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
@@ -29,6 +28,10 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 		seen[p.Role] = true
 		switch p.Role {
 		case "photo_rendered":
+		case "okf_markdown":
+			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
+				return bundle.ErrConflict
+			}
 		case "original", "attachment_original":
 			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
 				return bundle.ErrConflict
@@ -125,7 +128,7 @@ func replayExportPlan(ctx context.Context, q metadataQuerier, owner, id, digest 
 	return plan, true, err
 }
 
-func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, prepared map[string]PreparedPhotoExport) (bundle.Plan, error) {
+func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, prepared map[string]preparedExportRole) (bundle.Plan, error) {
 	request, publications, err := validateExportPlanRequest(owner, &r)
 	if err != nil {
 		return bundle.Plan{}, err
@@ -149,17 +152,13 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 		if source.State != "sealed" || source.MemberHash != r.MemberHash {
 			return bundle.ErrConflict
 		}
+		if r.OKF != nil && (source.Kind != "explicit" || source.Total != 1) {
+			return bundle.ErrConflict
+		}
 		if e = checkExportPlanCapacity(ctx, tx); e != nil {
 			return e
 		}
-		var photoRequest bundle.SourceRequest
-		if r.PhotoRender != nil {
-			photoRequest, e = photoExportSourceRequest(ctx, tx, source)
-			if e != nil {
-				return e
-			}
-		}
-		plan = bundle.Plan{PhotoRender: r.PhotoRender, Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
+		plan = bundle.Plan{OKF: r.OKF, PhotoRender: r.PhotoRender, Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
 		if r.VolumeLimits != nil {
 			plan.VolumeLimits = new(*r.VolumeLimits)
 		}
@@ -238,36 +237,23 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 		err := walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
 			publication := publications[m.VersionID]
 			delete(publications, m.VersionID)
-			if r.PhotoRender != nil {
+			if r.PhotoRender != nil || r.OKF != nil {
 				artifact, ok := prepared[m.VersionID]
 				if !ok {
-					return fmt.Errorf("%w: photo %d has no prepared output", bundle.ErrUnavailable, m.NodeID)
+					return fmt.Errorf("%w: member %d has no prepared output", bundle.ErrUnavailable, m.NodeID)
 				}
-				input, err := s.exportPhotoInput(ctx, tx, m, photoRequest.Photos, r.PhotoRender.IncludeMetadata)
+				d, err := artifact.check(ctx, tx, m)
 				if err != nil {
 					return err
-				}
-				frozen, err := canonical.Marshal(artifact.Input)
-				if err != nil {
-					return err
-				}
-				current, err := canonical.Marshal(input)
-				if err != nil || !bytes.Equal(current, frozen) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
-					return fmt.Errorf("%w: photo %d (%s) changed during preparation", bundle.ErrConflict, m.NodeID, input.Name)
 				}
 				if err = s.EnsureBlobTx(ctx, tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {
 					return err
 				}
-				d := bundle.Document{Member: m, Name: input.Name, MediaType: input.MediaType}
-				if err := setExportDocumentPath(ctx, tx, &d); err != nil {
+				if err = setExportDocumentPath(ctx, tx, &d); err != nil {
 					return err
 				}
-				role, err := artifact.role()
-				if err != nil {
-					return err
-				}
-				d.Roles = []bundle.Role{role}
-				if artifact.Receipt.EmbeddedPreview {
+				d.Roles = []bundle.Role{artifact.Role}
+				if artifact.embedded {
 					plan.EmbeddedPreviews++
 				}
 				return write(d)
@@ -577,6 +563,9 @@ func checkExportPlanCapacity(ctx context.Context, q metadataQuerier) error {
 }
 
 func validateExportPlanRequest(owner string, r *bundle.PlanRequest) ([]byte, map[string]string, error) {
+	if err := validateOKFPlanRequest(r); err != nil {
+		return nil, nil, err
+	}
 	if err := validatePhotoPlanRequest(r); err != nil {
 		return nil, nil, err
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/exporter"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
@@ -31,6 +32,8 @@ func exportOwner(ctx context.Context) (string, error) {
 }
 func exportProblem(err error) *Error {
 	switch {
+	case errors.Is(err, processing.ErrOKFOriginUnavailable):
+		return NewError(http.StatusUnprocessableEntity, "okf_origin_unavailable", err.Error())
 	case errors.Is(err, store.ErrPhotoSnapshotExportUnsupported):
 		return NewError(http.StatusUnprocessableEntity, "photo_snapshot_export_unsupported", err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
@@ -194,7 +197,17 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return nil, NewError(400, "validation", "invalid export plan")
 		}
 		var p bundle.Plan
-		if in.Body.PhotoRender != nil {
+		if in.Body.OKF != nil {
+			origin := ""
+			if d.Cfg.Web.PublicOrigin != "" {
+				origin, err = config.CanonicalWebOrigin(d.Cfg.Web.PublicOrigin)
+				if err != nil {
+					return nil, exportProblem(err)
+				}
+				origin += d.Cfg.Web.BasePath
+			}
+			p, err = processing.PrepareOKFExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, exporter.ArchiveDirectory), owner, in.Body, origin, g.MutateContext, g.MaintainContext)
+		} else if in.Body.PhotoRender != nil {
 			p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, exporter.ArchiveDirectory), owner, in.Body, g.MutateContext)
 		} else {
 			err = g.MutateContext(ctx, func() error { var e error; p, e = d.Store.CreateExportPlan(ctx, owner, in.Body); return e })

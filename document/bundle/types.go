@@ -89,6 +89,7 @@ type RolePolicy struct {
 }
 
 type PlanRequest struct {
+	OKF             *OKFExport             `json:"okf,omitzero"`
 	PhotoRender     *PhotoRenderProfile    `json:"photo_render,omitzero"`
 	OperationID     string                 `json:"operation_id"`
 	SourceID        string                 `json:"source_id"`
@@ -160,6 +161,7 @@ type Document struct {
 // Plan is the bounded header. Documents are streamed separately in identity
 // order; Fingerprint covers the header with Fingerprint empty plus those rows.
 type Plan struct {
+	OKF              *OKFExport          `json:"okf,omitzero"`
 	EmbeddedPreviews int                 `json:"embedded_previews,omitzero"`
 	PhotoRender      *PhotoRenderProfile `json:"photo_render,omitzero"`
 	Format           string              `json:"format"`

@@ -31773,6 +31773,8 @@ type NumberedReservation = processing.NumberedReservation
 
 type NumberedReservationRequest = processing.NumberedReservationRequest
 
+type OKFExport = bundle.OKFExport
+
 type OriginalDownloadSelection = api.OriginalDownloadSelection
 
 type OriginalDownloadTicket = api.OriginalDownloadTicket

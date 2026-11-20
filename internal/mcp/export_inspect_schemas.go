@@ -10,7 +10,7 @@ const schemaTotalField = "total"
 
 func exportRoleSchema() schema {
 	return enumSchema(
-		"original", "text", "pages", "email_pdf", "attachment_original", "attachment_pdf", "photo_rendered",
+		"original", "text", "pages", "email_pdf", "attachment_original", "attachment_pdf", "photo_rendered", "okf_markdown",
 	)
 }
 
@@ -57,6 +57,9 @@ func retainedExportPlanSchema() schema {
 			"long_edge": integerSchema(0, 100000), "include_metadata": booleanSchema(),
 			"remove_gps": booleanSchema(),
 		}, "format", "long_edge", "include_metadata", "remove_gps"),
+		"okf": objectSchema(schema{
+			"profile_fingerprint": sha256Schema(), "attachment_id": sha256Schema(), "build_id": sha256Schema(), "include_source_sha256": booleanSchema(),
+		}, "profile_fingerprint", "attachment_id", "build_id"),
 		"embedded_previews": integerSchema(0, bundle.MaxPhotoExportMembers),
 		"volume_limits": objectSchema(schema{
 			"role_bytes": integerSchema(1, bundle.MaxVolumeRoleBytes),
