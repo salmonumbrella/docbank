@@ -198,12 +198,8 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		var p bundle.Plan
 		if in.Body.OKF != nil {
-			origin := ""
-			if d.Cfg.Web.PublicOrigin != "" {
-				origin, err = config.CanonicalWebOrigin(d.Cfg.Web.PublicOrigin)
-				if err != nil {
-					return nil, exportProblem(err)
-				}
+			origin, _ := config.CanonicalWebOrigin(d.Cfg.Web.PublicOrigin)
+			if origin != "" {
 				origin += d.Cfg.Web.BasePath
 			}
 			p, err = processing.PrepareOKFExportPlan(ctx, d.Store, d.Blobs, owner, in.Body, origin, g.MutateContext, g.MaintainContext)

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"go.kenn.io/docbank/document/bundle"
 )
 
 func TestRenderOKFBodyAndStrings(t *testing.T) {
@@ -85,7 +87,7 @@ func TestDescriptionMarkdownProse(t *testing.T) {
 }
 
 func TestOKFEmptyAndEscaping(t *testing.T) {
-	h := Header{Title: "<b>", Resource: "https://example.invalid", Tags: []string{"true", "null", "0012", "1e3", ": x"}, Generated: &Generated{By: "producer/version", At: "2026-01-01T00:00:00Z"}}
+	h := Header{Title: "<b>", Resource: "https://example.invalid", Tags: []string{"true", "null", "0012", "1e3", ": x"}, Generated: &bundle.OKFGenerated{By: "producer/version", At: "2026-01-01T00:00:00Z"}}
 	got, err := Render(h, nil)
 	if err != nil {
 		t.Fatal(err)

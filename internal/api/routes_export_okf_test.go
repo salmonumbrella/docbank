@@ -325,9 +325,7 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		if req.OKF.IncludeSourceSHA256 {
 			header.SourceSHA256 = input.Member.SHA256
 		}
-		if input.Generated != nil {
-			header.Generated = &okf.Generated{By: input.Generated.By, At: input.Generated.At}
-		}
+		header.Generated = input.Generated
 		result, e := okf.Render(header, body)
 		require.NoError(t, e)
 		return result

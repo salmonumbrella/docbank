@@ -660,10 +660,7 @@ func (s *Store) WriteDetailedWithPublicationContext(ctx context.Context, r io.Re
 		}
 		result, err := s.loose.WriteBytes(ctx, head, opts)
 		if err != nil {
-			if result.Created {
-				return writeReceipt(result), fmt.Errorf("writing blob: %w", err)
-			}
-			return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
+			return writeReceipt(result), fmt.Errorf("writing blob: %w", err)
 		}
 		receipt := writeReceipt(result)
 		sum := md5.Sum(head) //nolint:gosec // Auxiliary interoperability digest.
@@ -676,10 +673,7 @@ func (s *Store) WriteDetailedWithPublicationContext(ctx context.Context, r io.Re
 	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
 	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), opts)
 	if err != nil {
-		if result.Created {
-			return writeReceipt(result), fmt.Errorf("writing blob: %w", err)
-		}
-		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
+		return writeReceipt(result), fmt.Errorf("writing blob: %w", err)
 	}
 	receipt := writeReceipt(result)
 	receipt.MD5 = hex.EncodeToString(auxiliary.Sum(nil))

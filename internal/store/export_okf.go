@@ -51,9 +51,6 @@ type OKFInput struct {
 
 func (s *Store) exportOKFInput(ctx context.Context, q metadataQuerier, m bundle.Member, option bundle.OKFExport) (input OKFInput, err error) {
 	input.Member = m
-	if m.Revision < 1 {
-		return input, bundle.ErrConflict
-	}
 	var rev int64
 	var trashed sql.NullString
 	var hash string
@@ -137,9 +134,6 @@ func (s *Store) ExportOKFInput(ctx context.Context, owner string, r bundle.PlanR
 	if _, _, err = validateExportPlanRequest(owner, &r); err != nil {
 		return input, err
 	}
-	if r.OKF == nil {
-		return input, bundle.ErrConflict
-	}
 	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		source, e := loadExportSource(ctx, tx, owner, r.SourceID)
 		if e != nil {
@@ -193,9 +187,6 @@ type PreparedOKFExport struct {
 }
 
 func (s *Store) SealOKFExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, a PreparedOKFExport) (bundle.Plan, bool, error) {
-	if r.OKF == nil {
-		return bundle.Plan{}, false, bundle.ErrConflict
-	}
 	raw, err := canonical.Marshal(a.Receipt)
 	if err != nil {
 		return bundle.Plan{}, false, err

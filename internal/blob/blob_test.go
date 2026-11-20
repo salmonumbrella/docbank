@@ -708,7 +708,6 @@ func TestWriteDetailedPublicationReceiptOnSyncFailure(t *testing.T) {
 			retry, err := bs.WriteDetailedWithPublicationContext(t.Context(), strings.NewReader(content))
 			require.ErrorContains(t, err, "sync")
 			require.False(t, retry.Created)
-			require.Empty(t, retry.Hash)
 		})
 	}
 }

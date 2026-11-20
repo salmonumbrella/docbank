@@ -28,11 +28,7 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 		seen[p.Role] = true
 		switch p.Role {
 		case "photo_rendered":
-		case "okf_markdown":
-			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
-				return bundle.ErrConflict
-			}
-		case "original", "attachment_original":
+		case "original", "attachment_original", "okf_markdown":
 			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
 				return bundle.ErrConflict
 			}
@@ -150,9 +146,6 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 			return bundle.ErrExpired
 		}
 		if source.State != "sealed" || source.MemberHash != r.MemberHash {
-			return bundle.ErrConflict
-		}
-		if r.OKF != nil && (source.Kind != "explicit" || source.Total != 1) {
 			return bundle.ErrConflict
 		}
 		if e = checkExportPlanCapacity(ctx, tx); e != nil {

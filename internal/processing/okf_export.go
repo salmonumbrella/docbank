@@ -66,26 +66,19 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	if front.Document.Title != "" {
 		title = front.Document.Title
 	}
-	header := okf.Header{Title: title, SourceTitle: input.Name, Resource: resource}
 	tags := make([]string, 0, len(input.Tags))
 	for _, tag := range input.Tags {
 		tags = append(tags, tag.Name)
 	}
-	header.Tags = tags
+	header := okf.Header{Title: title, SourceTitle: input.Name, Resource: resource, Tags: tags, Generated: input.Generated}
 	if request.OKF.IncludeSourceSHA256 {
 		header.SourceSHA256 = input.Member.SHA256
-	}
-	if input.Generated != nil {
-		header.Generated = &okf.Generated{By: input.Generated.By, At: input.Generated.At}
 	}
 	output, err := okf.Render(header, body)
 	if err != nil {
 		return plan, err
 	}
-	frozen := bundle.OKFReceipt{Version: 1, Source: input.Member, NodeRevision: input.Member.Revision, Option: *request.OKF, ArtifactSHA256: input.ArtifactSHA256, ArtifactSize: input.ArtifactSize, Resource: resource, Tags: tags}
-	if header.Generated != nil {
-		frozen.Generated = &bundle.OKFGenerated{By: header.Generated.By, At: header.Generated.At}
-	}
+	frozen := bundle.OKFReceipt{Version: 1, Source: input.Member, NodeRevision: input.Member.Revision, Option: *request.OKF, ArtifactSHA256: input.ArtifactSHA256, ArtifactSize: input.ArtifactSize, Resource: resource, Tags: tags, Generated: input.Generated}
 	a := store.PreparedOKFExport{Input: input, Receipt: frozen}
 	var created, own bool
 	err = publish(ctx, func() error {

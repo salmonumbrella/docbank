@@ -23,11 +23,10 @@ const maxHeaderBytes = 256 << 10
 const maxTags = 256
 const maxTagBytes = 16 << 10
 
-type Generated struct{ By, At string }
 type Header struct {
 	Title, Resource, SourceTitle, SourceSHA256 string
 	Tags                                       []string
-	Generated                                  *Generated
+	Generated                                  *bundle.OKFGenerated
 }
 
 // Render emits one YAML header followed by the exact retained body bytes.
@@ -90,7 +89,7 @@ func Render(h Header, body []byte) ([]byte, error) {
 		b.WriteByte('\n')
 	}
 	b.WriteString("---\n")
-	if b.Len() > maxHeaderBytes || int64(b.Len())+int64(len(body)) > bundle.MaxRoleBytes {
+	if b.Len() > maxHeaderBytes {
 		return nil, bundle.ErrLimit
 	}
 	out := make([]byte, 0, b.Len()+len(body))
@@ -138,7 +137,6 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 	var result strings.Builder
 	count := 0
 	space := false
-	hasHTML := false
 	visible := false
 	_ = ast.Walk(paragraph, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
@@ -146,7 +144,7 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 		}
 		switch n.Kind() {
 		case ast.KindRawHTML:
-			hasHTML = true
+			visible = false
 			return ast.WalkStop, nil
 		case ast.KindCodeSpan, ast.KindImage:
 			return ast.WalkSkipChildren, nil
@@ -182,7 +180,7 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 		}
 		return ast.WalkContinue, nil
 	})
-	if hasHTML || !visible {
+	if !visible {
 		return ""
 	}
 	return strings.TrimSpace(result.String())

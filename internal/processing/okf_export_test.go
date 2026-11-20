@@ -39,6 +39,7 @@ func (r *okfCountingReader) OpenStreamContext(context.Context, string) (packstor
 
 type okfTestStream struct {
 	*instrumentedVerifiedStream
+
 	expected  string
 	readBytes []byte
 }
