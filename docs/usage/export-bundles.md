@@ -48,8 +48,7 @@ changes. The header contains a title, an excerpt when available, committed
 tags, and a source link. The title uses the retained rendition title when
 present, otherwise the document name. Exports refuse more than 256 tags or
 16 KiB of tag IDs and names; the header separately limits tag names to 16 KiB.
-A bound processing receipt can supply `generated` with
-`process:<provider id>` and its completion time; no package version is inferred.
+When the retained execution snapshot, selected profile and processing receipt substantiate the producer, `generated` contains `process:<provider id>` and its completion time. Otherwise it is omitted; no package version is inferred.
 The header does not claim review, status, freshness, authorship, modification
 time, embedded metadata, or format-specific fidelity. Set
 `include_source_sha256` to disclose the original digest in the header. The

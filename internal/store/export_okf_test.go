@@ -79,13 +79,13 @@ func checkExportOKFPlanSealAndReplay(t *testing.T, open func(*testing.T) *Store)
 	require.Equal(t, "éclair", input.Tags[1].Name)
 	a := PreparedOKFExport{Input: input, Receipt: bundle.OKFReceipt{Version: 1, Source: m, NodeRevision: m.Revision, Option: *request.OKF, ArtifactSHA256: input.ArtifactSHA256, ArtifactSize: input.ArtifactSize, Resource: "https://example.invalid/content"}, SHA256: fakeHash("b3"), Size: 99, Physical: BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 99, Created: true}}
 	a.Input.Name = "changed"
-	_, err = s.SealOKFExportPlan(t.Context(), "owner", request, a)
+	_, _, err = s.SealOKFExportPlan(t.Context(), "owner", request, a)
 	require.ErrorIs(t, err, bundle.ErrConflict)
 	var roots int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM export_role_roots`).Scan(&roots))
 	require.Zero(t, roots)
 	a.Input = input
-	plan, err := s.SealOKFExportPlan(t.Context(), "owner", request, a)
+	plan, _, err := s.SealOKFExportPlan(t.Context(), "owner", request, a)
 	require.NoError(t, err)
 	replay, found, err := s.ExportPlanReplay(t.Context(), "owner", request)
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func TestOKFAuthorityChangesRefuseSeal(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			_, err = s.SealOKFExportPlan(t.Context(), owner, request, frozen)
+			_, _, err = s.SealOKFExportPlan(t.Context(), owner, request, frozen)
 			require.Error(t, err)
 			var count int
 			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM export_role_roots WHERE plan_id=$1`, request.OperationID).Scan(&count))
@@ -235,7 +235,7 @@ func TestOKFHiddenPhotoRefusesSealWithoutSession(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	_, err = s.SealOKFExportPlan(t.Context(), "owner", request, prepared)
+	_, _, err = s.SealOKFExportPlan(t.Context(), "owner", request, prepared)
 	require.ErrorIs(t, err, ErrHiddenLocked)
 }
 
@@ -268,4 +268,15 @@ func TestOKFPopulatedBackendProjection(t *testing.T) {
 	sqlite := project(newTestStore(t))
 	postgres := project(newPostgresQueryStore(t))
 	require.Equal(t, sqlite, postgres)
+}
+
+func TestOKFMixedRoleDiagnostic(t *testing.T) {
+	request := bundle.PlanRequest{Roles: []bundle.RolePolicy{{Role: "original"}}, OKF: &bundle.OKFExport{}}
+	err := validateOKFPlanRequest(&request)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, "must be supplied together")
+	request.Roles = []bundle.RolePolicy{{Role: "okf_markdown"}, {Role: "original"}}
+	err = validateOKFPlanRequest(&request)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, "one okf_markdown role")
 }

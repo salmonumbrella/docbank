@@ -346,6 +346,63 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	entries, err = os.ReadDir(spool)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+
+	// A competing seal wins after admission, with bytes distinct from this candidate.
+	for _, failCleanup := range []bool{false, true} {
+		candidateRequest := request
+		candidateRequest.OperationID = uuid.New().String()
+		var winner bundle.Plan
+		var candidateHash, winnerHash string
+		cleanupFailure := errors.New("synthetic cleanup failure")
+		publishWinner := func(ctx context.Context, fn func() error) error {
+			stages, e := os.ReadDir(spool)
+			require.NoError(t, e)
+			require.Len(t, stages, 1)
+			candidate, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
+			require.NoError(t, e)
+			digest := sha256.Sum256(candidate)
+			candidateHash = hex.EncodeToString(digest[:])
+			winnerBytes := bytes.Replace(candidate, []byte("candidate.example.invalid"), []byte("winner.example.invalid"), 1)
+			require.NotEqual(t, candidate, winnerBytes)
+			written, e := s.Blobs.WriteDetailedContext(ctx, bytes.NewReader(winnerBytes))
+			require.NoError(t, e)
+			winnerHash = written.Hash
+			encoding, e := written.EncodingName()
+			require.NoError(t, e)
+			input, e := s.ExportOKFInput(ctx, "owner", candidateRequest)
+			require.NoError(t, e)
+			tags := make([]string, 0, len(input.Tags))
+			for _, tag := range input.Tags {
+				tags = append(tags, tag.Name)
+			}
+			receipt := bundle.OKFReceipt{Version: 1, Source: input.Member, NodeRevision: input.Member.Revision, Option: *candidateRequest.OKF, ArtifactSHA256: input.ArtifactSHA256, ArtifactSize: input.ArtifactSize, Resource: "https://winner.example.invalid/api/v1/versions/" + input.Member.VersionID + "/content", Tags: tags, Generated: input.Generated}
+			prepared := store.PreparedOKFExport{Input: input, Receipt: receipt, SHA256: written.Hash, Size: written.Size, Physical: store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created}}
+			var own bool
+			winner, own, e = s.SealOKFExportPlan(ctx, "owner", candidateRequest, prepared)
+			require.NoError(t, e)
+			require.True(t, own)
+			return fn()
+		}
+		maintain := passthrough
+		if failCleanup {
+			maintain = func(context.Context, func() error) error { return cleanupFailure }
+		}
+		result, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", candidateRequest, "https://candidate.example.invalid", publishWinner, maintain)
+		require.Equal(t, winner.ID, result.ID)
+		if failCleanup {
+			require.ErrorIs(t, e, cleanupFailure)
+			require.NoError(t, s.Blobs.Remove(candidateHash))
+		} else {
+			require.NoError(t, e)
+			_, _, e = s.Blobs.OpenStreamContext(t.Context(), candidateHash)
+			require.Error(t, e)
+		}
+		stream, _, e := s.Blobs.OpenStreamContext(t.Context(), winnerHash)
+		require.NoError(t, e)
+		_, e = io.Copy(io.Discard, stream)
+		require.NoError(t, e)
+		require.NoError(t, stream.Close())
+	}
 	replayRequest := request
 	replayRequest.OperationID = uuid.New().String()
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -381,6 +438,36 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	require.NoError(t, second.err)
 	require.Equal(t, first.plan, second.plan)
 	require.EqualValues(t, 1, publications.Load())
+
+	// Inject cancellation precisely after the loose rename and before shard sync.
+	cancelCtx, cancelAfterRename := context.WithCancel(t.Context())
+	beforeCancel := files()
+	cancelPublish := func(_ context.Context, fn func() error) error {
+		stages, e := os.ReadDir(spool)
+		require.NoError(t, e)
+		require.Len(t, stages, 1)
+		output, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
+		require.NoError(t, e)
+		sum := sha256.Sum256(output)
+		h := hex.EncodeToString(sum[:])
+		shard := filepath.Join(s.BlobsDir, h[:2])
+		require.NoError(t, os.MkdirAll(shard, 0700))
+		pack.SyncDir = func(path string) error {
+			if path == shard {
+				cancelAfterRename()
+				return context.Canceled
+			}
+			return originalSync(path)
+		}
+		defer func() { pack.SyncDir = originalSync }()
+		return fn()
+	}
+	_, err = processing.PrepareOKFExportPlan(cancelCtx, s.Store, s.Blobs, spool, "owner", request, "https://cancel-after-rename.example.invalid", cancelPublish, passthrough)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, beforeCancel, files())
+	entries, err = os.ReadDir(spool)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 	existingRequest := request
 	existingRequest.OperationID = uuid.New().String()
 	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", existingRequest, "https://existing.example.invalid", passthrough, passthrough)
@@ -394,7 +481,7 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		}
 		return injected
 	}, passthrough)
-	require.ErrorIs(t, err, injected)
+	require.NoError(t, err, "a committed seal survives a later publish-wrapper error")
 	require.Equal(t, existing, files(), "a previously rooted identical blob must survive")
 	before = files()
 	publish := func(ctx context.Context, fn func() error) error {

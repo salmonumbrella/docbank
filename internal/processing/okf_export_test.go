@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -150,6 +151,75 @@ func TestOKFWorkerReceiptAndReattachment(t *testing.T) {
 			return nil
 		}))
 	}
+	// Exercise malformed retained evidence against a real worker-produced snapshot.
+	view, err := f.catalog.ActiveRendition(t.Context(), f.versionID, profile.Fingerprint)
+	require.NoError(t, err)
+	v, err := f.catalog.ContentVersionByID(t.Context(), f.versionID)
+	require.NoError(t, err)
+	node, err := f.catalog.NodeByID(t.Context(), v.NodeID)
+	require.NoError(t, err)
+	member := bundle.Member{NodeID: node.ID, VersionID: f.versionID, SHA256: v.BlobHash, Size: v.Size, Revision: node.Revision}
+	src, err := f.catalog.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
+	require.NoError(t, err)
+	req := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: src.ID, MemberHash: src.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: profile.Fingerprint, AttachmentID: view.Attachment.ID, BuildID: view.Build.ID}}
+	db, err := store.DefaultSQLiteDriver().Open(f.databasePath, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER rendition_builds_immutable_update`)
+	require.NoError(t, err)
+	var originalReceipt, originalChecksum, originalSnapshot string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT provider_receipt_json,authorization_checksum FROM rendition_builds WHERE build_id=?`, view.Build.ID).Scan(&originalReceipt, &originalChecksum))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT execution_snapshot_json FROM rendition_jobs WHERE job_id=?`, view.Build.ID).Scan(&originalSnapshot))
+	for _, tc := range []struct {
+		name, field, value                     string
+		missing, checksum, conflict, generated bool
+	}{
+		{name: "unknown member", field: "future_member", value: "retained", generated: true},
+		{name: "descriptor", field: "descriptor_fingerprint", value: strings.Repeat("f", 64)},
+		{name: "policy", field: "policy_fingerprint", value: strings.Repeat("f", 64)},
+		{name: "authorization fingerprint", field: "authorization_fingerprint", value: strings.Repeat("f", 64)},
+		{name: "started timestamp", field: "started_at", value: "2020-01-01T00:00:00Z"},
+		{name: "completed timestamp", field: "completed_at", value: "2020-01-01T00:00:00Z"},
+		{name: "missing snapshot", missing: true}, {name: "authorization checksum", checksum: true},
+		{name: "wrong source with unknown member", field: "source_sha256", value: strings.Repeat("f", 64), conflict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal([]byte(originalReceipt), &fields))
+			if tc.field != "" {
+				fields[tc.field] = tc.value
+			}
+			if tc.conflict {
+				fields["future_member"] = true
+			}
+			raw, e := json.Marshal(fields)
+			require.NoError(t, e)
+			checksum := originalChecksum
+			if tc.checksum {
+				checksum = strings.Repeat("f", 64)
+			}
+			_, e = db.ExecContext(t.Context(), `UPDATE rendition_builds SET provider_receipt_json=?, authorization_checksum=? WHERE build_id=?`, string(raw), checksum, view.Build.ID)
+			require.NoError(t, e)
+			var snapshot any = originalSnapshot
+			if tc.missing {
+				snapshot = nil
+			}
+			_, e = db.ExecContext(t.Context(), `UPDATE rendition_jobs SET execution_snapshot_json=? WHERE job_id=?`, snapshot, view.Build.ID)
+			require.NoError(t, e)
+			input, e := f.catalog.ExportOKFInput(t.Context(), "owner", req)
+			if tc.conflict {
+				require.ErrorIs(t, e, bundle.ErrConflict)
+				return
+			}
+			require.NoError(t, e)
+			if tc.generated {
+				require.NotNil(t, input.Generated)
+			} else {
+				require.Nil(t, input.Generated)
+			}
+		})
+	}
+
 }
 
 func TestOKFReceiptVariants(t *testing.T) {
@@ -161,7 +231,8 @@ func TestOKFReceiptVariants(t *testing.T) {
 		generated              bool
 		conflict               bool
 	}{
-		{name: "known", provider: "docling", generated: true},
+		{name: "unsubstantiated", provider: "invented-producer"},
+		{name: "unsubstantiated docling", provider: "docling"},
 		{name: "absent", receiptJSON: `{}`},
 		{name: "malformed", receiptJSON: `{"provider_id":42}`},
 		{name: "unknown field", receiptJSON: `{"unexpected":true}`},
@@ -348,4 +419,35 @@ func TestOKFExpiredSourcePrunedDuringPreparation(t *testing.T) {
 		require.NoError(t, e)
 		require.Empty(t, entries)
 	})
+}
+
+func TestReviewOKFCleanupFailureAfterSuccessfulSeal(t *testing.T) {
+	f := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	profile := workerProcessingProfile(t, provider.Descriptor())
+	request := workerJobRequest(f.versionID, profile, provider.Descriptor())
+	grantWorkerConsent(t, f.catalog, request)
+	_, _, err := f.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	gate := newTestOperationGate()
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: workerRuntime{provider: provider}, Gate: gate, Owner: "okf-worker-test", LeaseDuration: time.Minute, IdleDelay: time.Millisecond, Clock: func() time.Time { return now }})
+	require.NoError(t, err)
+	_, err = worker.RunOne(t.Context())
+	require.NoError(t, err)
+	view, err := f.catalog.ActiveRendition(t.Context(), f.versionID, profile.Fingerprint)
+	require.NoError(t, err)
+	v, _ := f.catalog.ContentVersionByID(t.Context(), f.versionID)
+	node, _ := f.catalog.NodeByID(t.Context(), v.NodeID)
+	member := bundle.Member{NodeID: node.ID, VersionID: f.versionID, SHA256: v.BlobHash, Size: v.Size, Revision: node.Revision}
+	source, err := f.catalog.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
+	require.NoError(t, err)
+	req := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: profile.Fingerprint, AttachmentID: view.Attachment.ID, BuildID: view.Build.ID}}
+	calls := 0
+	injected := errors.New("maintenance lease unavailable")
+	plan, err := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, t.TempDir(), "owner", req, "https://archive.example.invalid", gate.MutateContext, func(context.Context, func() error) error { calls++; return injected })
+	t.Logf("maintain calls on success path=%d err=%v planID=%q", calls, err, plan.ID)
+	_, found, rerr := f.catalog.ExportPlanReplay(t.Context(), "owner", req)
+	t.Logf("plan sealed=%v %v", found, rerr)
+	require.NoError(t, err, "successful seal must not fail because of cleanup")
 }

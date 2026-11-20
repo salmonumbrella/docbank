@@ -65,6 +65,9 @@ type OKFGenerated struct {
 }
 
 func validateOKFRoles(plan Plan, d Document) error {
+	if plan.OKF != nil && (plan.Total != 1 || plan.Source.Kind != "explicit" || plan.PhotoRender != nil || plan.VolumeLimits != nil || (plan.DuplicatePolicy != "" && plan.DuplicatePolicy != "preserve") || len(plan.Roles) != 1 || plan.Roles[0] != (RolePolicy{Role: "okf_markdown"})) {
+		return ErrConflict
+	}
 	count := 0
 	for _, role := range d.Roles {
 		if role.Role != "okf_markdown" {

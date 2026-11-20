@@ -95,7 +95,7 @@ func TestOKFRoleValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := Plan{OKF: &option, Roles: []RolePolicy{{Role: "okf_markdown"}}}
+	plan := Plan{Total: 1, Source: Source{Kind: "explicit"}, OKF: &option, Roles: []RolePolicy{{Role: "okf_markdown"}}}
 	doc := Document{Member: m, Roles: []Role{{Role: "okf_markdown", Status: "available", Path: OKFPath(m), SHA256: hash, Size: 10, MediaType: "text/markdown; charset=utf-8", Recipe: raw}}}
 	if err := validateOKFRoles(plan, doc); err != nil {
 		t.Fatal(err)

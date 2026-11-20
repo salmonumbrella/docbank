@@ -3,12 +3,17 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/canonical"
 )
@@ -16,14 +21,14 @@ import (
 func validateOKFPlanRequest(r *bundle.PlanRequest) error {
 	selected := slices.ContainsFunc(r.Roles, func(p bundle.RolePolicy) bool { return p.Role == "okf_markdown" })
 	if selected != (r.OKF != nil) {
-		return bundle.ErrConflict
+		return fmt.Errorf("%w: okf_markdown role and okf selector must be supplied together", bundle.ErrConflict)
 	}
 	if !selected {
 		return nil
 	}
 	o := r.OKF
 	if len(r.Roles) != 1 || r.Roles[0] != (bundle.RolePolicy{Role: "okf_markdown"}) || r.PhotoRender != nil || len(r.Publications) != 0 || r.VolumeLimits != nil || (r.DuplicatePolicy != "" && r.DuplicatePolicy != "preserve") || !canonical.IsSHA256Hex(o.ProfileFingerprint) || !canonical.IsSHA256Hex(o.AttachmentID) || !canonical.IsSHA256Hex(o.BuildID) {
-		return bundle.ErrConflict
+		return fmt.Errorf("%w: OKF requires one okf_markdown role and no other export options", bundle.ErrConflict)
 	}
 	return nil
 }
@@ -40,6 +45,7 @@ type OKFInput struct {
 	ArtifactSHA256 string               `json:"artifact_sha256"`
 	ArtifactSize   int64                `json:"artifact_size"`
 	Build          RenditionBuildRecord `json:"build"`
+	Generated      *bundle.OKFGenerated `json:"generated,omitempty"`
 	Tags           []OKFTag             `json:"tags"`
 }
 
@@ -79,7 +85,7 @@ func (s *Store) exportOKFInput(ctx context.Context, q metadataQuerier, m bundle.
 	if attachmentID != option.AttachmentID || buildID != option.BuildID || attachmentVersion != m.VersionID || attachmentProfile != option.ProfileFingerprint {
 		return input, ErrRenditionTextStale
 	}
-	input.Build, err = loadRenditionBuild(ctx, q, buildID)
+	input.Build, err = loadRenditionBuildView(ctx, q, buildID, true)
 	if err != nil {
 		return input, err
 	}
@@ -95,14 +101,18 @@ func (s *Store) exportOKFInput(ctx context.Context, q metadataQuerier, m bundle.
 	if input.ArtifactSHA256 == "" {
 		return input, ErrRenditionTextUnavailable
 	}
-	bytes := 0
+	input.Generated, err = okfGenerated(ctx, q, input.Build, option.ProfileFingerprint, m.SHA256)
+	if err != nil {
+		return input, err
+	}
+	tagBytes := 0
 	err = queryRows(ctx, q, `SELECT t.id,t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=$1`, []any{m.NodeID}, func(rows *sql.Rows) error {
 		var tag OKFTag
 		if e := rows.Scan(&tag.ID, &tag.Name); e != nil {
 			return e
 		}
-		bytes += len(tag.ID) + len(tag.Name)
-		if len(input.Tags) >= 256 || bytes > 16<<10 {
+		tagBytes += len(tag.ID) + len(tag.Name)
+		if len(input.Tags) >= 256 || tagBytes > 16<<10 {
 			return fmt.Errorf("%w: OKF tags exceed 256 entries or 16 KiB of tag IDs and names", bundle.ErrLimit)
 		}
 		input.Tags = append(input.Tags, tag)
@@ -179,16 +189,18 @@ type PreparedOKFExport struct {
 	Physical BlobPhysical
 }
 
-func (s *Store) SealOKFExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, a PreparedOKFExport) (bundle.Plan, error) {
+func (s *Store) SealOKFExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, a PreparedOKFExport) (bundle.Plan, bool, error) {
 	if r.OKF == nil {
-		return bundle.Plan{}, bundle.ErrConflict
+		return bundle.Plan{}, false, bundle.ErrConflict
 	}
 	raw, err := canonical.Marshal(a.Receipt)
 	if err != nil {
-		return bundle.Plan{}, err
+		return bundle.Plan{}, false, err
 	}
+	checked := false
 	role := bundle.Role{Role: "okf_markdown", Status: roleAvailable, Path: bundle.OKFPath(a.Input.Member), SHA256: a.SHA256, Size: a.Size, MediaType: "text/markdown; charset=utf-8", Recipe: raw}
 	prepared := map[string]preparedExportRole{a.Input.Member.VersionID: {SHA256: a.SHA256, Size: a.Size, Physical: a.Physical, Role: role, check: func(ctx context.Context, tx *sql.Tx, m bundle.Member) (bundle.Document, error) {
+		checked = true
 		current, e := s.exportOKFInput(ctx, tx, m, *r.OKF)
 		if e != nil {
 			return bundle.Document{}, okfRenditionError(e)
@@ -198,12 +210,13 @@ func (s *Store) SealOKFExportPlan(ctx context.Context, owner string, r bundle.Pl
 			return bundle.Document{}, e
 		}
 		actual, e := canonical.Marshal(current)
-		if e != nil || !bytes.Equal(frozen, actual) || a.Receipt.Source != m || a.Receipt.Option != *r.OKF || a.Receipt.ArtifactSHA256 != current.ArtifactSHA256 || a.Receipt.ArtifactSize != current.ArtifactSize || a.Receipt.NodeRevision != m.Revision {
+		if e != nil || !bytes.Equal(frozen, actual) || a.Receipt.Source != m || a.Receipt.Option != *r.OKF || a.Receipt.ArtifactSHA256 != current.ArtifactSHA256 || a.Receipt.ArtifactSize != current.ArtifactSize || a.Receipt.NodeRevision != m.Revision || !generatedEqual(a.Receipt.Generated, current.Generated) {
 			return bundle.Document{}, fmt.Errorf("%w: member %d changed during preparation", bundle.ErrConflict, m.NodeID)
 		}
 		return bundle.Document{Member: m, Name: current.Name, MediaType: current.MediaType}, nil
 	}}}
-	return s.createExportPlan(ctx, owner, r, prepared)
+	plan, err := s.createExportPlan(ctx, owner, r, prepared)
+	return plan, checked && err == nil, err
 }
 
 // OKFBlobUnreferenced checks cleanup under the caller's exclusive maintenance lease.
@@ -211,4 +224,77 @@ func (s *Store) OKFBlobUnreferenced(ctx context.Context, hash string) (bool, err
 	var free bool
 	err := s.db.QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM blobs WHERE hash=$1) AND `+blobUnreferencedSQL("$1", blobRootReferences, blobGCHolds), hash).Scan(&free)
 	return free, err
+}
+
+func generatedEqual(a, b *bundle.OKFGenerated) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func okfGenerated(ctx context.Context, q metadataQuerier, build RenditionBuildRecord, profileID, source string) (*bundle.OKFGenerated, error) {
+	var receipt document.RenditionReceipt
+	if json.Unmarshal(build.ProviderReceipt, &receipt) != nil {
+		return nil, nil
+	}
+	if receipt.SourceSHA256 != "" && receipt.SourceSHA256 != source {
+		return nil, bundle.ErrConflict
+	}
+	var raw sql.NullString
+	err := q.QueryRowContext(ctx, `SELECT execution_snapshot_json FROM rendition_jobs WHERE job_id=$1`, build.ID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !raw.Valid {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := document.ParseRenditionExecutionSnapshotV1([]byte(raw.String))
+	if err != nil {
+		return nil, nil
+	}
+	profileRecord, err := loadProcessingProfile(ctx, q, profileID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var profile document.ProcessingProfileV1
+	if json.Unmarshal(profileRecord.CanonicalProfile, &profile, json.RejectUnknownMembers(true)) != nil || document.ValidateRenditionExecutionProfileV1(snapshot.Identity, profile) != nil || build.RenditionRequestFingerprint != profileRecord.RenditionRequestFingerprint {
+		return nil, nil
+	}
+	auth := snapshot.Authorization
+	fp, err := auth.Fingerprint()
+	if err != nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(auth, json.Deterministic(true))
+	if err != nil {
+		return nil, nil
+	}
+	hash := sha256.Sum256(data)
+	if receipt.ProviderID != auth.ProviderID || receipt.DescriptorFingerprint != auth.DescriptorFingerprint || receipt.PolicyFingerprint != auth.PolicyFingerprint || receipt.RenditionRequestFingerprint != auth.RenditionRequestFingerprint || receipt.SourceSHA256 != auth.SourceSHA256 || receipt.AuthorizationFingerprint != fp || hex.EncodeToString(hash[:]) != build.AuthorizationChecksum || receipt.RenditionRequestFingerprint != build.RenditionRequestFingerprint || receipt.OperationID != build.ProviderOperationID || receipt.CompletedAt != build.CompletedAt || !okfStableToken(receipt.ProviderID) || !okfStableToken(receipt.OperationID) {
+		return nil, nil
+	}
+	const layout = "2006-01-02T15:04:05.000000000Z"
+	start, e1 := time.Parse(layout, receipt.StartedAt)
+	end, e2 := time.Parse(layout, receipt.CompletedAt)
+	authorized, e3 := time.Parse(layout, auth.AuthorizedAt)
+	expires, e4 := time.Parse(layout, auth.ExpiresAt)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || start.Format(layout) != receipt.StartedAt || end.Format(layout) != receipt.CompletedAt || end.Before(start) || start.Before(authorized) || !end.Before(expires) {
+		return nil, nil
+	}
+	return &bundle.OKFGenerated{By: "process:" + receipt.ProviderID, At: end.UTC().Format(time.RFC3339Nano)}, nil
+}
+func okfStableToken(s string) bool {
+	if len(s) == 0 || len(s) > 128 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
 }

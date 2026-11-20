@@ -4,12 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -21,7 +19,6 @@ import (
 )
 
 var ErrOKFOriginUnavailable = errors.New("OKF source links need the stable address readers use. Set [web] public_origin (and [web] base_path behind a proxy subpath), then restart the daemon.")
-var okfProviderID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob.Store, spool, owner string, request bundle.PlanRequest, origin string, publish, maintain func(context.Context, func() error) error) (plan bundle.Plan, resultErr error) {
 	if request.OKF == nil {
@@ -49,9 +46,6 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	input, err := catalog.ExportOKFInput(ctx, owner, request)
 	if err != nil {
 		return plan, err
-	}
-	if input.ArtifactSize > document.MaxRenditionMarkdownBytes+(256<<10) {
-		return plan, bundle.ErrLimit
 	}
 	artifact, err := readExportBlob(ctx, blobs, input.ArtifactSHA256, input.ArtifactSize, document.MaxRenditionMarkdownBytes+(256<<10))
 	if err != nil {
@@ -84,22 +78,8 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	if request.OKF.IncludeSourceSHA256 {
 		header.SourceSHA256 = input.Member.SHA256
 	}
-	var probe struct {
-		SourceSHA256 string `json:"source_sha256"`
-	}
-	if json.Unmarshal(input.Build.ProviderReceipt, &probe) == nil && probe.SourceSHA256 != "" && probe.SourceSHA256 != input.Member.SHA256 {
-		return plan, bundle.ErrConflict
-	}
-	var receipt document.RenditionReceipt
-	if json.Unmarshal(input.Build.ProviderReceipt, &receipt, json.RejectUnknownMembers(true)) == nil {
-		if receipt.SourceSHA256 != "" && receipt.SourceSHA256 != input.Member.SHA256 {
-			return plan, bundle.ErrConflict
-		}
-		if receipt.SourceSHA256 == input.Member.SHA256 && receipt.RenditionRequestFingerprint == input.Build.RenditionRequestFingerprint && receipt.OperationID == input.Build.ProviderOperationID && receipt.CompletedAt == input.Build.CompletedAt && okfProviderID.MatchString(receipt.ProviderID) {
-			if at, e := time.Parse(time.RFC3339, receipt.CompletedAt); e == nil {
-				header.Generated = &okf.Generated{By: "process:" + receipt.ProviderID, At: at.UTC().Format(time.RFC3339Nano)}
-			}
-		}
+	if input.Generated != nil {
+		header.Generated = &okf.Generated{By: input.Generated.By, At: input.Generated.At}
 	}
 	output, err := okf.Render(header, body)
 	if err != nil {
@@ -112,7 +92,12 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	if err != nil {
 		return plan, err
 	}
-	defer func() { resultErr = errors.Join(resultErr, stage.Cleanup()) }()
+	stageCleaned := false
+	defer func() {
+		if !stageCleaned {
+			resultErr = errors.Join(resultErr, stage.Cleanup())
+		}
+	}()
 	if _, err = stage.File.Write(output); err != nil {
 		return plan, err
 	}
@@ -121,7 +106,7 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 		frozen.Generated = &bundle.OKFGenerated{By: header.Generated.By, At: header.Generated.At}
 	}
 	a := store.PreparedOKFExport{Input: input, Receipt: frozen}
-	var created bool
+	var created, own bool
 	err = publish(ctx, func() error {
 		return blobs.WithMutation(ctx, func() error {
 			if _, e := stage.File.Seek(0, io.SeekStart); e != nil {
@@ -138,10 +123,17 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 				return e
 			}
 			a.Physical = store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created}
-			plan, e = catalog.SealOKFExportPlan(ctx, owner, request, a)
+			if e = stage.Cleanup(); e != nil {
+				return e
+			}
+			stageCleaned = true
+			plan, own, e = catalog.SealOKFExportPlan(ctx, owner, request, a)
 			return e
 		})
 	})
+	if own {
+		return plan, nil
+	}
 	if created {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()

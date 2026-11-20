@@ -224,6 +224,10 @@ before daemon ownership. These tests do not qualify recursive attachment
 export or family maintenance and restore. Local execution provides no evidence
 of an untested operating system.
 
+## OKF Markdown
+
+An OKF plan selects one exact retained rendition. Sealing rechecks the captured source, tags, rendition and producer proof. The `generated` event uses `process:<provider id>` only when the retained receipt, execution authorization and selected profile agree; otherwise it is omitted. Preparation refuses more than 256 tags or 16 KiB of tag IDs and names. The ZIP manifest and metadata CSV disclose the original identity, name, path and SHA-256 even when the header omits the source hash.
+
 ## Rendered photos
 
 Photo source resolution extends `ListPhotoAssets`, including its complete query population and Hidden unlock. Preparation captures the exact display versions, asset/file/node revisions, authored decisions, and keyword values. The renderer reads verified originals sequentially, collects container inspection and metadata once and shares EXIF interpretation and RAW preview selection with visual previews, and writes temporary outputs before entering publication. Publication writes up to 1 GiB of staged output into blob storage under the mutation lease. Sealing then rechecks those inputs and records durable blob receipts and existing export role roots in a database transaction. A concurrent edit refuses the plan.

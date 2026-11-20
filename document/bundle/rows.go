@@ -39,9 +39,6 @@ func (v *RowValidator) finishParent() error {
 
 func (v *RowValidator) Add(d Document) error {
 	if v.rows == 0 {
-		if v.Plan.OKF != nil && (v.Plan.Total != 1 || v.Plan.Source.Kind != "explicit" || v.Plan.PhotoRender != nil || v.Plan.VolumeLimits != nil || (v.Plan.DuplicatePolicy != "" && v.Plan.DuplicatePolicy != "preserve") || len(v.Plan.Roles) != 1 || v.Plan.Roles[0] != (RolePolicy{Role: "okf_markdown"})) {
-			return ErrConflict
-		}
 		if v.Plan.PhotoRender != nil && (v.Plan.PhotoRender.Validate() != nil || *v.Plan.PhotoRender != v.Plan.PhotoRender.Canonical() || len(v.Plan.Roles) != 1 || v.Plan.Roles[0] != (RolePolicy{Role: "photo_rendered"})) {
 			return ErrConflict
 		}
