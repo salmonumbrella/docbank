@@ -185,7 +185,8 @@ func TestExportInspectionQueryPlans(t *testing.T) {
 
 func TestOKFExportPlanSchema(t *testing.T) {
 	option := map[string]any{"profile_fingerprint": strings.Repeat("a", 64), "attachment_id": strings.Repeat("b", 64), "build_id": strings.Repeat("c", 64)}
-	properties := retainedExportPlanSchema()["properties"].(schema)
+	properties, ok := retainedExportPlanSchema()["properties"].(schema)
+	require.True(t, ok)
 	assertSchemaAccepts(t, properties["okf"], option)
 	option["extra"] = true
 	assertSchemaRejects(t, properties["okf"], option)
@@ -195,7 +196,6 @@ func TestOKFExportPlanSchema(t *testing.T) {
 	assertSchemaAccepts(t, exportRoleSchema(), "okf_markdown")
 }
 
-//nolint:paralleltest // PDFium uses process-wide resources.
 func TestOKFExportPlanInspectionFromAPI(t *testing.T) {
 	f := newNativeExportFixture(t)
 	gate := api.NewOperationGate()

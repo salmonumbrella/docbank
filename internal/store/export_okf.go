@@ -101,9 +101,12 @@ func (s *Store) exportOKFInput(ctx context.Context, q metadataQuerier, m bundle.
 	if input.ArtifactSHA256 == "" {
 		return input, ErrRenditionTextUnavailable
 	}
-	input.Generated, err = okfGenerated(ctx, q, input.Build, option.ProfileFingerprint, m.SHA256)
+	generated, present, err := okfGenerated(ctx, q, input.Build, option.ProfileFingerprint, m.SHA256)
 	if err != nil {
 		return input, err
+	}
+	if present {
+		input.Generated = &generated
 	}
 	tagBytes := 0
 	err = queryRows(ctx, q, `SELECT t.id,t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=$1`, []any{m.NodeID}, func(rows *sql.Rows) error {
@@ -233,49 +236,68 @@ func generatedEqual(a, b *bundle.OKFGenerated) bool {
 	return *a == *b
 }
 
-func okfGenerated(ctx context.Context, q metadataQuerier, build RenditionBuildRecord, profileID, source string) (*bundle.OKFGenerated, error) {
+func okfGenerated(ctx context.Context, q metadataQuerier, build RenditionBuildRecord, profileID, source string) (bundle.OKFGenerated, bool, error) {
 	var receipt document.RenditionReceipt
-	if json.Unmarshal(build.ProviderReceipt, &receipt) != nil {
-		return nil, nil
+	if !decodeOKFReceipt(build.ProviderReceipt, &receipt) {
+		return bundle.OKFGenerated{}, false, nil
 	}
 	if receipt.SourceSHA256 != "" && receipt.SourceSHA256 != source {
-		return nil, bundle.ErrConflict
+		return bundle.OKFGenerated{}, false, bundle.ErrConflict
 	}
 	var raw sql.NullString
 	err := q.QueryRowContext(ctx, `SELECT execution_snapshot_json FROM rendition_jobs WHERE job_id=$1`, build.ID).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && !raw.Valid {
-		return nil, nil
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
 	}
 	if err != nil {
-		return nil, err
+		return bundle.OKFGenerated{}, false, err
 	}
-	snapshot, err := document.ParseRenditionExecutionSnapshotV1([]byte(raw.String))
-	if err != nil {
-		return nil, nil
+	if !raw.Valid {
+		return bundle.OKFGenerated{}, false, nil
+	}
+	snapshot, valid := parseOKFSnapshot(raw.String)
+	if !valid {
+		return bundle.OKFGenerated{}, false, nil
 	}
 	profileRecord, err := loadProcessingProfile(ctx, q, profileID)
-	if errors.Is(err, ErrNotFound) {
-		return nil, nil
+	missing := errors.Is(err, ErrNotFound)
+	if missing {
+		err = nil
 	}
 	if err != nil {
-		return nil, err
+		return bundle.OKFGenerated{}, false, err
 	}
+	if missing {
+		return bundle.OKFGenerated{}, false, nil
+	}
+	generated, valid := okfGeneratedProof(receipt, snapshot, profileRecord, build)
+	return generated, valid, nil
+}
+
+func decodeOKFReceipt(raw []byte, receipt *document.RenditionReceipt) bool {
+	return json.Unmarshal(raw, receipt) == nil
+}
+func parseOKFSnapshot(raw string) (document.RenditionExecutionSnapshotV1, bool) {
+	snapshot, err := document.ParseRenditionExecutionSnapshotV1([]byte(raw))
+	return snapshot, err == nil
+}
+func okfGeneratedProof(receipt document.RenditionReceipt, snapshot document.RenditionExecutionSnapshotV1, profileRecord ProcessingProfileRecord, build RenditionBuildRecord) (bundle.OKFGenerated, bool) {
 	var profile document.ProcessingProfileV1
 	if json.Unmarshal(profileRecord.CanonicalProfile, &profile, json.RejectUnknownMembers(true)) != nil || document.ValidateRenditionExecutionProfileV1(snapshot.Identity, profile) != nil || build.RenditionRequestFingerprint != profileRecord.RenditionRequestFingerprint {
-		return nil, nil
+		return bundle.OKFGenerated{}, false
 	}
 	auth := snapshot.Authorization
 	fp, err := auth.Fingerprint()
 	if err != nil {
-		return nil, nil
+		return bundle.OKFGenerated{}, false
 	}
 	data, err := json.Marshal(auth, json.Deterministic(true))
 	if err != nil {
-		return nil, nil
+		return bundle.OKFGenerated{}, false
 	}
 	hash := sha256.Sum256(data)
 	if receipt.ProviderID != auth.ProviderID || receipt.DescriptorFingerprint != auth.DescriptorFingerprint || receipt.PolicyFingerprint != auth.PolicyFingerprint || receipt.RenditionRequestFingerprint != auth.RenditionRequestFingerprint || receipt.SourceSHA256 != auth.SourceSHA256 || receipt.AuthorizationFingerprint != fp || hex.EncodeToString(hash[:]) != build.AuthorizationChecksum || receipt.RenditionRequestFingerprint != build.RenditionRequestFingerprint || receipt.OperationID != build.ProviderOperationID || receipt.CompletedAt != build.CompletedAt || !okfStableToken(receipt.ProviderID) || !okfStableToken(receipt.OperationID) {
-		return nil, nil
+		return bundle.OKFGenerated{}, false
 	}
 	const layout = "2006-01-02T15:04:05.000000000Z"
 	start, e1 := time.Parse(layout, receipt.StartedAt)
@@ -283,18 +305,19 @@ func okfGenerated(ctx context.Context, q metadataQuerier, build RenditionBuildRe
 	authorized, e3 := time.Parse(layout, auth.AuthorizedAt)
 	expires, e4 := time.Parse(layout, auth.ExpiresAt)
 	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || start.Format(layout) != receipt.StartedAt || end.Format(layout) != receipt.CompletedAt || end.Before(start) || start.Before(authorized) || !end.Before(expires) {
-		return nil, nil
+		return bundle.OKFGenerated{}, false
 	}
-	return &bundle.OKFGenerated{By: "process:" + receipt.ProviderID, At: end.UTC().Format(time.RFC3339Nano)}, nil
+	return bundle.OKFGenerated{By: "process:" + receipt.ProviderID, At: end.UTC().Format(time.RFC3339Nano)}, true
 }
 func okfStableToken(s string) bool {
 	if len(s) == 0 || len(s) > 128 {
 		return false
 	}
 	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
-			return false
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' {
+			continue
 		}
+		return false
 	}
 	return true
 }

@@ -41,7 +41,7 @@ func TestRenderOKFBodyAndStrings(t *testing.T) {
 }
 
 func TestDescriptionOKF(t *testing.T) {
-	body := []byte("# Title\n\n```\nignore\n```\n\n| col |\n| --- |\n\n<b>ignore</b>\n\n" + strings.Repeat("界", 300))
+	body := []byte("# Title\n\n```\nignore\n```\n\n| `col` |\n| --- |\n\n<b>ignore</b>\n\n" + strings.Repeat("界", 300))
 	if got := Description(body); got != strings.Repeat("界", 280) {
 		t.Fatalf("description = %q", got)
 	}
@@ -195,9 +195,12 @@ func TestRenderYAMLScalarRoundTrip(t *testing.T) {
 		t.Fatal("body changed")
 	}
 	var parsed struct {
-		Title   string                             `yaml:"title"`
-		Tags    []string                           `yaml:"tags"`
-		Sources []struct{ Title, Resource string } `yaml:"sources"`
+		Title   string   `yaml:"title"`
+		Tags    []string `yaml:"tags"`
+		Sources []struct {
+			Title    string `yaml:"title"`
+			Resource string `yaml:"resource"`
+		} `yaml:"sources"`
 	}
 	if err := yaml.Unmarshal(got[4:end+4], &parsed); err != nil {
 		t.Fatal(err)
@@ -219,5 +222,24 @@ func TestRenderYAMLLiteralMarkupGolden(t *testing.T) {
 	want := "---\ntype: \"Reference\"\ntitle: \"<b>&\"\ndescription: \"Visible prose.\"\ntags:\n  - \"<tag>&\"\nsources:\n  - id: \"original\"\n    resource: \"https://example.invalid/?a=1&b=2\"\n---\n" + string(body)
 	if string(got) != want {
 		t.Fatalf("got %q; want %q", got, want)
+	}
+}
+
+func TestReview4ListOnlyRenditionExcerpt(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"- Invoice subtotal: 12 units.\n- Tax: 2 units.\n", "Invoice subtotal: 12 units."},
+		{"> Meaningful blockquote prose.\n", "Meaningful blockquote prose."},
+		{"1. Ordered prose.\n2. More.\n", "Ordered prose."},
+		{"> > Nested quote.\n", "Nested quote."},
+		{"# Heading only\n", ""},
+		{"```\ncode only\n```\n", ""},
+		{strings.Repeat("a", 300) + " <b>html</b>\n\nNext prose.\n", "Next prose."},
+		{"| Revenue | Tax |\n| --- | --- |\n| 12 | 2 |\n", "Revenue"},
+		{"> - `code`\n> - Nested prose.\n", "Nested prose."},
+		{"# Heading\n\n```\nignore code\n```\n\n<div>ignore html</div>\n\n- ![image](https://example.invalid/i)\n- Usable prose.\n", "Usable prose."},
+	} {
+		if got := Description([]byte(tc.body)); got != tc.want {
+			t.Errorf("body %q got %q want %q", tc.body, got, tc.want)
+		}
 	}
 }

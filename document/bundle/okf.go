@@ -3,6 +3,7 @@ package bundle
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -92,7 +93,7 @@ func (p *PlanRequest) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	if value, ok := fields["okf"]; ok && value.Kind() == 'n' {
-		return fmt.Errorf("okf must not be null")
+		return errors.New("okf must not be null")
 	}
 	type planRequest PlanRequest
 	return json.Unmarshal(raw, (*planRequest)(p), json.RejectUnknownMembers(true))

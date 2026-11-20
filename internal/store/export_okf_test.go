@@ -11,6 +11,7 @@ import (
 )
 
 func TestOKFPlanAdmission(t *testing.T) {
+	t.Parallel()
 	hash := strings.Repeat("a", 64)
 	valid := bundle.PlanRequest{OKF: &bundle.OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}}
 	require.NoError(t, validateOKFPlanRequest(&valid))
@@ -28,6 +29,7 @@ func TestOKFPlanAdmission(t *testing.T) {
 }
 
 func TestOKFInputExactRendition(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -93,14 +95,15 @@ func checkExportOKFPlanSealAndReplay(t *testing.T, open func(*testing.T) *Store)
 	require.Equal(t, plan, replay)
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM export_role_roots WHERE plan_id=$1 AND blob_hash=$2`, plan.ID, a.SHA256).Scan(&roots))
 	require.Equal(t, 1, roots)
-
 }
 
 func TestOKFSealRejectsChangedAuthority(t *testing.T) {
+	t.Parallel()
 	checkExportOKFPlanSealAndReplay(t, newTestStore)
 }
 
 func TestOKFTagCountAndIdentityBudget(t *testing.T) {
+	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -111,7 +114,7 @@ func TestOKFTagCountAndIdentityBudget(t *testing.T) {
 	require.NoError(t, err)
 	m := bundle.Member{NodeID: node.ID, VersionID: versions[0], SHA256: node.BlobHash, Size: node.Size, Revision: node.Revision}
 	option := bundle.OKFExport{ProfileFingerprint: profile.Fingerprint, AttachmentID: attachment.ID, BuildID: build.ID}
-	for i := 0; i < 257; i++ {
+	for i := range 257 {
 		id := uuid.New().String()
 		_, err = s.db.ExecContext(t.Context(), `INSERT INTO tags(id,name) VALUES($1,$2)`, id, fmt.Sprintf("tag-%03d", i))
 		require.NoError(t, err)
@@ -136,6 +139,7 @@ func TestOKFTagCountAndIdentityBudget(t *testing.T) {
 }
 
 func TestOKFAuthorityChangesRefuseSeal(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"tag assign", "tag rename", "tag unassign", "trash", "new version", "other owner", "other version attachment", "changed head"} {
 		t.Run(change, func(t *testing.T) {
 			s, versions := newRenditionCatalogFixture(t)
@@ -215,6 +219,7 @@ func TestOKFAuthorityChangesRefuseSeal(t *testing.T) {
 }
 
 func TestOKFHiddenPhotoRefusesSealWithoutSession(t *testing.T) {
+	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
@@ -240,6 +245,7 @@ func TestOKFHiddenPhotoRefusesSealWithoutSession(t *testing.T) {
 }
 
 func TestOKFPopulatedBackendProjection(t *testing.T) {
+	t.Parallel()
 	project := func(s *Store) map[string]any {
 		versions := seedRenditionCatalogVersions(t, s)
 		profile := catalogProcessingProfile(t, false)
@@ -271,6 +277,7 @@ func TestOKFPopulatedBackendProjection(t *testing.T) {
 }
 
 func TestOKFMixedRoleDiagnostic(t *testing.T) {
+	t.Parallel()
 	request := bundle.PlanRequest{Roles: []bundle.RolePolicy{{Role: "original"}}, OKF: &bundle.OKFExport{}}
 	err := validateOKFPlanRequest(&request)
 	require.ErrorIs(t, err, bundle.ErrConflict)

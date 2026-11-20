@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/document/okf"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
@@ -35,6 +36,7 @@ import (
 )
 
 func TestOKFOriginRequired(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("synthetic PDF")))
 	require.NoError(t, err)
@@ -248,16 +250,15 @@ func TestOKFExportSyntheticPDF(t *testing.T) {
 	request.OperationID = uuid.New().String()
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = processing.PrepareOKFExportPlan(canceled, s.Store, s.Blobs, t.TempDir(), "master", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	_, err = processing.PrepareOKFExportPlan(canceled, s.Store, s.Blobs, "master", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
 	require.ErrorIs(t, err, context.Canceled)
 	member.Revision = updated.Revision
 	freshSource, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
 	require.NoError(t, err)
 	request.SourceID, request.MemberHash = freshSource.ID, freshSource.MemberHash
 	require.NoError(t, s.Blobs.Remove(hash))
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, t.TempDir(), "master", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "master", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
 	require.ErrorIs(t, err, bundle.ErrUnavailable)
-
 }
 
 //nolint:paralleltest // PDFium uses process-wide resources.
@@ -302,31 +303,62 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		}))
 		return out
 	}
-	spool := t.TempDir()
+	// Independently render the selected retained artifact for hash and race assertions.
+	expectedOutput := func(ctx context.Context, req bundle.PlanRequest, origin string) []byte {
+		input, e := s.ExportOKFInput(ctx, "owner", req)
+		require.NoError(t, e)
+		stream, _, e := s.Blobs.OpenStreamContext(ctx, input.ArtifactSHA256)
+		require.NoError(t, e)
+		artifact, e := io.ReadAll(stream)
+		require.NoError(t, e)
+		require.NoError(t, stream.Close())
+		front, body, e := document.ParseRenditionFrontMatterV1(artifact)
+		require.NoError(t, e)
+		title := input.Name
+		if front.Document.Title != "" {
+			title = front.Document.Title
+		}
+		header := okf.Header{Title: title, SourceTitle: input.Name, Resource: origin + "/api/v1/versions/" + input.Member.VersionID + "/content"}
+		for _, tag := range input.Tags {
+			header.Tags = append(header.Tags, tag.Name)
+		}
+		if req.OKF.IncludeSourceSHA256 {
+			header.SourceSHA256 = input.Member.SHA256
+		}
+		if input.Generated != nil {
+			header.Generated = &okf.Generated{By: input.Generated.By, At: input.Generated.At}
+		}
+		result, e := okf.Render(header, body)
+		require.NoError(t, e)
+		return result
+	}
+	assertNoStage := func() {
+		t.Helper()
+		require.NoError(t, filepath.WalkDir(filepath.Dir(s.BlobsDir), func(path string, d fs.DirEntry, e error) error {
+			if e != nil {
+				return e
+			}
+			require.False(t, strings.HasPrefix(d.Name(), ".export-okf-"), path)
+			return nil
+		}))
+	}
 	passthrough := func(_ context.Context, fn func() error) error { return fn() }
 	before := files()
 	injected := errors.New("synthetic publish failure")
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", request, "https://failure.example.invalid", func(context.Context, func() error) error { return injected }, passthrough)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", request, "https://failure.example.invalid", func(context.Context, func() error) error { return injected }, passthrough)
 	require.ErrorIs(t, err, injected)
 	require.Equal(t, before, files())
-	entries, err := os.ReadDir(spool)
-	require.NoError(t, err)
-	require.Empty(t, entries)
+	assertNoStage()
 	interrupted, stop := context.WithCancel(t.Context())
-	_, err = processing.PrepareOKFExportPlan(interrupted, s.Store, s.Blobs, spool, "owner", request, "https://failure.example.invalid", func(_ context.Context, fn func() error) error { stop(); return fn() }, passthrough)
+	_, err = processing.PrepareOKFExportPlan(interrupted, s.Store, s.Blobs, "owner", request, "https://failure.example.invalid", func(_ context.Context, fn func() error) error { stop(); return fn() }, passthrough)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, before, files())
-	entries, err = os.ReadDir(spool)
-	require.NoError(t, err)
-	require.Empty(t, entries)
+	assertNoStage()
 	syncFailure := errors.New("synthetic shard sync failure")
 	originalSync := pack.SyncDir
 	writeFail := func(_ context.Context, fn func() error) error {
-		stages, e := os.ReadDir(spool)
-		require.NoError(t, e)
-		require.Len(t, stages, 1)
-		output, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
-		require.NoError(t, e)
+		assertNoStage()
+		output := expectedOutput(t.Context(), request, "https://failed-sync.example.invalid")
 		digest := sha256.Sum256(output)
 		hash := hex.EncodeToString(digest[:])
 		shard := filepath.Join(s.BlobsDir, hash[:2])
@@ -340,12 +372,10 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		defer func() { pack.SyncDir = originalSync }()
 		return fn()
 	}
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", request, "https://failed-sync.example.invalid", writeFail, passthrough)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", request, "https://failed-sync.example.invalid", writeFail, passthrough)
 	require.ErrorIs(t, err, syncFailure)
 	require.Equal(t, before, files(), "failed durable write must not leave a new loose blob")
-	entries, err = os.ReadDir(spool)
-	require.NoError(t, err)
-	require.Empty(t, entries)
+	assertNoStage()
 
 	// A competing seal wins after admission, with bytes distinct from this candidate.
 	for _, failCleanup := range []bool{false, true} {
@@ -355,11 +385,7 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		var candidateHash, winnerHash string
 		cleanupFailure := errors.New("synthetic cleanup failure")
 		publishWinner := func(ctx context.Context, fn func() error) error {
-			stages, e := os.ReadDir(spool)
-			require.NoError(t, e)
-			require.Len(t, stages, 1)
-			candidate, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
-			require.NoError(t, e)
+			candidate := expectedOutput(ctx, candidateRequest, "https://candidate.example.invalid")
 			digest := sha256.Sum256(candidate)
 			candidateHash = hex.EncodeToString(digest[:])
 			winnerBytes := bytes.Replace(candidate, []byte("candidate.example.invalid"), []byte("winner.example.invalid"), 1)
@@ -387,7 +413,7 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		if failCleanup {
 			maintain = func(context.Context, func() error) error { return cleanupFailure }
 		}
-		result, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", candidateRequest, "https://candidate.example.invalid", publishWinner, maintain)
+		result, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", candidateRequest, "https://candidate.example.invalid", publishWinner, maintain)
 		require.Equal(t, winner.ID, result.ID)
 		if failCleanup {
 			require.ErrorIs(t, e, cleanupFailure)
@@ -412,7 +438,6 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	}
 	outcomes := make(chan outcome, 2)
 	var publications atomic.Int32
-	firstSpool, secondSpool := t.TempDir(), t.TempDir()
 	firstPublish := func(_ context.Context, fn func() error) error {
 		publications.Add(1)
 		close(entered)
@@ -421,14 +446,14 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	}
 	secondPublish := func(_ context.Context, fn func() error) error { publications.Add(1); return fn() }
 	go func() {
-		p, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, firstSpool, "owner", replayRequest, "https://replay.example.invalid", firstPublish, passthrough)
+		p, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", replayRequest, "https://replay.example.invalid", firstPublish, passthrough)
 		outcomes <- outcome{p, e}
 	}()
 	<-entered
 	started := make(chan struct{})
 	go func() {
 		close(started)
-		p, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, secondSpool, "owner", replayRequest, "https://replay.example.invalid", secondPublish, passthrough)
+		p, e := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", replayRequest, "https://replay.example.invalid", secondPublish, passthrough)
 		outcomes <- outcome{p, e}
 	}()
 	<-started
@@ -443,11 +468,7 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	cancelCtx, cancelAfterRename := context.WithCancel(t.Context())
 	beforeCancel := files()
 	cancelPublish := func(_ context.Context, fn func() error) error {
-		stages, e := os.ReadDir(spool)
-		require.NoError(t, e)
-		require.Len(t, stages, 1)
-		output, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
-		require.NoError(t, e)
+		output := expectedOutput(t.Context(), request, "https://cancel-after-rename.example.invalid")
 		sum := sha256.Sum256(output)
 		h := hex.EncodeToString(sum[:])
 		shard := filepath.Join(s.BlobsDir, h[:2])
@@ -462,20 +483,18 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		defer func() { pack.SyncDir = originalSync }()
 		return fn()
 	}
-	_, err = processing.PrepareOKFExportPlan(cancelCtx, s.Store, s.Blobs, spool, "owner", request, "https://cancel-after-rename.example.invalid", cancelPublish, passthrough)
+	_, err = processing.PrepareOKFExportPlan(cancelCtx, s.Store, s.Blobs, "owner", request, "https://cancel-after-rename.example.invalid", cancelPublish, passthrough)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, beforeCancel, files())
-	entries, err = os.ReadDir(spool)
-	require.NoError(t, err)
-	require.Empty(t, entries)
+	assertNoStage()
 	existingRequest := request
 	existingRequest.OperationID = uuid.New().String()
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", existingRequest, "https://existing.example.invalid", passthrough, passthrough)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", existingRequest, "https://existing.example.invalid", passthrough, passthrough)
 	require.NoError(t, err)
 	existing := files()
 	retry := request
 	retry.OperationID = uuid.New().String()
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", retry, "https://existing.example.invalid", func(_ context.Context, fn func() error) error {
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", retry, "https://existing.example.invalid", func(_ context.Context, fn func() error) error {
 		if e := fn(); e != nil {
 			return e
 		}
@@ -492,12 +511,10 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		return fn()
 	}
 	maintain := func(_ context.Context, fn func() error) error { return fn() }
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", request, "https://archive.example.invalid", publish, maintain)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", request, "https://archive.example.invalid", publish, maintain)
 	require.ErrorIs(t, err, bundle.ErrConflict)
 	require.Equal(t, before, files())
-	entries, err = os.ReadDir(spool)
-	require.NoError(t, err)
-	require.Empty(t, entries)
+	assertNoStage()
 	current, err := s.NodeByID(t.Context(), node.ID)
 	require.NoError(t, err)
 	member.Revision = current.Revision
@@ -507,12 +524,8 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	rootRequest.OperationID, rootRequest.SourceID, rootRequest.MemberHash = uuid.New().String(), rootSource.ID, rootSource.MemberHash
 	var rootedHash string
 	competingPublish := func(ctx context.Context, fn func() error) error {
-		stages, e := os.ReadDir(spool)
-		require.NoError(t, e)
-		require.Len(t, stages, 1)
-		output, e := os.ReadFile(filepath.Join(spool, stages[0].Name(), "payload.tmp"))
-		require.NoError(t, e)
-		_, _, e = s.Move(ctx, current.ID, s.RootID(), "renamed-again.pdf", current.Revision)
+		output := expectedOutput(ctx, rootRequest, "https://concurrent.example.invalid")
+		_, _, e := s.Move(ctx, current.ID, s.RootID(), "renamed-again.pdf", current.Revision)
 		require.NoError(t, e)
 		sealErr := fn()
 		require.ErrorIs(t, sealErr, bundle.ErrConflict)
@@ -531,7 +544,7 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		}))
 		return sealErr
 	}
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", rootRequest, "https://concurrent.example.invalid", competingPublish, passthrough)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", rootRequest, "https://concurrent.example.invalid", competingPublish, passthrough)
 	require.ErrorIs(t, err, bundle.ErrConflict)
 	require.NotEmpty(t, rootedHash)
 	rooted, _, err := s.Blobs.OpenStreamContext(t.Context(), rootedHash)
@@ -557,7 +570,7 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 		attempted = true
 		return fn()
 	}
-	retainedPlan, err := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, spool, "owner", pruneRequest, "https://prune.example.invalid", prune, passthrough)
+	retainedPlan, err := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", pruneRequest, "https://prune.example.invalid", prune, passthrough)
 	require.NoError(t, err)
 	require.True(t, attempted)
 	retained, err := s.ContentVersionByID(t.Context(), node.CurrentVersionID)
@@ -567,9 +580,29 @@ func TestOKFFailedSealReclaimsNewBlob(t *testing.T) {
 	require.NoError(t, s.WalkExportDocuments(t.Context(), retainedPlan.ID, func(d bundle.Document) error { docs = append(docs, d); return nil }))
 	require.Len(t, docs, 1)
 	require.Equal(t, member, docs[0].Member)
-	entries, err = os.ReadDir(spool)
+	assertNoStage()
+	// A deduplicated, unreferenced blob belongs to an earlier writer and must survive.
+	unrootedRequest := pruneRequest
+	unrootedRequest.OperationID = uuid.New().String()
+	unrootedBytes := expectedOutput(t.Context(), unrootedRequest, "https://unrooted.example.invalid")
+	unrootedHash, _, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(unrootedBytes))
 	require.NoError(t, err)
-	require.Empty(t, entries)
+	unreferenced, err := s.OKFBlobUnreferenced(t.Context(), unrootedHash)
+	require.NoError(t, err)
+	require.True(t, unreferenced)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", unrootedRequest, "https://unrooted.example.invalid", func(ctx context.Context, fn func() error) error {
+		_, _, e := s.Move(ctx, current.ID, s.RootID(), "changed-final.pdf", current.Revision)
+		require.NoError(t, e)
+		return fn()
+	}, passthrough)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	// Catalog-backed reads reject unreferenced blobs; a repeated verified write
+	// proves the physical object remains and was deduplicated.
+	retainedWrite, err := s.Blobs.WriteDetailedContext(t.Context(), bytes.NewReader(unrootedBytes))
+	require.NoError(t, err)
+	require.Equal(t, unrootedHash, retainedWrite.Hash)
+	require.False(t, retainedWrite.Created)
+	assertNoStage()
 }
 
 //nolint:paralleltest // PDFium uses process-wide resources.
@@ -607,7 +640,7 @@ func TestOKFBlankPDF(t *testing.T) {
 	require.NoError(t, err)
 	request := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: observed.Profile.Fingerprint, AttachmentID: observed.Attachment, BuildID: observed.Build}}
 	gate := api.NewOperationGate()
-	plan, err := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, t.TempDir(), "owner", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	plan, err := processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
 	require.NoError(t, err)
 	require.NoError(t, s.WalkExportDocuments(t.Context(), plan.ID, func(d bundle.Document) error {
 		stream, _, e := s.Blobs.OpenStreamContext(t.Context(), d.Roles[0].SHA256)
@@ -623,6 +656,7 @@ func TestOKFBlankPDF(t *testing.T) {
 }
 
 func TestOKFRejectsLegacyUnenvelopedRendition(t *testing.T) {
+	t.Parallel()
 	var cfg config.Config
 	ts, s := newTestServer(t, func(d *api.Deps) {
 		renditionTextConfig(d)
@@ -636,7 +670,7 @@ func TestOKFRejectsLegacyUnenvelopedRendition(t *testing.T) {
 	require.NoError(t, err)
 	request := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: fixture.profile.Fingerprint, AttachmentID: fixture.attachment, BuildID: fixture.build}}
 	gate := api.NewOperationGate()
-	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, t.TempDir(), "owner", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	_, err = processing.PrepareOKFExportPlan(t.Context(), s.Store, s.Blobs, "owner", request, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
 	require.ErrorIs(t, err, bundle.ErrUnavailable)
 	require.ErrorContains(t, err, "reprocess")
 }

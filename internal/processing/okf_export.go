@@ -1,26 +1,25 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/document/okf"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/store"
 )
 
-var ErrOKFOriginUnavailable = errors.New("OKF source links need the stable address readers use. Set [web] public_origin (and [web] base_path behind a proxy subpath), then restart the daemon.")
+var ErrOKFOriginUnavailable = errors.New("okf source links need the stable address readers use; set [web] public_origin (and [web] base_path behind a proxy subpath), then restart the daemon")
 
-func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob.Store, spool, owner string, request bundle.PlanRequest, origin string, publish, maintain func(context.Context, func() error) error) (plan bundle.Plan, resultErr error) {
+func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob.Store, owner string, request bundle.PlanRequest, origin string, publish, maintain func(context.Context, func() error) error) (plan bundle.Plan, resultErr error) {
 	if request.OKF == nil {
 		return plan, bundle.ErrConflict
 	}
@@ -85,22 +84,6 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	if err != nil {
 		return plan, err
 	}
-	if err = os.MkdirAll(spool, 0700); err != nil {
-		return plan, err
-	}
-	stage, err := filepublish.CreateStage(spool, ".export-okf-")
-	if err != nil {
-		return plan, err
-	}
-	stageCleaned := false
-	defer func() {
-		if !stageCleaned {
-			resultErr = errors.Join(resultErr, stage.Cleanup())
-		}
-	}()
-	if _, err = stage.File.Write(output); err != nil {
-		return plan, err
-	}
 	frozen := bundle.OKFReceipt{Version: 1, Source: input.Member, NodeRevision: input.Member.Revision, Option: *request.OKF, ArtifactSHA256: input.ArtifactSHA256, ArtifactSize: input.ArtifactSize, Resource: resource, Tags: tags}
 	if header.Generated != nil {
 		frozen.Generated = &bundle.OKFGenerated{By: header.Generated.By, At: header.Generated.At}
@@ -109,10 +92,7 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 	var created, own bool
 	err = publish(ctx, func() error {
 		return blobs.WithMutation(ctx, func() error {
-			if _, e := stage.File.Seek(0, io.SeekStart); e != nil {
-				return e
-			}
-			written, e := blobs.WriteDetailedWithPublicationContext(ctx, stage.File)
+			written, e := blobs.WriteDetailedWithPublicationContext(ctx, bytes.NewReader(output))
 			created = written.Created
 			a.SHA256, a.Size = written.Hash, written.Size
 			if e != nil {
@@ -123,10 +103,6 @@ func PrepareOKFExportPlan(ctx context.Context, catalog *store.Store, blobs *blob
 				return e
 			}
 			a.Physical = store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created}
-			if e = stage.Cleanup(); e != nil {
-				return e
-			}
-			stageCleaned = true
 			plan, own, e = catalog.SealOKFExportPlan(ctx, owner, request, a)
 			return e
 		})

@@ -49,6 +49,7 @@ func (s *okfTestStream) Read(p []byte) (int, error) {
 
 type okfCancelStream struct {
 	*okfTestStream
+
 	cancel context.CancelFunc
 }
 
@@ -59,6 +60,7 @@ func (s *okfCancelStream) Read(p []byte) (int, error) {
 }
 
 func TestOKFOriginalStreamBoundsAndIntegrity(t *testing.T) {
+	t.Parallel()
 	data := "synthetic original"
 	sum := sha256.Sum256([]byte(data))
 	hash := hex.EncodeToString(sum[:])
@@ -107,6 +109,7 @@ func TestOKFOriginalStreamBoundsAndIntegrity(t *testing.T) {
 }
 
 func TestOKFWorkerReceiptAndReattachment(t *testing.T) {
+	t.Parallel()
 	f := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())
@@ -136,7 +139,7 @@ func TestOKFWorkerReceiptAndReattachment(t *testing.T) {
 		member := bundle.Member{NodeID: node.ID, VersionID: version, SHA256: v.BlobHash, Size: v.Size, Revision: node.Revision}
 		source, e := f.catalog.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{member}}, nil)
 		require.NoError(t, e)
-		plan, e := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, t.TempDir(), "owner", bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: profile.Fingerprint, AttachmentID: view.Attachment.ID, BuildID: view.Build.ID}}, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+		plan, e := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, "owner", bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: profile.Fingerprint, AttachmentID: view.Attachment.ID, BuildID: view.Build.ID}}, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
 		require.NoError(t, e)
 		require.NoError(t, f.catalog.WalkExportDocuments(t.Context(), plan.ID, func(d bundle.Document) error {
 			var receipt bundle.OKFReceipt
@@ -219,10 +222,10 @@ func TestOKFWorkerReceiptAndReattachment(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestOKFReceiptVariants(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, provider, source string
 		receiptJSON            string
@@ -291,7 +294,7 @@ func TestOKFReceiptVariants(t *testing.T) {
 				require.NoError(t, e)
 				require.NoError(t, os.WriteFile(layout.LoosePath(hash), bytes.Repeat([]byte("x"), int(staged.Build.Artifacts[1].Size)), 0600))
 			}
-			plan, err := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, t.TempDir(), "owner", req, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+			plan, err := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, "owner", req, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
 			if tc.tampered {
 				require.ErrorIs(t, err, bundle.ErrUnavailable)
 				return
@@ -323,6 +326,7 @@ func TestOKFReceiptVariants(t *testing.T) {
 }
 
 func TestOKFRejectsEmptyLegacy(t *testing.T) {
+	t.Parallel()
 	for _, mediaType := range []string{"application/pdf", "text/plain"} {
 		t.Run(mediaType, func(t *testing.T) { testOKFRejectsEmptyLegacy(t, mediaType) })
 	}
@@ -360,11 +364,12 @@ func testOKFRejectsEmptyLegacy(t *testing.T, mediaType string) {
 	require.NoError(t, err)
 	req := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: f.profile.Fingerprint, AttachmentID: staged.Attachment.ID, BuildID: staged.Build.ID}}
 	gate := newTestOperationGate()
-	_, err = PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, t.TempDir(), "owner", req, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
+	_, err = PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, "owner", req, "https://archive.example.invalid", gate.MutateContext, gate.MaintainContext)
 	require.ErrorIs(t, err, bundle.ErrUnavailable)
 }
 
 func TestOKFExpiredSourcePrunedDuringPreparation(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		f := newPublicationFixture(t)
 		staged := f.stage(t, publicationIDs{"expiry-build", "expiry-attachment", "expiry-generation"}, "synthetic text", "Synthetic heading")
@@ -397,7 +402,7 @@ func TestOKFExpiredSourcePrunedDuringPreparation(t *testing.T) {
 		require.NoError(t, err)
 		time.Sleep(9 * time.Minute)
 		gate := newTestOperationGate()
-		spool := t.TempDir()
+
 		pruned := false
 		publish := func(ctx context.Context, fn func() error) error {
 			time.Sleep(2 * time.Minute)
@@ -407,7 +412,7 @@ func TestOKFExpiredSourcePrunedDuringPreparation(t *testing.T) {
 			pruned = true
 			return fn()
 		}
-		_, err = PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, spool, "owner", req, "https://archive.example.invalid", publish, gate.MaintainContext)
+		_, err = PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, "owner", req, "https://archive.example.invalid", publish, gate.MaintainContext)
 		require.True(t, pruned)
 		require.ErrorIs(t, err, store.ErrNotFound)
 		_, versionErr := f.catalog.ContentVersionByID(t.Context(), f.versionID)
@@ -415,13 +420,18 @@ func TestOKFExpiredSourcePrunedDuringPreparation(t *testing.T) {
 		after, e := f.blobs.List()
 		require.NoError(t, e)
 		require.Equal(t, before, after)
-		entries, e := os.ReadDir(spool)
-		require.NoError(t, e)
-		require.Empty(t, entries)
+		require.NoError(t, filepath.WalkDir(filepath.Dir(f.databasePath), func(path string, d os.DirEntry, e error) error {
+			if e != nil {
+				return e
+			}
+			require.False(t, strings.HasPrefix(d.Name(), ".export-okf-"), path)
+			return nil
+		}))
 	})
 }
 
 func TestReviewOKFCleanupFailureAfterSuccessfulSeal(t *testing.T) {
+	t.Parallel()
 	f := newPublicationFixture(t)
 	provider := newWorkerProvider(t)
 	profile := workerProcessingProfile(t, provider.Descriptor())
@@ -445,7 +455,7 @@ func TestReviewOKFCleanupFailureAfterSuccessfulSeal(t *testing.T) {
 	req := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "okf_markdown"}}, OKF: &bundle.OKFExport{ProfileFingerprint: profile.Fingerprint, AttachmentID: view.Attachment.ID, BuildID: view.Build.ID}}
 	calls := 0
 	injected := errors.New("maintenance lease unavailable")
-	plan, err := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, t.TempDir(), "owner", req, "https://archive.example.invalid", gate.MutateContext, func(context.Context, func() error) error { calls++; return injected })
+	plan, err := PrepareOKFExportPlan(t.Context(), f.catalog, f.blobs, "owner", req, "https://archive.example.invalid", gate.MutateContext, func(context.Context, func() error) error { calls++; return injected })
 	t.Logf("maintain calls on success path=%d err=%v planID=%q", calls, err, plan.ID)
 	_, found, rerr := f.catalog.ExportPlanReplay(t.Context(), "owner", req)
 	t.Logf("plan sealed=%v %v", found, rerr)

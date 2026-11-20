@@ -10,6 +10,7 @@ import (
 
 	"github.com/yuin/goldmark/v2/ast"
 	"github.com/yuin/goldmark/v2/extension"
+	extast "github.com/yuin/goldmark/v2/extension/ast"
 	"github.com/yuin/goldmark/v2/parser"
 	"unicode/utf8"
 
@@ -98,7 +99,7 @@ func Render(h Header, body []byte) ([]byte, error) {
 	return out, nil
 }
 
-// Description selects the first ordinary paragraph, folded and rune-bounded.
+// Description selects the first usable prose block or table cell, folded and rune-bounded.
 func Description(body []byte) string {
 	if len(body) > descriptionScanBytes {
 		cut := descriptionScanBytes
@@ -112,38 +113,41 @@ func Description(body []byte) string {
 		body = body[:cut]
 	}
 	root := parser.New(parser.WithExtensions(extension.NewGFMParser())).Parse(body)
-	for paragraph := root.FirstChild(); paragraph != nil; paragraph = paragraph.NextSibling() {
-		if paragraph.Kind() != ast.KindParagraph {
-			continue
+	var result string
+	_ = ast.Walk(root, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
 		}
-		hasHTML := false
-		_ = ast.Walk(paragraph, func(child ast.Node, entering bool) (ast.WalkStatus, error) {
-			if entering && child.Kind() == ast.KindRawHTML {
-				hasHTML = true
+		switch n.Kind() {
+		case ast.KindDocument, ast.KindBlockquote, ast.KindList, ast.KindListItem, extast.KindTable, extast.KindTableHeader, extast.KindTableBody, extast.KindTableRow:
+			return ast.WalkContinue, nil
+		case ast.KindParagraph, extast.KindTableCell:
+			result = descriptionParagraph(n, body)
+			if result != "" {
 				return ast.WalkStop, nil
 			}
-			return ast.WalkContinue, nil
-		})
-		if hasHTML {
-			continue
+			return ast.WalkSkipChildren, nil
+		default:
+			return ast.WalkSkipChildren, nil
 		}
-		if result := descriptionParagraph(paragraph, body); result != "" {
-			return result
-		}
-	}
-	return ""
+	})
+	return result
 }
 
 func descriptionParagraph(paragraph ast.Node, body []byte) string {
 	var result strings.Builder
 	count := 0
 	space := false
+	hasHTML := false
 	_ = ast.Walk(paragraph, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
 		switch n.Kind() {
-		case ast.KindRawHTML, ast.KindCodeSpan, ast.KindImage:
+		case ast.KindRawHTML:
+			hasHTML = true
+			return ast.WalkStop, nil
+		case ast.KindCodeSpan, ast.KindImage:
 			return ast.WalkSkipChildren, nil
 		}
 		value, ok := n.(*ast.Text)
@@ -157,14 +161,14 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 			}
 			if space && count > 0 {
 				if count >= 280 {
-					return ast.WalkStop, nil
+					break
 				}
 				result.WriteByte(' ')
 				count++
 			}
 			space = false
 			if count >= 280 {
-				return ast.WalkStop, nil
+				break
 			}
 			result.WriteRune(r)
 			count++
@@ -174,5 +178,8 @@ func descriptionParagraph(paragraph ast.Node, body []byte) string {
 		}
 		return ast.WalkContinue, nil
 	})
+	if hasHTML {
+		return ""
+	}
 	return strings.TrimSpace(result.String())
 }

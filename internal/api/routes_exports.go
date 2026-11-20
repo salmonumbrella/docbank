@@ -206,7 +206,7 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 				}
 				origin += d.Cfg.Web.BasePath
 			}
-			p, err = processing.PrepareOKFExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, exporter.ArchiveDirectory), owner, in.Body, origin, g.MutateContext, g.MaintainContext)
+			p, err = processing.PrepareOKFExportPlan(ctx, d.Store, d.Blobs, owner, in.Body, origin, g.MutateContext, g.MaintainContext)
 		} else if in.Body.PhotoRender != nil {
 			p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, exporter.ArchiveDirectory), owner, in.Body, g.MutateContext)
 		} else {
