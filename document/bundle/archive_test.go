@@ -106,7 +106,11 @@ func TestOKFRoleValidation(t *testing.T) {
 		t.Fatal("accepted mixed roles")
 	}
 	doc.Roles = doc.Roles[:1]
-	doc.Roles[0].Recipe = []byte(`{"unknown":true}`)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	fields["unknown"] = true
+	doc.Roles[0].Recipe, err = json.Marshal(fields)
+	require.NoError(t, err)
 	if err := validateOKFRoles(plan, doc); err == nil {
 		t.Fatal("accepted invalid receipt")
 	}

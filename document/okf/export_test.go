@@ -131,7 +131,7 @@ func TestOKFTagNameByteLimit(t *testing.T) {
 	}
 }
 
-func TestReview3DescriptionAfterNonProse(t *testing.T) {
+func TestDescriptionAfterNonProse(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{"![alt](https://example.invalid/image)\n\nMeaningful prose.\n", "Meaningful prose."},
 		{"`code only`\n\nMeaningful prose.\n", "Meaningful prose."},
@@ -227,7 +227,7 @@ func TestRenderYAMLLiteralMarkupGolden(t *testing.T) {
 	}
 }
 
-func TestReview4ListOnlyRenditionExcerpt(t *testing.T) {
+func TestDescriptionNestedProse(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{"- Invoice subtotal: 12 units.\n- Tax: 2 units.\n", "Invoice subtotal: 12 units."},
 		{"> Meaningful blockquote prose.\n", "Meaningful blockquote prose."},
@@ -246,7 +246,7 @@ func TestReview4ListOnlyRenditionExcerpt(t *testing.T) {
 	}
 }
 
-func TestReview5InvisibleAndReference(t *testing.T) {
+func TestDescriptionInvisibleAndReference(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{"\u200b\u200d\n\nVisible prose.\n", "Visible prose."},
 		{"Family 👩‍👩‍👦 text.\n", "Family 👩‍👩‍👦 text."},

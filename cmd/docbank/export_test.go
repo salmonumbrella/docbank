@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/docbank/internal/store"
 )
 
 func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
@@ -226,17 +225,7 @@ func TestPhotoExportPreviewDescribesDeliveredCopies(t *testing.T) {
 }
 
 func TestPhotoExportCLIHiddenAuthentication(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	dir := t.TempDir()
-	t.Setenv("DOCBANK_HOME", dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[server]\napi_key = 'synthetic-key-012345678901234567890123456789'\n[web]\nenabled = true\npublic_origin = 'https://archive.example.invalid'\n"), 0600))
-	startTestDaemon(t, dir)
+	setupVaultHome(t, "[server]\napi_key = 'synthetic-key-012345678901234567890123456789'\n[web]\nenabled = true\npublic_origin = 'https://archive.example.invalid'\n")
 	file := writeSourceFile(t, "synthetic-hidden.jpg", string(mediatest.JPEG(3, 2, color.White)))
 	_, err := runCLI(t, "add", file, "--dest", "/")
 	require.NoError(t, err)
@@ -271,29 +260,35 @@ func TestPhotoExportCLIHiddenAuthentication(t *testing.T) {
 		_, _, err = connection.PhotoHidden(t.Context(), "lock", "", "")
 		require.NoError(t, err)
 	}
-	// A locked exact-member OKF preview retries with an unlock cookie before
-	// the deliberately absent rendition is reported.
-	node, err = connection.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/synthetic-hidden.jpg"}})
-	require.NoError(t, err)
-	hash := strings.Repeat("a", 64)
-	r := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), Members: []bundle.Member{{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: node.Size, Revision: node.Revision}}, OKF: &bundle.OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}}
-	encoded, err := json.Marshal(r)
-	require.NoError(t, err)
-	input := writeSourceFile(t, "hidden-okf.json", string(encoded))
-	passcode := strings.NewReader("synthetic-passcode\n")
-	exportPreviewCmd.SetIn(passcode)
-	_, err = runCLI(t, "export", "preview", "--request", input, "--json")
-	require.Error(t, err)
-	require.Zero(t, passcode.Len(), "OKF hidden retry must request a passcode")
-	require.NotErrorIs(t, err, store.ErrHiddenLocked)
+	t.Run("OKF unlock retry", func(t *testing.T) {
+		// A locked exact-member OKF preview retries with an unlock cookie before
+		// the deliberately absent rendition is reported.
+		node, err = connection.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/synthetic-hidden.jpg"}})
+		require.NoError(t, err)
+		hash := strings.Repeat("a", 64)
+		r := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), Members: []bundle.Member{{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: node.Size, Revision: node.Revision}}, OKF: &bundle.OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}}
+		encoded, err := json.Marshal(r)
+		require.NoError(t, err)
+		input := writeSourceFile(t, "hidden-okf.json", string(encoded))
+		passcode := strings.NewReader("synthetic-passcode\n")
+		exportPreviewCmd.SetIn(passcode)
+		_, err = runCLI(t, "export", "preview", "--request", input, "--json")
+		require.ErrorContains(t, err, "rendition selection is stale")
+		require.Zero(t, passcode.Len(), "OKF hidden retry must request a passcode")
+	})
 }
 
-func TestOKFExportRequestAndPreview(t *testing.T) {
+func TestOKFExportRequest(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	request := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), Members: []bundle.Member{{NodeID: 1, VersionID: uuid.New().String(), SHA256: hash, Size: 1, Revision: 1}}, OKF: &bundle.OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}}
 	require.NoError(t, validateExportRequest(request))
 	request.Members[0].Revision = 0
 	require.Error(t, validateExportRequest(request))
+}
+
+func TestOKFExportPreview(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	request := exportPreviewRequest{OKF: &bundle.OKFExport{ProfileFingerprint: hash, AttachmentID: hash, BuildID: hash}}
 	var out bytes.Buffer
 	require.NoError(t, writeExportPreview(&out, bundle.Plan{OKF: request.OKF, Total: 1}))
 	require.Contains(t, out.String(), "1 OKF concept")
@@ -305,5 +300,5 @@ func TestOKFNullPreviewDoesNotSelectOriginal(t *testing.T) {
 	raw := fmt.Sprintf(`{"source_operation_id":%q,"plan_operation_id":%q,"members":[{"node_id":1,"version_id":%q,"sha256":%q,"size":1}],"okf":null}`, uuid.New().String(), uuid.New().String(), uuid.New().String(), strings.Repeat("a", 64))
 	require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
 	_, err := readExportRequest(path)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "okf must not be null")
 }

@@ -1,12 +1,16 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 )
 
@@ -95,11 +99,6 @@ func checkExportOKFPlanSealAndReplay(t *testing.T, open func(*testing.T) *Store)
 	require.Equal(t, plan, replay)
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM export_role_roots WHERE plan_id=$1 AND blob_hash=$2`, plan.ID, a.SHA256).Scan(&roots))
 	require.Equal(t, 1, roots)
-}
-
-func TestOKFSealRejectsChangedAuthority(t *testing.T) {
-	t.Parallel()
-	checkExportOKFPlanSealAndReplay(t, newTestStore)
 }
 
 func TestOKFTagCountAndIdentityBudget(t *testing.T) {
@@ -286,4 +285,68 @@ func TestOKFMixedRoleDiagnostic(t *testing.T) {
 	err = validateOKFPlanRequest(&request)
 	require.ErrorIs(t, err, bundle.ErrConflict)
 	require.ErrorContains(t, err, "one okf_markdown role")
+}
+
+// TestOKFRetainedProvenance validates immutable evidence directly at its owner.
+func TestOKFRetainedProvenance(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	snapshot := renditionJobTestSnapshot(renditionJobTestRequest(versions[0], profile))
+	auth := snapshot.Authorization
+	fingerprint, err := auth.Fingerprint()
+	require.NoError(t, err)
+	raw, err := json.Marshal(auth, json.Deterministic(true))
+	require.NoError(t, err)
+	sum := sha256.Sum256(raw)
+	receipt := document.RenditionReceipt{ProviderID: auth.ProviderID, DescriptorFingerprint: auth.DescriptorFingerprint, PolicyFingerprint: auth.PolicyFingerprint, RenditionRequestFingerprint: auth.RenditionRequestFingerprint, SourceSHA256: auth.SourceSHA256, AuthorizationFingerprint: fingerprint, OperationID: "synthetic-operation", StartedAt: "2026-08-25T00:01:00.000000000Z", CompletedAt: "2026-08-25T00:02:00.000000000Z"}
+	build := RenditionBuildRecord{RenditionRequestFingerprint: profile.RenditionRequestFingerprint, AuthorizationChecksum: hex.EncodeToString(sum[:]), ProviderOperationID: receipt.OperationID, CompletedAt: receipt.CompletedAt}
+	_, valid := okfGeneratedProof(receipt, snapshot, profile, build)
+	require.True(t, valid)
+	for _, tc := range []struct {
+		name   string
+		change func(*document.RenditionReceipt, *RenditionBuildRecord)
+	}{
+		{"descriptor", func(r *document.RenditionReceipt, _ *RenditionBuildRecord) {
+			r.DescriptorFingerprint = strings.Repeat("f", 64)
+		}},
+		{"policy", func(r *document.RenditionReceipt, _ *RenditionBuildRecord) {
+			r.PolicyFingerprint = strings.Repeat("f", 64)
+		}},
+		{"authorization fingerprint", func(r *document.RenditionReceipt, _ *RenditionBuildRecord) {
+			r.AuthorizationFingerprint = strings.Repeat("f", 64)
+		}},
+		{"started timestamp", func(r *document.RenditionReceipt, _ *RenditionBuildRecord) { r.StartedAt = "2020-01-01T00:00:00Z" }},
+		{"completed timestamp", func(r *document.RenditionReceipt, _ *RenditionBuildRecord) { r.CompletedAt = "2020-01-01T00:00:00Z" }},
+		{"authorization checksum", func(_ *document.RenditionReceipt, b *RenditionBuildRecord) {
+			b.AuthorizationChecksum = strings.Repeat("f", 64)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, b := receipt, build
+			tc.change(&r, &b)
+			_, ok := okfGeneratedProof(r, snapshot, profile, b)
+			require.False(t, ok)
+		})
+	}
+	raw, err = json.Marshal(receipt)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	fields["future_member"] = "retained"
+	raw, err = json.Marshal(fields)
+	require.NoError(t, err)
+	var decoded document.RenditionReceipt
+	require.True(t, decodeOKFReceipt(raw, &decoded))
+	_, valid = okfGeneratedProof(decoded, snapshot, profile, build)
+	require.True(t, valid)
+	build.ProviderReceipt = raw
+	_, valid, err = okfGenerated(t.Context(), s.db, build, profile.Fingerprint, auth.SourceSHA256)
+	require.NoError(t, err)
+	require.False(t, valid, "missing snapshot omits attribution")
+	fields["source_sha256"] = strings.Repeat("f", 64)
+	build.ProviderReceipt, err = json.Marshal(fields)
+	require.NoError(t, err)
+	_, _, err = okfGenerated(t.Context(), s.db, build, profile.Fingerprint, auth.SourceSHA256)
+	require.ErrorIs(t, err, bundle.ErrConflict)
 }

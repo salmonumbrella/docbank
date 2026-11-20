@@ -99,7 +99,7 @@ func resetFlags(c *cobra.Command) {
 	}
 }
 
-func setupVaultHome(t *testing.T) string {
+func setupVaultHome(t *testing.T, config ...string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -110,6 +110,9 @@ func setupVaultHome(t *testing.T) string {
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
+	if len(config) > 0 {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(config[0]), 0600))
+	}
 	startTestDaemon(t, dir)
 	return dir
 }
